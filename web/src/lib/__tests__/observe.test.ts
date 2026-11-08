@@ -9,7 +9,10 @@ import {
   cacheDropIds,
   childrenByAction,
   conversationStats,
+  dateBreaks,
+  fmtDate,
   fmtMs,
+  localDay,
   fmtTokens,
   seqIndex,
   tokenSegments,
@@ -101,6 +104,19 @@ describe('text helpers', () => {
   it('formats tokens and durations compactly', () => {
     expect([fmtTokens(0), fmtTokens(999), fmtTokens(1234), fmtTokens(45678), fmtTokens(2_500_000), fmtTokens(null)]).toEqual(['0', '999', '1.2k', '46k', '2.50M', '–']);
     expect([fmtMs(12), fmtMs(1234), fmtMs(45_000), fmtMs(125_000), fmtMs(null)]).toEqual(['12ms', '1.2s', '45s', '2m05s', '–']);
+  });
+  it('inserts a date divider only at the start and where the local day changes', () => {
+    // Build local-midday timestamps so the local day is unambiguous in any TZ.
+    const at = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).toISOString();
+    const a = at(2026, 11, 6), b = at(2026, 11, 6, 15), c = at(2026, 11, 7, 1), d = at(2026, 11, 7, 9);
+    expect(localDay(a)).toBe('2026-11-06');
+    expect([localDay(null), localDay('garbage'), fmtDate(null)]).toEqual([null, null, '']);
+    expect(fmtDate(c)).toBe('2026-11-07 Sat');
+    expect(dateBreaks([a, b, c, d])).toEqual(['2026-11-06 Fri', null, '2026-11-07 Sat', null]);
+    // missing timestamps never break the run, and the first dated item still gets a label
+    expect(dateBreaks([null, a, null, b])).toEqual([null, '2026-11-06 Fri', null, null]);
+    // seeded with the Turn's start: same-day actions get nothing, only the midnight crossing shows
+    expect(dateBreaks([a, b, c], a)).toEqual([null, null, '2026-11-07 Sat']);
   });
   it('splits the token bar into four fractions that sum to one', () => {
     const segs = tokenSegments({ input: 10, output: 20, thinking: null, cache_read: 60, cache_write: 10, cache_write_5m: null, cache_write_1h: null });

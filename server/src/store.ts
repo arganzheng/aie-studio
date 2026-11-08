@@ -50,11 +50,22 @@ export type Batch = {
   sentAt?: number;
 };
 export const MAX_QUOTE_LENGTH = 2000;
+// Model: entity Bookmark — a ☆ on a session message: tab = the session, anchor
+// = the panel's message anchor, label = the first 80 chars of the message.
+export type Bookmark = {
+  id: string;
+  label: string;
+  tab: TabRef;
+  anchor: string;
+  createdAt: number;
+};
+export const MAX_BOOKMARK_LABEL_LENGTH = 80;
 
 export type ProjectWorkspace = {
   tabs: Tab[];
   groups: Group[];
   batches: Batch[];
+  bookmarks: Bookmark[];
 };
 
 export type Workspace = {
@@ -274,8 +285,30 @@ export function normalizeBatches(raw: unknown): Batch[] {
   return out;
 }
 
+// Model: server.PutWorkspace rule-445 / entity Bookmark rule-435. Drop any
+// bookmark missing a non-empty id / label / anchor or a well-formed tab;
+// dedupe by id; clamp the label; backfill createdAt.
+export function normalizeBookmarks(raw: unknown): Bookmark[] {
+  const out: Bookmark[] = [];
+  const seen = new Set<string>();
+  for (const b of Array.isArray(raw) ? raw : []) {
+    const { id, label, anchor, tab, createdAt } = (b ?? {}) as any;
+    if (!nonEmptyString(id) || !nonEmptyString(label) || !nonEmptyString(anchor) || seen.has(id)) continue;
+    if (!nonEmptyString(tab?.type) || !nonEmptyString(tab?.key)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      label: label.slice(0, MAX_BOOKMARK_LABEL_LENGTH),
+      tab: { type: tab.type, key: tab.key },
+      anchor,
+      createdAt: typeof createdAt === 'number' ? createdAt : Date.now(),
+    });
+  }
+  return out;
+}
+
 export function normalizeProjectWorkspace(pw: unknown): ProjectWorkspace {
-  const raw = (pw ?? {}) as { tabs?: unknown; groups?: unknown; batches?: unknown };
+  const raw = (pw ?? {}) as { tabs?: unknown; groups?: unknown; batches?: unknown; bookmarks?: unknown };
   const tabs = Array.isArray(raw.tabs) ? (raw.tabs as Tab[]) : [];
   const seen = new Set<string>();
   const groups: Group[] = [];
@@ -287,7 +320,7 @@ export function normalizeProjectWorkspace(pw: unknown): ProjectWorkspace {
     seen.add(id);
     groups.push({ id, name });
   }
-  return { tabs, groups, batches: normalizeBatches(raw.batches) };
+  return { tabs, groups, batches: normalizeBatches(raw.batches), bookmarks: normalizeBookmarks(raw.bookmarks) };
 }
 
 export async function getWorkspace(uid: string): Promise<Workspace> {

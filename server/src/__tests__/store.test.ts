@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeProjectWorkspace, normalizeBatches, DEFAULT_GROUP_ID } from '../store.js';
+import { normalizeProjectWorkspace, normalizeBatches, normalizeBookmarks, DEFAULT_GROUP_ID } from '../store.js';
 
 describe('normalizeProjectWorkspace', () => {
   it('fills groups: [] for legacy slots that only have tabs', () => {
     const pw = normalizeProjectWorkspace({ tabs: [{ id: 'a', type: 'file', path: 'x' }], activeTabId: 'a' });
-    expect(pw).toEqual({ tabs: [{ id: 'a', type: 'file', path: 'x' }], groups: [], batches: [] });
+    expect(pw).toEqual({ tabs: [{ id: 'a', type: 'file', path: 'x' }], groups: [], batches: [], bookmarks: [] });
   });
 
   it('keeps tab.groupId untouched (absent means default Group)', () => {
@@ -40,8 +40,8 @@ describe('normalizeProjectWorkspace', () => {
   });
 
   it('tolerates garbage input', () => {
-    expect(normalizeProjectWorkspace(null)).toEqual({ tabs: [], groups: [], batches: [] });
-    expect(normalizeProjectWorkspace({ tabs: 'nope', groups: 'nope' })).toEqual({ tabs: [], groups: [], batches: [] });
+    expect(normalizeProjectWorkspace(null)).toEqual({ tabs: [], groups: [], batches: [], bookmarks: [] });
+    expect(normalizeProjectWorkspace({ tabs: 'nope', groups: 'nope' })).toEqual({ tabs: [], groups: [], batches: [], bookmarks: [] });
   });
 
   it('fills batches: [] for slots written before Review existed and drops legacy pins', () => {
@@ -107,5 +107,39 @@ describe('normalizeBatches', () => {
     expect(normalizeBatches(undefined)).toEqual([]);
     expect(normalizeBatches('nope')).toEqual([]);
     expect(normalizeBatches([{ id: 'b', name: 'n', status: 'draft', comments: 'nope' }])[0].comments).toEqual([]);
+  });
+});
+
+describe('normalizeBookmarks', () => {
+  it('keeps well-formed bookmarks in order, clamping the label and backfilling createdAt', () => {
+    const long = 'x'.repeat(100);
+    const out = normalizeBookmarks([
+      { id: 'k1', label: 'first', tab: { type: 'session', key: 's1' }, anchor: 'u:1', createdAt: 5 },
+      { id: 'k2', label: long, tab: { type: 'devin', key: 'd1', extra: 1 }, anchor: 'n:7' },
+    ]);
+    expect(out[0]).toEqual({ id: 'k1', label: 'first', tab: { type: 'session', key: 's1' }, anchor: 'u:1', createdAt: 5 });
+    expect(out[1]).toMatchObject({ id: 'k2', tab: { type: 'devin', key: 'd1' }, anchor: 'n:7' });
+    expect(out[1].label).toHaveLength(80);
+    expect(typeof out[1].createdAt).toBe('number');
+  });
+
+  it('drops bookmarks missing id / label / anchor / tab, and duplicate ids', () => {
+    const out = normalizeBookmarks([
+      { id: 'k1', label: 'ok', tab: { type: 'session', key: 's' }, anchor: 'u:1' },
+      { id: 'k1', label: 'dup', tab: { type: 'session', key: 's' }, anchor: 'u:2' },
+      { id: '', label: 'no id', tab: { type: 'session', key: 's' }, anchor: 'u:3' },
+      { id: 'k2', label: '', tab: { type: 'session', key: 's' }, anchor: 'u:4' },
+      { id: 'k3', label: 'no anchor', tab: { type: 'session', key: 's' } },
+      { id: 'k4', label: 'bad tab', tab: { type: 'session' }, anchor: 'u:5' },
+      { id: 'k5', label: 'no tab', anchor: 'u:6' },
+      null,
+    ]);
+    expect(out.map((b) => b.id)).toEqual(['k1']);
+  });
+
+  it('tolerates a missing or non-array field', () => {
+    expect(normalizeBookmarks(undefined)).toEqual([]);
+    expect(normalizeBookmarks('nope')).toEqual([]);
+    expect(normalizeProjectWorkspace({ tabs: [], bookmarks: 'nope' }).bookmarks).toEqual([]);
   });
 });

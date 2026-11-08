@@ -1,4 +1,4 @@
-import type { Batch, Comment, TabRef } from '../types';
+import type { Batch, Bookmark, Comment, TabRef } from '../types';
 
 // Pure Review logic (model: entity Batch / Comment). App owns the state and
 // persistence; everything here maps batches[] → batches[] or derives from it.
@@ -141,4 +141,39 @@ export function commentMarksFor(batches: Batch[], ref: TabRef): CommentMark[] {
 
 export function draftCommentCount(batches: Batch[]): number {
   return batches.reduce((n, b) => (b.status === 'draft' ? n + b.comments.length : n), 0);
+}
+
+// ---- Bookmarks (model: entity Bookmark / web.BookmarkMessage) ----
+
+export const MAX_BOOKMARK_LABEL_LENGTH = 80;
+
+// Default label for a bookmarked message: whitespace collapsed, first 80
+// chars (model: Bookmark.label).
+export function bookmarkLabel(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  if (!flat) return '(empty message)';
+  return flat.length > MAX_BOOKMARK_LABEL_LENGTH ? `${flat.slice(0, MAX_BOOKMARK_LABEL_LENGTH - 1)}…` : flat;
+}
+
+export function findBookmark(bookmarks: Bookmark[], tab: TabRef, anchor: string): Bookmark | undefined {
+  return bookmarks.find((b) => b.anchor === anchor && b.tab.type === tab.type && b.tab.key === tab.key);
+}
+
+// Model: Bookmark rule-434 — ☆ is a toggle: one bookmark per (tab, anchor).
+// Returns the next list plus what happened, so the caller can toast it.
+export function toggleBookmark(bookmarks: Bookmark[], next: Bookmark): { bookmarks: Bookmark[]; added: boolean } {
+  const existing = findBookmark(bookmarks, next.tab, next.anchor);
+  if (existing) return { bookmarks: bookmarks.filter((b) => b.id !== existing.id), added: false };
+  return { bookmarks: [...bookmarks, { ...next, label: next.label.slice(0, MAX_BOOKMARK_LABEL_LENGTH) }], added: true };
+}
+
+export function removeBookmark(bookmarks: Bookmark[], id: string): Bookmark[] {
+  return bookmarks.some((b) => b.id === id) ? bookmarks.filter((b) => b.id !== id) : bookmarks;
+}
+
+// Anchors bookmarked in one session, for the panel's ☆ / ★ state.
+export function bookmarkedAnchorsFor(bookmarks: Bookmark[], ref: TabRef): Set<string> {
+  const out = new Set<string>();
+  for (const b of bookmarks) if (b.tab.type === ref.type && b.tab.key === ref.key) out.add(b.anchor);
+  return out;
 }

@@ -12,8 +12,9 @@ import { vscDarkPlus, oneLight } from 'react-syntax-highlighter/dist/esm/styles/
 import type { SendKey, Theme } from '../types';
 import type { SessionPanelApi, TabActivity } from '../registry/tabRegistry';
 import { CommentComposer, flashMessage, sleep, type NewComment } from './CommentComposer';
+import { BookmarkButton, type NewBookmark } from './BookmarkButton';
 import type { PromptInsertion } from './ChatInput';
-import { composeComment, type CommentMark } from '../lib/review';
+import { composeComment, type CommentMark, bookmarkLabel } from '../lib/review';
 import { applyQuoteHighlights } from '../lib/quoteHighlight';
 import { RichCopyButton, useRichCopy } from './RichCopy';
 import type { ExportMessage } from '../lib/export/types';
@@ -237,6 +238,8 @@ export function SdkPanel({
   onExportApi,
   onComment,
   commentMarks,
+  onBookmark,
+  bookmarkedAnchors,
   onFocusComment,
   onBatchSent,
   onPanelApi,
@@ -261,6 +264,11 @@ export function SdkPanel({
   onExportApi?: (api: { open: () => void; canExport: boolean } | null) => void;
   // Review integration — same contract as ChatPanel (omitted when settings.review is off).
   onComment?: (c: NewComment) => string | null;
+  // Model: web.BookmarkMessage — ☆ toggle on a message; returns a status to
+  // toast or null. Omitted when settings.review is off.
+  onBookmark?: (b: NewBookmark) => string | null;
+  // Anchors already bookmarked in this session (rendered as ★).
+  bookmarkedAnchors?: ReadonlySet<string>;
   commentMarks?: readonly CommentMark[];
   onFocusComment?: (commentId: string) => void;
   onBatchSent?: (batchId: string) => void;
@@ -361,6 +369,13 @@ export function SdkPanel({
 
   // Review (model: web.CommentOnSelection / HighlightQuotes) — only when enabled.
   const canComment = !!onComment;
+  // Model: web.BookmarkMessage — ☆ only when Review is on (builtinTabKinds
+  // omits onBookmark otherwise).
+  const canBookmark = !!onBookmark;
+  function bookmark(anchor: string, text: string) {
+    const note = onBookmark?.({ anchor, label: bookmarkLabel(text) });
+    if (note) showToast(note);
+  }
   const commentedAnchors = useMemo(() => new Set((commentMarks ?? []).map((m) => m.anchor)), [commentMarks]);
   const highlightOwner = useRef({}).current;
   useEffect(() => { applyQuoteHighlights(highlightOwner, scrollRef.current, canComment ? commentMarks ?? [] : []); });
@@ -904,6 +919,7 @@ export function SdkPanel({
                 ) : (
                   <>
                     {m.text && <div>{m.text}</div>}
+                    {anchor && canBookmark && <BookmarkButton active={!!bookmarkedAnchors?.has(anchor)} className="msg-bookmark-btn-2nd" onClick={() => bookmark(anchor, m.text)} />}
                     {m.uuid && (
                       <button
                         type="button"
@@ -927,6 +943,7 @@ export function SdkPanel({
             return (
               <div key={m.id} className={`msg msg-assistant${bmCls}`} data-anchor={anchor ?? undefined}>
                 <MarkdownText text={m.text} theme={theme} projectPath={projectPath} onOpenFile={openFile} />
+                {anchor && canBookmark && <BookmarkButton active={!!bookmarkedAnchors?.has(anchor)} onClick={() => bookmark(anchor, m.text)} />}
                 {showRichCopy && <RichCopyButton onClick={() => copyRich(m.text)} />}
               </div>
             );

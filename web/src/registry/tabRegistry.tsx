@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { Project, Settings, Tab, TabRef } from '../types';
 import type { NewComment } from '../components/CommentComposer';
+import type { NewBookmark } from '../components/BookmarkButton';
 import type { CommentMark } from '../lib/review';
 
 export type ExportApi = { open: () => void; canExport: boolean };
@@ -39,6 +40,12 @@ export type TabRenderContext = {
   // Anchored comments in this tab's session (model: web.HighlightQuotes), so
   // the panel can outline those messages and paint the quotes.
   commentMarks: readonly CommentMark[];
+  // Model: web.BookmarkMessage. ☆ on a message: the panel supplies anchor +
+  // label, App adds the tab origin and toggles the Bookmark. Returns a status
+  // for the panel to toast, or null.
+  toggleBookmark: (b: NewBookmark) => string | null;
+  // Anchors bookmarked in this tab's session, so the panel can show ★.
+  bookmarkedAnchors: ReadonlySet<string>;
   // Model: web.ViewQuoteComments. Bring this comment's row into view in the
   // Review panel (expanding the column / opening the mobile drawer).
   focusComment: (commentId: string) => void;

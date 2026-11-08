@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { listDir, makeDir, moveEntry, type FsEntry } from '../api';
+import { listDir, makeDir, moveEntry, statFile, type FsEntry, type FsStat } from '../api';
+import { copyText } from '../lib/clipboard';
 import { joinPath, parentPath, rewriteMovedPath } from '../lib/movedPath';
 import { isTextFile } from '../lib/textFiles';
 
 // Model: web.FileTree (auc-009). Lazy tree over server.ListDir; the per-row
-// ⋯ menu offers Download (files), Rename and Move to… — the latter two both
-// land on server.MoveEntry.
+// ⋯ menu offers Download (files), Rename, Move to… and Details — the middle
+// two both land on server.MoveEntry, Details reads server.StatFile.
 
 type Entry = FsEntry;
 
@@ -294,8 +295,134 @@ function DirPicker({
   );
 }
 
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v < 10 ? v.toFixed(2) : v < 100 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
+}
+
+// rule-433 — one row of the Details dialog; `copy` adds a Copy button whose
+// label flips to "Copied" for a moment on success.
+function DetailRow({
+  label,
+  value,
+  mono,
+  copy,
+  onNotice,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  copy?: boolean;
+  onNotice?: (text: string) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const id = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(id);
+  }, [copied]);
+  return (
+    <div className="details-row">
+      <div className="details-label">{label}</div>
+      <div className={`details-value ${mono ? 'mono' : ''}`} title={value}>{value}</div>
+      {copy && (
+        <button
+          className={`details-copy ${copied ? 'copied' : ''}`}
+          onClick={async () => {
+            const ok = await copyText(value);
+            if (ok) setCopied(true); else onNotice?.('Copy failed');
+          }}
+        >{copied ? '✓ Copied' : 'Copy'}</button>
+      )}
+    </div>
+  );
+}
+
+// rule-433 — "Details" dialog: name / project path / full path with one-click
+// copy, plus type, size, mime and mtime from server.StatFile. Name and paths
+// never wait on the stat call, so the dialog stays useful if it fails.
+function EntryDetails({
+  projectId,
+  projectPath,
+  entry,
+  onClose,
+  onNotice,
+}: {
+  projectId: string;
+  projectPath: string;
+  entry: Entry;
+  onClose: () => void;
+  onNotice?: (text: string) => void;
+}) {
+  const [stat, setStat] = useState<FsStat | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    statFile(projectId, entry.path)
+      .then((s) => { if (!cancelled) setStat(s); })
+      .catch((e) => { if (!cancelled) setError((e as Error).message); });
+    return () => { cancelled = true; };
+  }, [projectId, entry.path]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const root = projectPath.replace(/\/+$/, '');
+  const fullPath = `${root}/${entry.path}`;
+  const pending = !stat && !error;
+  const statText = (f: (s: FsStat) => string) => (stat ? f(stat) : error ? `— (${error})` : '…');
+
+  return createPortal(
+    <div className="settings-backdrop" onClick={onClose}>
+      <div
+        className="settings-modal details-modal"
+        role="dialog"
+        aria-label="Details"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="settings-header">
+          <span>{entry.isDir ? '📁' : '📄'} Details</span>
+          <button className="settings-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div className="details-body">
+          <DetailRow label="Name" value={entry.name} mono copy onNotice={onNotice} />
+          <DetailRow label="Project path" value={entry.path} mono copy onNotice={onNotice} />
+          <DetailRow label="Full path" value={fullPath} mono copy onNotice={onNotice} />
+          <DetailRow label="Type" value={entry.isDir ? 'Folder' : 'File'} />
+          {!entry.isDir && (
+            <DetailRow
+              label="Size"
+              value={statText((s) => `${formatBytes(s.size)} (${s.size.toLocaleString()} bytes)`)}
+            />
+          )}
+          {!entry.isDir && (
+            <DetailRow label="MIME" value={statText((s) => s.mime)} mono />
+          )}
+          <DetailRow
+            label="Modified"
+            value={statText((s) => new Date(s.mtimeMs).toLocaleString())}
+          />
+          {pending && <div className="details-hint">Loading file info…</div>}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function FileTree({
   projectId,
+  projectPath,
   onSelect,
   selectedPath,
   onEntryMoved,
@@ -303,6 +430,9 @@ export function FileTree({
   onEdit,
 }: {
   projectId: string;
+  // Absolute root of the project on the server — rule-433 builds the
+  // "Full path" client-side from it.
+  projectPath: string;
   onSelect: (path: string) => void;
   selectedPath: string | null;
   // web.EditorPanel entry — "✎ Edit" on text files.
@@ -333,6 +463,7 @@ export function FileTree({
   const menuRef = useRef<HTMLDivElement>(null);
   const [rename, setRename] = useState<Rename | null>(null);
   const [moving, setMoving] = useState<Entry | null>(null);
+  const [details, setDetails] = useState<Entry | null>(null);
 
   useEffect(() => {
     if (!menu) return;
@@ -514,6 +645,10 @@ export function FileTree({
             className="overflow-action"
             onClick={() => { setMenu(null); setMoving(menu.entry); }}
           >📂 Move to…</button>
+          <button
+            className="overflow-action"
+            onClick={() => { setMenu(null); setDetails(menu.entry); }}
+          >ℹ Details</button>
         </div>,
         document.body,
       )}
@@ -528,6 +663,15 @@ export function FileTree({
             setMoving(null);
             void doMove(entry.path, joinPath(destDir, entry.name));
           }}
+        />
+      )}
+      {details && (
+        <EntryDetails
+          projectId={projectId}
+          projectPath={projectPath}
+          entry={details}
+          onClose={() => setDetails(null)}
+          onNotice={onNotice}
         />
       )}
     </div>

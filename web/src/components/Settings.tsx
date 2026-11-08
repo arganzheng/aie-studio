@@ -425,7 +425,7 @@ export function Settings({
                 label="Review"
                 checked={settings.review ?? false}
                 onChange={(v) => commit({ ...settings, review: v })}
-                text="Show the Review panel (comment on AI output, send in batches)"
+                text="Show the Review panel (bookmark messages; comment on AI output and send in batches)"
                 hint="Select text in a session (or 💬 a message) to comment; comments collect in batches you send to the AI when ready. Right-hand column on desktop, right drawer on mobile. Existing batches are kept while off."
               />
               <Toggle

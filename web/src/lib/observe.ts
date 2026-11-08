@@ -362,6 +362,41 @@ export function fmtTime(iso: string | null | undefined): string {
   return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+/** Local calendar day of an ISO timestamp as YYYY-MM-DD; null when missing / unparsable. */
+export function localDay(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+/** Date divider label: "2026-11-07 Fri" (local). */
+export function fmtDate(iso: string | null | undefined): string {
+  const day = localDay(iso);
+  if (!day) return '';
+  const wd = new Date(iso!).toLocaleDateString('en-US', { weekday: 'short' });
+  return `${day} ${wd}`;
+}
+
+/**
+ * Dates are not repeated on every event (rule-327): given a sequence of timestamps,
+ * return per index the divider label to show *before* that item, or null. A label
+ * appears before the first item that has a date and again only where the local day
+ * changes. `before` seeds the "current day" (e.g. the Turn's start) so a Turn whose
+ * actions stay on the same day as its header gets no divider at all.
+ */
+export function dateBreaks(times: (string | null | undefined)[], before?: string | null): (string | null)[] {
+  let cur = localDay(before);
+  return times.map((t) => {
+    const day = localDay(t);
+    if (!day || day === cur) return null;
+    cur = day;
+    return fmtDate(t);
+  });
+}
+
 export type TokenKey = 'output' | 'cacheWrite' | 'input' | 'cacheRead';
 /**
  * Token kinds ordered by unit price, most expensive first (output ≫ cache

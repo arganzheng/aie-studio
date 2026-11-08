@@ -59,7 +59,7 @@ registerTabKind({
 registerTabKind({
   id: 'session',
   label: 'Claude',
-  render: ({ tab, project, settings, updateTabs, registerExportApi, openTab, addComment, commentMarks, focusComment, markBatchSent, registerPanelApi, reportActivity }) => {
+  render: ({ tab, project, settings, updateTabs, registerExportApi, openTab, addComment, commentMarks, toggleBookmark, bookmarkedAnchors, focusComment, markBatchSent, registerPanelApi, reportActivity }) => {
     const t = asSession(tab);
     return (
       <ChatPanel
@@ -69,6 +69,8 @@ registerTabKind({
         initialPrompt={t.initialPrompt}
         wire={t.wire}
         onComment={settings.review ? addComment : undefined}
+        onBookmark={settings.review ? toggleBookmark : undefined}
+        bookmarkedAnchors={bookmarkedAnchors}
         commentMarks={commentMarks}
         onBatchSent={markBatchSent}
         onFocusComment={focusComment}
@@ -107,7 +109,7 @@ registerTabKind({
 registerTabKind({
   id: 'claude-sdk',
   label: 'Claude (SDK)',
-  render: ({ tab, project, settings, updateTabs, registerExportApi, openTab, addComment, commentMarks, focusComment, markBatchSent, registerPanelApi, reportActivity }) => {
+  render: ({ tab, project, settings, updateTabs, registerExportApi, openTab, addComment, commentMarks, toggleBookmark, bookmarkedAnchors, focusComment, markBatchSent, registerPanelApi, reportActivity }) => {
     const t = asClaudeSdk(tab);
     return (
       <SdkPanel
@@ -121,6 +123,8 @@ registerTabKind({
         showStderr={settings.showStderr}
         richCopy={settings.richCopy}
         onComment={settings.review ? addComment : undefined}
+        onBookmark={settings.review ? toggleBookmark : undefined}
+        bookmarkedAnchors={bookmarkedAnchors}
         commentMarks={commentMarks}
         onBatchSent={markBatchSent}
         onFocusComment={focusComment}
@@ -153,7 +157,7 @@ registerTabKind({
 registerTabKind({
   id: 'devin',
   label: 'Devin',
-  render: ({ tab, project, settings, updateTabs, updateSettings, registerExportApi, openTab, addComment, commentMarks, focusComment, markBatchSent, registerPanelApi, reportActivity }) => {
+  render: ({ tab, project, settings, updateTabs, updateSettings, registerExportApi, openTab, addComment, commentMarks, toggleBookmark, bookmarkedAnchors, focusComment, markBatchSent, registerPanelApi, reportActivity }) => {
     const t = asDevin(tab);
     return (
       <DevinPanel
@@ -161,6 +165,8 @@ registerTabKind({
         projectPath={project.path}
         resumeId={t.resumeId}
         onComment={settings.review ? addComment : undefined}
+        onBookmark={settings.review ? toggleBookmark : undefined}
+        bookmarkedAnchors={bookmarkedAnchors}
         commentMarks={commentMarks}
         onBatchSent={markBatchSent}
         onFocusComment={focusComment}

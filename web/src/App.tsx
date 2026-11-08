@@ -4,6 +4,8 @@ import { FileTree } from './components/FileTree';
 import { GroupList } from './components/GroupList';
 import { ReviewPanel } from './components/ReviewPanel';
 import type { NewComment } from './components/CommentComposer';
+import type { NewBookmark } from './components/BookmarkButton';
+import type { Bookmark } from './types';
 import * as review from './lib/review';
 import { ProjectPicker } from './components/ProjectPicker';
 import { ProjectManager } from './components/ProjectManager';
@@ -42,6 +44,7 @@ const DEFAULT_SETTINGS: Settings = { sendKey: 'cmd-enter', theme: 'dark', fontSc
 
 // Stable empty value so panels without comments don't re-render (model: web.HighlightQuotes).
 const NO_COMMENT_MARKS: readonly review.CommentMark[] = [];
+const NO_BOOKMARKED_ANCHORS: ReadonlySet<string> = new Set();
 
 function randomId() { return Math.random().toString(36).slice(2, 10); }
 
@@ -715,6 +718,7 @@ export default function App() {
   const tabs: Tab[] = projectWs?.tabs ?? [];
   const groups: Group[] = projectWs?.groups ?? [];
   const batches: Batch[] = projectWs?.batches ?? [];
+  const bookmarks: Bookmark[] = projectWs?.bookmarks ?? [];
   const activeTabId = activeProjectId ? (active.tabs[activeProjectId] ?? null) : null;
   const activeGroupId = (activeProjectId ? active.groups[activeProjectId] : null) ?? DEFAULT_GROUP_ID;
   // Only the active Group's tabs show in the TabBar; the others stay mounted
@@ -849,17 +853,22 @@ export default function App() {
 
   function updateProjectTabs(projectId: string, nextTabs: Tab[]) {
     const current = workspaceRef.current.projects[projectId];
-    saveProjectWorkspace(projectId, { tabs: nextTabs, groups: current?.groups ?? [], batches: current?.batches ?? [] });
+    saveProjectWorkspace(projectId, { tabs: nextTabs, groups: current?.groups ?? [], batches: current?.batches ?? [], bookmarks: current?.bookmarks ?? [] });
   }
 
   function updateProjectGroups(projectId: string, nextGroups: Group[]) {
     const current = workspaceRef.current.projects[projectId];
-    saveProjectWorkspace(projectId, { tabs: current?.tabs ?? [], groups: nextGroups, batches: current?.batches ?? [] });
+    saveProjectWorkspace(projectId, { tabs: current?.tabs ?? [], groups: nextGroups, batches: current?.batches ?? [], bookmarks: current?.bookmarks ?? [] });
   }
 
   function updateProjectBatches(projectId: string, nextBatches: Batch[]) {
     const current = workspaceRef.current.projects[projectId];
-    saveProjectWorkspace(projectId, { tabs: current?.tabs ?? [], groups: current?.groups ?? [], batches: nextBatches });
+    saveProjectWorkspace(projectId, { tabs: current?.tabs ?? [], groups: current?.groups ?? [], batches: nextBatches, bookmarks: current?.bookmarks ?? [] });
+  }
+
+  function updateProjectBookmarks(projectId: string, nextBookmarks: Bookmark[]) {
+    const current = workspaceRef.current.projects[projectId];
+    saveProjectWorkspace(projectId, { tabs: current?.tabs ?? [], groups: current?.groups ?? [], batches: current?.batches ?? [], bookmarks: nextBookmarks });
   }
 
   function openFileTab(filePath: string) {
@@ -1218,7 +1227,7 @@ export default function App() {
     if (!confirm(msg)) return;
     const nextTabs = tabs.filter((t) => tabGroupId(t) !== id);
     logDebug('group', `deleteGroup: ${id} "${group.name}" closed ${victims.length} tab(s)`);
-    saveProjectWorkspace(activeProjectId, { tabs: nextTabs, groups: groups.filter((g) => g.id !== id), batches });
+    saveProjectWorkspace(activeProjectId, { tabs: nextTabs, groups: groups.filter((g) => g.id !== id), batches, bookmarks });
     if (victims.length) {
       setVisitedTabs((prev) => {
         const next = new Set(prev);
@@ -1378,6 +1387,54 @@ export default function App() {
     applyBatches(`markBatchSent: ${batchId}`, (bs) => review.markBatchSent(bs, batchId, Date.now()));
   }
 
+  // ---- Bookmarks (model: entity Bookmark; web.BookmarkMessage / RemoveBookmark) ----
+
+  function latestBookmarks(): Bookmark[] {
+    return activeProjectId ? workspaceRef.current.projects[activeProjectId]?.bookmarks ?? [] : [];
+  }
+
+  // ☆ clicked on a message in a session panel: one Bookmark per (session,
+  // anchor) — add it, or remove the existing one. Returns a toast for the panel.
+  function toggleSessionBookmark(tab: Tab, b: NewBookmark): string | null {
+    if (!activeProjectId) return null;
+    const origin = tabRef(tab);
+    if (!origin || !b.anchor) return null;
+    const { bookmarks: next, added } = review.toggleBookmark(latestBookmarks(), {
+      id: randomId(),
+      label: b.label,
+      tab: origin,
+      anchor: b.anchor,
+      createdAt: Date.now(),
+    });
+    logDebug('review', `${added ? 'bookmark' : 'unbookmark'} ${b.anchor} in ${origin.type} ${origin.key}`);
+    updateProjectBookmarks(activeProjectId, next);
+    // Same as a new comment: a collapsed panel would hide the new row.
+    if (added) setReviewCollapsed(false);
+    return added ? 'Bookmarked' : 'Bookmark removed';
+  }
+
+  function removeBookmark(id: string) {
+    if (!activeProjectId) return;
+    const before = latestBookmarks();
+    const next = review.removeBookmark(before, id);
+    if (next === before) return;
+    logDebug('review', `removeBookmark: ${id}`);
+    updateProjectBookmarks(activeProjectId, next);
+  }
+
+  // Bookmarked anchors per session tab (model: web.BookmarkMessage) so the
+  // panels can render ★ on those messages.
+  const bookmarkedAnchorsByTab = useMemo(() => {
+    const map = new Map<string, ReadonlySet<string>>();
+    for (const t of tabs) {
+      if (t.type !== 'session' && t.type !== 'claude-sdk' && t.type !== 'devin') continue;
+      const ref = tabRef(t);
+      const set = ref ? review.bookmarkedAnchorsFor(bookmarks, ref) : null;
+      if (set && set.size) map.set(t.id, set);
+    }
+    return map;
+  }, [tabs, bookmarks]);
+
   // Anchored comments per tab (model: web.HighlightQuotes) so panels can
   // outline those messages and paint the quotes. Recomputed only when
   // batches / tabs change.
@@ -1412,28 +1469,42 @@ export default function App() {
     return undefined;
   }
 
-  // Clicking a comment row: bring back the tab it was written in, then ask
-  // its panel to scroll to the anchored message once it has registered.
-  function jumpToComment(comment: Comment) {
-    if (!comment.tab) return;
-    setReviewDrawerOpen(false);
-    const tabId = openTabRef(comment.tab, comment.text.slice(0, 30));
-    logDebug('review', `jumpToComment: ${comment.id} → tab ${tabId ?? '(none)'} anchor ${comment.anchor ?? '(none)'}`);
-    if (!tabId || !comment.anchor) return;
-    pendingRevealRef.current = { tabId, anchor: comment.anchor };
-    // Panel already mounted → reveal now (it waits internally until the tab
-    // is actually displayed). Otherwise registerPanelApi fires it on mount.
-    fireReveal(tabId, comment.anchor);
-  }
-
-  // Model: web.ObserveTab → web.RevealMessage. Same mechanics as
-  // jumpToComment, from an observation card instead of a comment.
-  function revealInSession(origin: TabRef, anchor: string) {
-    const tabId = openTabRef(origin, origin.key.slice(0, 8));
-    logDebug('observe', `reveal ${anchor} in ${origin.type} ${origin.key} → tab ${tabId ?? '(none)'}`);
+  // Model: web.RevealMessage via OpenTab — the one path behind JumpToComment,
+  // JumpToBookmark and ObserveTab: bring back the tab `ref` points at (title
+  // used if it has to be re-opened), then ask its panel to scroll to `anchor`.
+  // Panel already mounted → reveal now (it waits internally until the tab is
+  // actually displayed). Otherwise registerPanelApi fires it on mount.
+  function revealAt(ref: TabRef, anchor: string, title: string, channel: string, what: string) {
+    const tabId = openTabRef(ref, title);
+    logDebug(channel, `${what} → tab ${tabId ?? '(none)'} anchor ${anchor}`);
     if (!tabId) return;
     pendingRevealRef.current = { tabId, anchor };
     fireReveal(tabId, anchor);
+  }
+
+  // Clicking a comment row: bring back the tab it was written in, then (if
+  // it has an anchor) scroll to the message.
+  function jumpToComment(comment: Comment) {
+    if (!comment.tab) return;
+    setReviewDrawerOpen(false);
+    const title = comment.text.slice(0, 30);
+    if (!comment.anchor) {
+      openTabRef(comment.tab, title);
+      logDebug('review', `jumpToComment: ${comment.id} (no anchor)`);
+      return;
+    }
+    revealAt(comment.tab, comment.anchor, title, 'review', `jumpToComment: ${comment.id}`);
+  }
+
+  // Model: web.JumpToBookmark — a bookmark row in the Review panel.
+  function jumpToBookmark(b: Bookmark) {
+    setReviewDrawerOpen(false);
+    revealAt(b.tab, b.anchor, b.label.slice(0, 30), 'review', `jumpToBookmark: ${b.id}`);
+  }
+
+  // Model: web.ObserveTab → web.RevealMessage, from an observation card.
+  function revealInSession(origin: TabRef, anchor: string) {
+    revealAt(origin, anchor, origin.key.slice(0, 8), 'observe', `reveal in ${origin.type} ${origin.key}`);
   }
 
   // Model: web.SendBatch — fill the batch's prompt into the target session's
@@ -1468,7 +1539,7 @@ export default function App() {
       // empty slot up-front.
       setWorkspace((ws) => {
         if (ws.projects[p.id]) return ws;
-        return { ...ws, projects: { ...ws.projects, [p.id]: { tabs: [], groups: [], batches: [] } } };
+        return { ...ws, projects: { ...ws.projects, [p.id]: { tabs: [], groups: [], batches: [], bookmarks: [] } } };
       });
       setActive((a) => {
         logDebug('nav', `new project auto-active: ${a.projectId ?? 'null'} → ${p.id}`);
@@ -1590,6 +1661,7 @@ export default function App() {
             ) : sidebarView === 'files' ? (
               <FileTree
                 projectId={activeProject.id}
+                projectPath={activeProject.path}
                 onSelect={(p) => {
                   openFileTab(p);
                   setDrawerOpen(false);
@@ -1729,6 +1801,8 @@ export default function App() {
                   registerExportApi: (api) => registerExportApi(tab.id, api),
                   addComment: (c) => addSessionComment(tab, c),
                   commentMarks: commentMarksByTab.get(tab.id) ?? NO_COMMENT_MARKS,
+                  toggleBookmark: (b) => toggleSessionBookmark(tab, b),
+                  bookmarkedAnchors: bookmarkedAnchorsByTab.get(tab.id) ?? NO_BOOKMARKED_ANCHORS,
                   markBatchSent,
                   focusComment,
                   registerPanelApi: (api) => registerPanelApi(tab.id, api),
@@ -1778,6 +1852,9 @@ export default function App() {
             {activeProject ? (
               <ReviewPanel
                 batches={batches}
+                bookmarks={bookmarks}
+                onJumpBookmark={jumpToBookmark}
+                onDeleteBookmark={removeBookmark}
                 currentBatchId={currentBatch?.id ?? null}
                 focused={focusedComment}
                 onAddComment={addPlainComment}

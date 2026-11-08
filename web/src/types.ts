@@ -103,10 +103,22 @@ export type Batch = {
   sentAt?: number;
 };
 
+// Model: entity Bookmark — a ☆ on a session message, listed at the top of the
+// Review panel; clicking jumps back. Points at session + message (tab +
+// anchor, same shape as Comment), so it survives the tab being closed.
+export type Bookmark = {
+  id: string;
+  label: string;
+  tab: TabRef;
+  anchor: string;
+  createdAt: number;
+};
+
 export type ProjectWorkspace = {
   tabs: Tab[];
   groups: Group[];
   batches: Batch[];
+  bookmarks: Bookmark[];
 };
 
 export function tabGroupId(tab: { groupId?: string }): string {

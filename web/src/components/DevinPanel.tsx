@@ -1,6 +1,7 @@
 import { CommentComposer, flashMessage, sleep, type NewComment } from './CommentComposer';
+import { BookmarkButton, type NewBookmark } from './BookmarkButton';
 import type { PromptInsertion } from './ChatInput';
-import { composeComment, type CommentMark } from '../lib/review';
+import { composeComment, type CommentMark, bookmarkLabel } from '../lib/review';
 import { applyQuoteHighlights } from '../lib/quoteHighlight';
 import { RichCopyButton, useRichCopy } from './RichCopy';
 import type { SessionPanelApi, TabActivity } from '../registry/tabRegistry';
@@ -376,6 +377,8 @@ export function DevinPanel({
   onOpenFile,
   onComment,
   commentMarks,
+  onBookmark,
+  bookmarkedAnchors,
   onBatchSent,
   onFocusComment,
   onPanelApi,
@@ -400,6 +403,11 @@ export function DevinPanel({
   // into the current Review Batch; returns a status to toast or null.
   // Omitted when settings.review is off.
   onComment?: (c: NewComment) => string | null;
+  // Model: web.BookmarkMessage — ☆ toggle on a message; returns a status to
+  // toast or null. Omitted when settings.review is off.
+  onBookmark?: (b: NewBookmark) => string | null;
+  // Anchors already bookmarked in this session (rendered as ★).
+  bookmarkedAnchors?: ReadonlySet<string>;
   // Anchored comments in this session (model: web.HighlightQuotes).
   commentMarks?: readonly CommentMark[];
   // Model: web.ViewQuoteComments — show this comment in the Review panel.
@@ -721,6 +729,13 @@ export function DevinPanel({
   // Model: web.CommentOnSelection — only when Review
   // is enabled (builtinTabKinds omits onComment when settings.review is off).
   const canComment = !!onComment;
+  // Model: web.BookmarkMessage — ☆ only when Review is on (builtinTabKinds
+  // omits onBookmark otherwise).
+  const canBookmark = !!onBookmark;
+  function bookmark(anchor: string, text: string) {
+    const note = onBookmark?.({ anchor, label: bookmarkLabel(text) });
+    if (note) showToast(note);
+  }
   function submitComment(c: NewComment) {
     const note = onComment?.(c);
     if (note) showToast(note);
@@ -1597,6 +1612,7 @@ export function DevinPanel({
                 ) : (
                   <>
                     {m.text && <div>{m.text}</div>}
+                    {anchor && canBookmark && <BookmarkButton active={!!bookmarkedAnchors?.has(anchor)} className={step ? 'msg-bookmark-btn-2nd' : undefined} onClick={() => bookmark(anchor, m.text)} />}
                     {step && (
                       <button
                         type="button"
@@ -1623,6 +1639,7 @@ export function DevinPanel({
             return (
               <div key={m.id} className={`msg msg-assistant${bmCls}`} data-anchor={anchor ?? undefined}>
                 <MarkdownText text={m.text} theme={theme} projectPath={projectPath} onOpenFile={openFile} />
+                {anchor && canBookmark && <BookmarkButton active={!!bookmarkedAnchors?.has(anchor)} onClick={() => bookmark(anchor, m.text)} />}
                 {showRichCopy && <RichCopyButton onClick={() => copyRich(m.text)} />}
               </div>
             );

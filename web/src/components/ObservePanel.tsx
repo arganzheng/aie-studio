@@ -2,7 +2,7 @@
 // session rendered from the assembler's three-entity output (Conversation /
 // Turn / Action). Polls server.AssembleObservation every 3s with the last ETag
 // (304 = nothing changed) and pauses while the document is hidden.
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { getObservation } from '../api';
 import type { TabRef } from '../types';
 import { costTitle, fmtCost, fmtUsd, generationCost, turnCost } from '../lib/pricing';
@@ -16,6 +16,7 @@ import {
   fmtMs,
   fmtPct,
   fmtTime,
+  dateBreaks,
   fmtTokens,
   latestRatelimit,
   seqIndex,
@@ -144,6 +145,7 @@ export function ObservePanel({ projectId, origin, onReveal }: { projectId: strin
 
 function ConversationView({ conv, all, depth, onReveal }: { conv: ObsConversation; all: ObsConversation[]; depth: number; onReveal?: (anchor: string) => void }) {
   const stats = useMemo(() => conversationStats(conv, all), [conv, all]);
+  const turnDates = useMemo(() => dateBreaks(conv.turns.map((t) => t.started_at)), [conv.turns]);
   const series = useMemo(() => turnSeries(conv), [conv]);
   const quota = useMemo(() => latestRatelimit(conv), [conv]);
   const drops = useMemo(() => cacheDropIds(conv), [conv]);
@@ -187,13 +189,21 @@ function ConversationView({ conv, all, depth, onReveal }: { conv: ObsConversatio
       {conv.wire_orphans.length > 0 && <OrphanBar orphans={conv.wire_orphans} />}
       {series.length > 1 && <TurnChart series={series} onPick={(id) => setExpanded(new Set([id]))} />}
       <div className="observe-turns">
-        {conv.turns.map((t) => (
-          <TurnView key={t.id} turn={t} open={isOpen(t)} onToggle={() => toggle(t)} drops={drops} children={children} all={all} depth={depth} convModel={conv.model} onReveal={onReveal} />
+        {conv.turns.map((t, i) => (
+          <Fragment key={t.id}>
+            {turnDates[i] && <DateDivider label={turnDates[i]!} />}
+            <TurnView turn={t} open={isOpen(t)} onToggle={() => toggle(t)} drops={drops} children={children} all={all} depth={depth} convModel={conv.model} onReveal={onReveal} />
+          </Fragment>
         ))}
         {conv.turns.length === 0 && <div className="observe-muted">No turns yet.</div>}
       </div>
     </div>
   );
+}
+
+/** Date divider between Turns / Action rows; dates are never repeated per card (rule-327). */
+function DateDivider({ label }: { label: string }) {
+  return <div className="observe-date" role="separator" aria-label={label}><span>{label}</span></div>;
 }
 
 function Chip({ label, value, warn, title }: { label: string; value: string; warn?: boolean; title?: string }) {
@@ -219,6 +229,7 @@ function TurnView({
   const noStop = turn.stop_action_id === null;
   const seq = useMemo(() => seqIndex(turn), [turn]);
   const rows = useMemo(() => turnRows(turn), [turn]);
+  const rowDates = useMemo(() => dateBreaks(rows.map((r) => r[0].started_at), turn.started_at), [rows, turn.started_at]);
   const cost = useMemo(() => turnCost(turn, all), [turn, all]);
   return (
     <div className={`observe-turn ${noStop ? 'observe-turn-nostop' : ''}`}>
@@ -235,12 +246,15 @@ function TurnView({
       </button>
       {open && (
         <div className="observe-actions">
-          {rows.map((row) => (
-            <div key={row[0].id} className={`observe-row ${row.length > 1 ? 'observe-row-parallel' : ''}`}>
-              {row.map((a) => (
-                <ActionCard key={a.id} action={a} seq={seq} drop={drops.has(a.id)} child={children.get(a.id)} all={all} depth={depth} convModel={convModel} onReveal={onReveal} />
-              ))}
-            </div>
+          {rows.map((row, i) => (
+            <Fragment key={row[0].id}>
+              {rowDates[i] && <DateDivider label={rowDates[i]!} />}
+              <div className={`observe-row ${row.length > 1 ? 'observe-row-parallel' : ''}`}>
+                {row.map((a) => (
+                  <ActionCard key={a.id} action={a} seq={seq} drop={drops.has(a.id)} child={children.get(a.id)} all={all} depth={depth} convModel={convModel} onReveal={onReveal} />
+                ))}
+              </div>
+            </Fragment>
           ))}
         </div>
       )}

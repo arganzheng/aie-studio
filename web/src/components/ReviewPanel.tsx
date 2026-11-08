@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Batch, Comment, TabRef } from '../types';
+import type { Batch, Bookmark, Comment, TabRef } from '../types';
 import { flashMessage } from './CommentComposer';
 
 // Review (model: web.ReviewPanel) — the right-hand sidebar on desktop, a
-// right-side drawer on mobile. Draft Batches on top, each with its Comments
+// right-side drawer on mobile. A collapsible "★ Bookmarks" group sits at the
+// very top when there are any (rule-444); then draft Batches, each with its Comments
 // (quote + text) and a Send button; sent Batches fold away underneath.
 // Comments drag (HTML5 DnD, same implementation as GroupList) within a batch
 // to reorder and onto another draft batch to move; the ⋯ menu offers the same
@@ -11,7 +12,7 @@ import { flashMessage } from './CommentComposer';
 
 type DropPos = 'before' | 'after';
 type Drop = { kind: 'comment'; id: string; pos: DropPos } | { kind: 'batch'; id: string };
-type Menu = { kind: 'comment' | 'batch'; id: string; top: number; left: number };
+type Menu = { kind: 'comment' | 'batch' | 'bookmark'; id: string; top: number; left: number };
 
 function originLabel(ref: TabRef): string {
   if (ref.type === 'file') return ref.key.split('/').pop() || ref.key;
@@ -33,6 +34,7 @@ function sentLabel(ts: number | undefined): string {
 
 export function ReviewPanel({
   batches,
+  bookmarks,
   currentBatchId,
   focused,
   onAddComment,
@@ -47,8 +49,12 @@ export function ReviewPanel({
   onSetCurrent,
   onSendBatch,
   onReopenBatch,
+  onJumpBookmark,
+  onDeleteBookmark,
 }: {
   batches: Batch[];
+  // Model: entity Bookmark — creation order = display order.
+  bookmarks: Bookmark[];
   // Resolved current batch (model: web.SetCurrentBatch); null = no draft yet.
   currentBatchId: string | null;
   // Model: web.ViewQuoteComments — scroll this comment into view and flash
@@ -68,6 +74,9 @@ export function ReviewPanel({
   onSetCurrent: (id: string) => void;
   onSendBatch: (id: string) => void;
   onReopenBatch: (id: string) => void;
+  // Model: web.JumpToBookmark / web.RemoveBookmark.
+  onJumpBookmark: (b: Bookmark) => void;
+  onDeleteBookmark: (id: string) => void;
 }) {
   const [adding, setAdding] = useState<{ batchId: string; value: string } | null>(null);
   const [editing, setEditing] = useState<{ id: string; value: string } | null>(null);
@@ -76,6 +85,7 @@ export function ReviewPanel({
   const [dragId, setDragId] = useState<string | null>(null);
   const [drop, setDrop] = useState<Drop | null>(null);
   const [sentOpen, setSentOpen] = useState(false);
+  const [bookmarksOpen, setBookmarksOpen] = useState(true);
   const [expandedSent, setExpandedSent] = useState<Set<string>>(new Set());
   const menuRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -298,13 +308,45 @@ export function ReviewPanel({
     ? drafts.flatMap((b) => b.comments.map((c) => ({ batch: b, comment: c }))).find((x) => x.comment.id === menu.id)
     : undefined;
   const menuBatch = menu?.kind === 'batch' ? batches.find((b) => b.id === menu.id) : undefined;
+  const menuBookmark = menu?.kind === 'bookmark' ? bookmarks.find((b) => b.id === menu.id) : undefined;
   const menuIdx = menuComment ? menuComment.batch.comments.indexOf(menuComment.comment) : -1;
 
   return (
     <div className="review-list" ref={listRef}>
-      {batches.length === 0 && (
+      {batches.length === 0 && bookmarks.length === 0 && (
         <div className="empty">
-          Select text in a session and hit 💬 Comment, or 💬 a whole message. Comments collect in a batch; send the batch to the AI when you're ready.
+          Select text in a session and hit 💬 Comment — comments collect in a batch you send to the AI when you're ready. Hit ☆ on a message to bookmark it here.
+        </div>
+      )}
+      {bookmarks.length > 0 && (
+        <div className="review-bookmarks">
+          <div
+            className="review-bookmarks-header"
+            onClick={() => setBookmarksOpen((v) => !v)}
+            title={bookmarksOpen ? 'Collapse bookmarks' : 'Expand bookmarks'}
+          >
+            <span className="review-batch-current">{bookmarksOpen ? '▾' : '▸'}</span>
+            <span className="review-batch-name">★ Bookmarks</span>
+            <span className="review-batch-count">{bookmarks.length}</span>
+          </div>
+          {bookmarksOpen && bookmarks.map((b) => (
+            <div key={b.id} data-bookmark-id={b.id} className="review-bookmark">
+              <div
+                className="review-comment-row review-comment-link"
+                onClick={() => onJumpBookmark(b)}
+                title={`Jump to this message (${originLabel(b.tab)})`}
+              >
+                <span className="review-origin">{originIcon(b.tab)}</span>
+                <span className="review-bookmark-label">{b.label}</span>
+                <button
+                  className="review-menu-btn"
+                  onClick={(e) => openMenu(e, 'bookmark', b.id)}
+                  title="Bookmark menu"
+                  aria-label="Bookmark menu"
+                >⋯</button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
       {drafts.map((batch) => {
@@ -430,6 +472,14 @@ export function ReviewPanel({
           <button
             className="overflow-action"
             onClick={() => { setMenu(null); onDeleteComment(menuComment.comment.id); }}
+          >🗑 Delete</button>
+        </div>
+      )}
+      {menu && menuBookmark && (
+        <div ref={menuRef} className="tab-overflow-menu" style={{ top: menu.top, left: menu.left }}>
+          <button
+            className="overflow-action"
+            onClick={() => { setMenu(null); onDeleteBookmark(menuBookmark.id); }}
           >🗑 Delete</button>
         </div>
       )}
