@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { listDir, makeDir, moveEntry, statFile, type FsEntry, type FsStat } from '../api';
+import { ApiError, deleteEntry, listDir, makeDir, moveEntry, statFile, uploadFile, type FsEntry, type FsStat } from '../api';
 import { copyText } from '../lib/clipboard';
 import { joinPath, parentPath, rewriteMovedPath } from '../lib/movedPath';
 import { isTextFile } from '../lib/textFiles';
+import { useFitMenuTop } from '../lib/fitMenu';
 
 // Model: web.FileTree (auc-009). Lazy tree over server.ListDir; the per-row
-// ⋯ menu offers Download (files), Rename, Move to… and Details — the middle
-// two both land on server.MoveEntry, Details reads server.StatFile.
+// ⋯ menu offers Download (files), Rename, Move to…, Upload here… (dirs) and
+// Details — Rename / Move land on server.MoveEntry, Upload on
+// server.UploadFile, Details reads server.StatFile.
 
 type Entry = FsEntry;
 
@@ -38,6 +40,8 @@ function entriesEqual(a: Entry[] | undefined, b: Entry[]): boolean {
 }
 
 type Rename = { path: string; value: string };
+// rule-454 — inline "new folder" row under `dir`.
+type NewFolder = { dir: string; value: string };
 
 function Node({
   entry,
@@ -51,6 +55,14 @@ function Node({
   onRenameChange,
   onRenameCommit,
   onRenameCancel,
+  dropTarget,
+  onDragOverDir,
+  onDropFiles,
+  upload,
+  newFolder,
+  onNewFolderChange,
+  onNewFolderCommit,
+  onNewFolderCancel,
 }: {
   entry: Entry;
   depth: number;
@@ -63,17 +75,35 @@ function Node({
   onRenameChange: (value: string) => void;
   onRenameCommit: () => void;
   onRenameCancel: () => void;
+  // rule-453 — OS file drag onto a directory row; files rows are not targets.
+  dropTarget: string | null;
+  onDragOverDir: (e: React.DragEvent, dir: string | null) => void;
+  onDropFiles: (e: React.DragEvent, dir: string) => void;
+  // rule-453 — progress of the upload currently landing in this directory.
+  upload: UploadProgress | null;
+  newFolder: NewFolder | null;
+  onNewFolderChange: (value: string) => void;
+  onNewFolderCommit: () => void;
+  onNewFolderCancel: () => void;
 }) {
   const open = expanded.has(entry.path);
   const kids = open ? childrenByPath.get(entry.path) : undefined;
   const selected = selectedPath === entry.path;
   const renaming = rename?.path === entry.path;
+  const isDropTarget = entry.isDir && dropTarget === entry.path;
+  const uploading = entry.isDir && upload?.dir === entry.path ? upload : null;
+  const creatingHere = entry.isDir && open && newFolder?.dir === entry.path;
   return (
     <>
       <div
-        className={`tree-item ${selected ? 'selected' : ''}`}
+        className={`tree-item ${selected ? 'selected' : ''} ${isDropTarget ? 'drop-target' : ''}`}
         style={{ paddingLeft: 8 + depth * 12 }}
         onClick={() => { if (!renaming) onToggle(entry); }}
+        onDragOver={entry.isDir ? (e) => onDragOverDir(e, entry.path) : undefined}
+        onDragLeave={entry.isDir ? (e) => {
+          if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) onDragOverDir(e, null);
+        } : undefined}
+        onDrop={entry.isDir ? (e) => onDropFiles(e, entry.path) : undefined}
       >
         <span className="tree-toggle">{entry.isDir ? (open ? '▾' : '▸') : ' '}</span>
         <span className="tree-icon">{entry.isDir ? '📁' : '📄'}</span>
@@ -95,6 +125,11 @@ function Node({
         ) : (
           <span className="tree-name">{entry.name}</span>
         )}
+        {uploading && !renaming && (
+          <span className="tree-upload-status" title={uploading.name}>
+            ⬆ {uploading.index}/{uploading.total} {uploading.pct}%
+          </span>
+        )}
         {!renaming && (
           <button
             className="tree-menu-btn"
@@ -104,9 +139,28 @@ function Node({
           >⋯</button>
         )}
       </div>
-      {open && kids && (
+      {open && (kids || creatingHere) && (
         <div className="tree-children">
-          {kids.map((c) => (
+          {creatingHere && (
+            <div className="tree-item" style={{ paddingLeft: 8 + (depth + 1) * 12 }}>
+              <span className="tree-toggle"> </span>
+              <span className="tree-icon">📁</span>
+              <input
+                autoFocus
+                className="tree-rename"
+                placeholder="New folder name"
+                value={newFolder!.value}
+                onChange={(e) => onNewFolderChange(e.target.value)}
+                onBlur={onNewFolderCancel}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); onNewFolderCommit(); }
+                  if (e.key === 'Escape') { e.preventDefault(); onNewFolderCancel(); }
+                }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+          )}
+          {(kids ?? []).map((c) => (
             <Node
               key={c.path}
               entry={c}
@@ -120,6 +174,14 @@ function Node({
               onRenameChange={onRenameChange}
               onRenameCommit={onRenameCommit}
               onRenameCancel={onRenameCancel}
+              dropTarget={dropTarget}
+              onDragOverDir={onDragOverDir}
+              onDropFiles={onDropFiles}
+              upload={upload}
+              newFolder={newFolder}
+              onNewFolderChange={onNewFolderChange}
+              onNewFolderCommit={onNewFolderCommit}
+              onNewFolderCancel={onNewFolderCancel}
             />
           ))}
         </div>
@@ -127,6 +189,12 @@ function Node({
     </>
   );
 }
+
+function hasFiles(e: React.DragEvent): boolean {
+  return Array.from(e.dataTransfer?.types ?? []).includes('Files');
+}
+
+type UploadProgress = { dir: string; index: number; total: number; name: string; pct: number };
 
 // rule-412 — "Move to…" destination chooser: a dirs-only lazy tree with the
 // project root pinned on top. The entry being moved (and, for a directory,
@@ -422,14 +490,18 @@ function EntryDetails({
 
 export function FileTree({
   projectId,
+  projectName,
   projectPath,
   onSelect,
   selectedPath,
   onEntryMoved,
+  onEntryDeleted,
   onNotice,
   onEdit,
 }: {
   projectId: string;
+  // rule-455 — label of the pinned root row.
+  projectName: string;
   // Absolute root of the project on the server — rule-433 builds the
   // "Full path" client-side from it.
   projectPath: string;
@@ -440,6 +512,9 @@ export function FileTree({
   // rule-413 — fired after a successful rename / move so the App can rewrite
   // open file Tabs.
   onEntryMoved?: (from: string, to: string) => void;
+  // rule-459 — fired after a successful delete so the App can close Tabs
+  // that were showing the entry.
+  onEntryDeleted?: (path: string) => void;
   onNotice?: (text: string) => void;
 }) {
   // Which dirs are visually expanded. Survives polling refreshes because it
@@ -461,9 +536,19 @@ export function FileTree({
   // Per-row ⋯ overflow menu (one open at a time); closes on outside press.
   const [menu, setMenu] = useState<{ entry: Entry; top: number; left: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuTop = useFitMenuTop(menuRef, menu, menu?.top ?? 0);
   const [rename, setRename] = useState<Rename | null>(null);
   const [moving, setMoving] = useState<Entry | null>(null);
   const [details, setDetails] = useState<Entry | null>(null);
+  // rule-453 — upload: hidden file input, the dir it will land in, the
+  // sequential progress readout, and the dir currently hovered by a drag.
+  // Only directories are targets; the project root is the pinned root row
+  // (rule-455) whose path is ROOT_KEY.
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadDirRef = useRef<string>('');
+  const [upload, setUpload] = useState<UploadProgress | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [newFolder, setNewFolder] = useState<NewFolder | null>(null);
 
   useEffect(() => {
     if (!menu) return;
@@ -511,6 +596,7 @@ export function FileTree({
     setMenu(null);
     setRename(null);
     setMoving(null);
+    setNewFolder(null);
     fetchDir(ROOT_KEY);
   }, [projectId, fetchDir]);
 
@@ -599,10 +685,166 @@ export function FileTree({
     void doMove(rename.path, joinPath(parentPath(rename.path), name));
   }, [rename, doMove, onNotice]);
 
+  // rule-453 — sequential upload of the chosen files into `dir`; 409 asks
+  // before overwriting, every other failure is a toast and we move on.
+  const uploadFiles = useCallback(async (dir: string, files: File[]) => {
+    if (files.length === 0) return;
+    const total = files.length;
+    for (let i = 0; i < total; i++) {
+      const file = files[i];
+      const report = (sent: number, size: number) =>
+        setUpload({ dir, index: i + 1, total, name: file.name, pct: size > 0 ? Math.round((sent / size) * 100) : 0 });
+      report(0, file.size);
+      try {
+        try {
+          await uploadFile(projectId, dir, file, { onProgress: report });
+        } catch (e) {
+          if (!(e instanceof ApiError) || e.status !== 409) throw e;
+          if (!window.confirm(`"${file.name}" already exists. Overwrite?`)) continue;
+          await uploadFile(projectId, dir, file, { overwrite: true, onProgress: report });
+        }
+      } catch (e) {
+        onNotice?.(`Upload "${file.name}" failed: ${(e as Error).message}`);
+      }
+    }
+    setUpload(null);
+    // Show the result right away rather than waiting for the next poll.
+    if (dir !== ROOT_KEY) setExpanded((prev) => (prev.has(dir) ? prev : new Set(prev).add(dir)));
+    await fetchDir(dir);
+  }, [projectId, fetchDir, onNotice]);
+
+  // rule-454 — open the dir and show the inline input as its first row.
+  const startNewFolder = useCallback((dir: string) => {
+    if (dir !== ROOT_KEY) setExpanded((prev) => {
+      if (prev.has(dir)) return prev;
+      if (!cacheRef.current.has(dir)) fetchDir(dir);
+      return new Set(prev).add(dir);
+    });
+    setNewFolder({ dir, value: '' });
+  }, [fetchDir]);
+
+  const commitNewFolder = useCallback(async () => {
+    if (!newFolder) return;
+    const name = newFolder.value.trim();
+    const dir = newFolder.dir;
+    setNewFolder(null);
+    if (!name) return;
+    if (name.includes('/')) {
+      onNotice?.('Name cannot contain "/"');
+      return;
+    }
+    try {
+      await makeDir(projectId, joinPath(dir, name));
+      await fetchDir(dir);
+    } catch (e) {
+      onNotice?.(`New folder failed: ${(e as Error).message}`);
+    }
+  }, [newFolder, projectId, fetchDir, onNotice]);
+
+  // rule-459 — confirm, DeleteEntry, refresh the parent, tell the App. A
+  // non-empty directory is refused by the server (409) and surfaces as a toast.
+  const doDelete = useCallback(async (entry: Entry) => {
+    if (!window.confirm(`Delete "${entry.name}"?`)) return;
+    try {
+      const res = await deleteEntry(projectId, entry.path);
+      setExpanded((prev) => {
+        if (!prev.has(res.path)) return prev;
+        const next = new Set(prev);
+        next.delete(res.path);
+        return next;
+      });
+      await fetchDir(parentPath(res.path));
+      onEntryDeleted?.(res.path);
+    } catch (e) {
+      onNotice?.(`Delete failed: ${(e as Error).message}`);
+    }
+  }, [projectId, fetchDir, onEntryDeleted, onNotice]);
+
+  const pickFiles = useCallback((dir: string) => {
+    uploadDirRef.current = dir;
+    const input = fileInputRef.current;
+    if (!input) return;
+    input.value = '';
+    input.click();
+  }, []);
+
+  // `dir === null` is the dragleave signal: clear the highlight.
+  const onDragOverDir = useCallback((e: React.DragEvent, dir: string | null) => {
+    if (!hasFiles(e)) return;
+    if (dir === null) { setDropTarget(null); return; }
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+    setDropTarget((prev) => (prev === dir ? prev : dir));
+  }, []);
+
+  const onDropFiles = useCallback((e: React.DragEvent, dir: string) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setDropTarget(null);
+    void uploadFiles(dir, Array.from(e.dataTransfer.files));
+  }, [uploadFiles]);
+
   const rootItems = useMemo(() => childrenByPath.get(ROOT_KEY) ?? [], [childrenByPath]);
+  // rule-455 — synthetic entry so the root row shares the ⋯ menu machinery.
+  const rootEntry = useMemo<Entry>(() => ({ name: projectName, path: ROOT_KEY, isDir: true }), [projectName]);
+  const rootUploading = upload?.dir === ROOT_KEY ? upload : null;
 
   return (
     <div className="tree">
+      {/* rule-453 — hidden picker shared by every "⬆ Upload here…" entry */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          void uploadFiles(uploadDirRef.current, files);
+        }}
+      />
+      {/* rule-455 — pinned root row: not collapsible, same ⋯ menu as a dir */}
+      <div
+        className={`tree-item tree-root ${dropTarget === ROOT_KEY ? 'drop-target' : ''}`}
+        onDragOver={(e) => onDragOverDir(e, ROOT_KEY)}
+        onDragLeave={(e) => {
+          if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) onDragOverDir(e, null);
+        }}
+        onDrop={(e) => onDropFiles(e, ROOT_KEY)}
+      >
+        <span className="tree-icon">📁</span>
+        <span className="tree-name" title={projectPath}>{projectName}</span>
+        {rootUploading && (
+          <span className="tree-upload-status" title={rootUploading.name}>
+            ⬆ {rootUploading.index}/{rootUploading.total} {rootUploading.pct}%
+          </span>
+        )}
+        <button
+          className="tree-menu-btn"
+          onClick={(e) => openMenu(e, rootEntry)}
+          title="Project root menu"
+          aria-label="Project root menu"
+        >⋯</button>
+      </div>
+      {newFolder?.dir === ROOT_KEY && (
+        <div className="tree-item" style={{ paddingLeft: 8 }}>
+          <span className="tree-toggle"> </span>
+          <span className="tree-icon">📁</span>
+          <input
+            autoFocus
+            className="tree-rename"
+            placeholder="New folder name"
+            value={newFolder.value}
+            onChange={(e) => setNewFolder((n) => (n ? { ...n, value: e.target.value } : n))}
+            onBlur={() => setNewFolder(null)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); void commitNewFolder(); }
+              if (e.key === 'Escape') { e.preventDefault(); setNewFolder(null); }
+            }}
+          />
+        </div>
+      )}
       {rootItems.map((e) => (
         <Node
           key={e.path}
@@ -617,13 +859,21 @@ export function FileTree({
           onRenameChange={(value) => setRename((r) => (r ? { ...r, value } : r))}
           onRenameCommit={commitRename}
           onRenameCancel={() => setRename(null)}
+          dropTarget={dropTarget}
+          onDragOverDir={onDragOverDir}
+          onDropFiles={onDropFiles}
+          upload={upload}
+          newFolder={newFolder}
+          onNewFolderChange={(value) => setNewFolder((n) => (n ? { ...n, value } : n))}
+          onNewFolderCommit={() => { void commitNewFolder(); }}
+          onNewFolderCancel={() => setNewFolder(null)}
         />
       ))}
       {menu && createPortal(
         <div
           ref={menuRef}
           className="tab-overflow-menu"
-          style={{ top: menu.top, left: menu.left }}
+          style={{ top: menuTop, left: menu.left }}
         >
           {!menu.entry.isDir && (
             <button
@@ -637,18 +887,43 @@ export function FileTree({
               onClick={() => { setMenu(null); onEdit(menu.entry.path); }}
             >✎ Edit</button>
           )}
-          <button
-            className="overflow-action"
-            onClick={() => { setMenu(null); setRename({ path: menu.entry.path, value: menu.entry.name }); }}
-          >✎ Rename</button>
-          <button
-            className="overflow-action"
-            onClick={() => { setMenu(null); setMoving(menu.entry); }}
-          >📂 Move to…</button>
-          <button
-            className="overflow-action"
-            onClick={() => { setMenu(null); setDetails(menu.entry); }}
-          >ℹ Details</button>
+          {menu.entry.path !== ROOT_KEY && (
+            <button
+              className="overflow-action"
+              onClick={() => { setMenu(null); setRename({ path: menu.entry.path, value: menu.entry.name }); }}
+            >✎ Rename</button>
+          )}
+          {menu.entry.path !== ROOT_KEY && (
+            <button
+              className="overflow-action"
+              onClick={() => { setMenu(null); setMoving(menu.entry); }}
+            >📂 Move to…</button>
+          )}
+          {menu.entry.isDir && (
+            <button
+              className="overflow-action"
+              onClick={() => { const dir = menu.entry.path; setMenu(null); startNewFolder(dir); }}
+            >📁 New folder…</button>
+          )}
+          {menu.entry.isDir && (
+            <button
+              className="overflow-action"
+              disabled={upload !== null}
+              onClick={() => { const dir = menu.entry.path; setMenu(null); pickFiles(dir); }}
+            >⬆ Upload here…</button>
+          )}
+          {menu.entry.path !== ROOT_KEY && (
+            <button
+              className="overflow-action"
+              onClick={() => { setMenu(null); setDetails(menu.entry); }}
+            >ℹ Details</button>
+          )}
+          {menu.entry.path !== ROOT_KEY && (
+            <button
+              className="overflow-action danger"
+              onClick={() => { const entry = menu.entry; setMenu(null); void doDelete(entry); }}
+            >🗑 Delete</button>
+          )}
         </div>,
         document.body,
       )}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useFitMenuTop } from '../lib/fitMenu';
 import type { Batch, Bookmark, Comment, TabRef } from '../types';
 import { flashMessage } from './CommentComposer';
 
@@ -88,6 +89,7 @@ export function ReviewPanel({
   const [bookmarksOpen, setBookmarksOpen] = useState(true);
   const [expandedSent, setExpandedSent] = useState<Set<string>>(new Set());
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuTop = useFitMenuTop(menuRef, menu, menu?.top ?? 0);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -443,7 +445,7 @@ export function ReviewPanel({
       )}
 
       {menu && menuComment && (
-        <div ref={menuRef} className="tab-overflow-menu" style={{ top: menu.top, left: menu.left }}>
+        <div ref={menuRef} className="tab-overflow-menu" style={{ top: menuTop, left: menu.left }}>
           <button
             className="overflow-action"
             onClick={() => { setMenu(null); setEditing({ id: menuComment.comment.id, value: menuComment.comment.text }); }}
@@ -476,7 +478,7 @@ export function ReviewPanel({
         </div>
       )}
       {menu && menuBookmark && (
-        <div ref={menuRef} className="tab-overflow-menu" style={{ top: menu.top, left: menu.left }}>
+        <div ref={menuRef} className="tab-overflow-menu" style={{ top: menuTop, left: menu.left }}>
           <button
             className="overflow-action"
             onClick={() => { setMenu(null); onDeleteBookmark(menuBookmark.id); }}
@@ -484,7 +486,7 @@ export function ReviewPanel({
         </div>
       )}
       {menu && menuBatch && (
-        <div ref={menuRef} className="tab-overflow-menu" style={{ top: menu.top, left: menu.left }}>
+        <div ref={menuRef} className="tab-overflow-menu" style={{ top: menuTop, left: menu.left }}>
           <button
             className="overflow-action"
             onClick={() => { setMenu(null); setRenaming({ id: menuBatch.id, value: menuBatch.name }); }}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useFitMenuTop } from '../lib/fitMenu';
 import type { Group, Tab } from '../types';
 import { DEFAULT_GROUP_ID, DEFAULT_GROUP_NAME, tabGroupId } from '../types';
 import { groupActivityMark, type TabActivity } from '../lib/tabActivity';
@@ -42,6 +43,7 @@ export function GroupList({
   const [dragId, setDragId] = useState<string | null>(null);
   const [drop, setDrop] = useState<{ id: string; pos: DropPos } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuTop = useFitMenuTop(menuRef, menu, menu?.top ?? 0);
 
   useEffect(() => {
     if (!menu) return;
@@ -183,7 +185,7 @@ export function GroupList({
         <div
           ref={menuRef}
           className="tab-overflow-menu"
-          style={{ top: menu.top, left: menu.left }}
+          style={{ top: menuTop, left: menu.left }}
         >
           <button
             className="overflow-action"

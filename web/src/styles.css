@@ -576,6 +576,22 @@ body {
 }
 .tree-row-disabled { opacity: 0.45; }
 
+/* delete entry (model: web.FileTree rule-459) */
+.overflow-action.danger { color: var(--danger); }
+
+/* pinned root row (model: web.FileTree rule-455) */
+.tree-root { cursor: default; font-weight: 600; }
+.tree-root .tree-name { color: var(--fg-strong); }
+
+/* upload (model: web.FileTree rule-453) */
+.tree-upload-status {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.tree-item.drop-target { background: var(--bg-active); outline: 1px dashed var(--border-strong); outline-offset: -1px; }
+
 /* Move to… directory picker (model: web.FileTree rule-412) */
 .dirpicker-modal { max-width: 420px; display: flex; flex-direction: column; }
 .dirpicker-body { padding: 8px 0; overflow: auto; max-height: 50vh; min-height: 120px; }

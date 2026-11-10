@@ -1,6 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import fs from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { pipeline } from 'node:stream/promises';
+import { Transform } from 'node:stream';
 import path from 'node:path';
 import mime from 'mime-types';
 import { getProject } from './store.js';
@@ -83,11 +86,39 @@ export function planMkdir(root: string, rel: string) {
   return { abs, rel: toRelPosix(root, abs) };
 }
 
+// Model: server.UploadFile rule-448 — pure path half: the destination is
+// dir/name where dir is pinned under the root and name is a plain basename.
+// Existence checks happen in the route because they need the filesystem.
+export function planUpload(root: string, dirRel: string, name: string) {
+  if (!name || name === '.' || name === '..' || name.includes('/') || name.includes(path.sep)) {
+    throw Object.assign(new Error('invalid file name'), { code: 400 });
+  }
+  const dirAbs = resolveRel(root, dirRel);
+  const abs = path.join(dirAbs, name);
+  return { dirAbs, abs, rel: toRelPosix(root, abs) };
+}
+
+// Model: server.DeleteEntry rule-456 — pure path half; existence / emptiness
+// checks happen in the route.
+export function planDelete(root: string, rel: string) {
+  const abs = resolveRel(root, rel);
+  if (abs === root) throw Object.assign(new Error('cannot delete the project root'), { code: 400 });
+  return { abs, rel: toRelPosix(root, abs) };
+}
+
+// rule-449 — one file per request, raw bytes, no multipart dependency.
+export const UPLOAD_MAX_BYTES = 512 * 1024 * 1024;
+
 // ReadFile refuses >20MB; the JSON envelope around a 20MB string needs a bit
 // of headroom (escapes), and Fastify's default cap is only 1MB.
 const WRITE_BODY_LIMIT = 24 * 1024 * 1024;
 
 export function registerFsRoutes(app: FastifyInstance) {
+  // rule-449 — hand the raw request stream to the upload route instead of
+  // buffering it; Fastify's bodyLimit only applies to parsed bodies, so the
+  // size cap is enforced in the route while streaming.
+  app.addContentTypeParser('application/octet-stream', (_req, payload, done) => done(null, payload));
+
   app.get<{ Querystring: { project?: string; path?: string } }>(
     '/api/fs/list',
     async (req, reply) => {
@@ -238,6 +269,109 @@ export function registerFsRoutes(app: FastifyInstance) {
       await fs.writeFile(abs, content, 'utf8');
       const after = await fs.stat(abs);
       return { path: rel, size: after.size, mtimeMs: after.mtimeMs };
+    },
+  );
+
+  // Model: server.UploadFile (auc-133). Raw-bytes body; one file per request.
+  app.post<{ Querystring: { project?: string; dir?: string; name?: string; overwrite?: string } }>(
+    '/api/fs/upload',
+    async (req, reply) => {
+      const { project: projectId, dir, name, overwrite } = req.query;
+      if (!projectId || typeof name !== 'string') {
+        return reply.code(400).send({ error: 'project and name required' });
+      }
+      // rule-449: refuse up front when the client already tells us it is too big.
+      const declared = Number(req.headers['content-length']);
+      if (Number.isFinite(declared) && declared > UPLOAD_MAX_BYTES) {
+        return reply.code(413).send({ error: `file exceeds ${UPLOAD_MAX_BYTES} bytes` });
+      }
+      let root: string;
+      try {
+        ({ project: { path: root } } = await resolveInProject(req, projectId, ''));
+      } catch (e: any) {
+        return reply.code(e.code ?? 400).send({ error: e.message });
+      }
+      let plan: ReturnType<typeof planUpload>;
+      try {
+        plan = planUpload(root, dir ?? '', name);
+      } catch (e: any) {
+        return reply.code(e.code ?? 400).send({ error: e.message });
+      }
+      // rule-448: the directory must already exist.
+      const dirStat = await fs.stat(plan.dirAbs).catch(() => null);
+      if (!dirStat?.isDirectory()) {
+        return reply.code(400).send({ error: 'directory does not exist' });
+      }
+      // rule-450: never silently clobber; lstat so a dangling symlink counts.
+      const existing = await fs.lstat(plan.abs).catch(() => null);
+      if (existing) {
+        if (overwrite !== '1') return reply.code(409).send({ error: 'already exists' });
+        if (existing.isDirectory()) return reply.code(400).send({ error: 'destination is a directory' });
+      }
+      // rule-451: stream to a sibling temp file, rename on success.
+      const tmp = path.join(plan.dirAbs, `.${name}.upload-${randomBytes(6).toString('hex')}`);
+      let received = 0;
+      const capped = new Transform({
+        transform(chunk: Buffer, _enc, cb) {
+          received += chunk.length;
+          if (received > UPLOAD_MAX_BYTES) {
+            cb(Object.assign(new Error(`file exceeds ${UPLOAD_MAX_BYTES} bytes`), { code: 413 }));
+            return;
+          }
+          cb(null, chunk);
+        },
+      });
+      try {
+        // Body is the raw stream (see the octet-stream parser above). A client
+        // that sends no body / another content type gets a 400, not a crash.
+        const body = req.body as NodeJS.ReadableStream | undefined;
+        if (!body || typeof (body as any).pipe !== 'function') {
+          return reply.code(400).send({ error: 'raw file body required (Content-Type: application/octet-stream)' });
+        }
+        await pipeline(body, capped, createWriteStream(tmp, { flags: 'wx' }));
+        await fs.rename(tmp, plan.abs);
+      } catch (e: any) {
+        await fs.rm(tmp, { force: true }).catch(() => {});
+        return reply.code(e.code === 413 ? 413 : 500).send({ error: e.message ?? 'upload failed' });
+      }
+      // rule-452
+      const after = await fs.stat(plan.abs);
+      return { path: plan.rel, size: after.size, mtimeMs: after.mtimeMs };
+    },
+  );
+
+  // Model: server.DeleteEntry (auc-134). Files and symlinks unlink; a
+  // directory only goes if it is empty — recursive delete is deliberately
+  // not offered (rule-457).
+  app.delete<{ Querystring: { project?: string; path?: string } }>(
+    '/api/fs/entry',
+    async (req, reply) => {
+      const { project: projectId, path: rel } = req.query;
+      if (!projectId || !rel) return reply.code(400).send({ error: 'project and path required' });
+      let root: string;
+      try {
+        ({ project: { path: root } } = await resolveInProject(req, projectId, ''));
+      } catch (e: any) {
+        return reply.code(e.code ?? 400).send({ error: e.message });
+      }
+      let plan: ReturnType<typeof planDelete>;
+      try {
+        plan = planDelete(root, rel);
+      } catch (e: any) {
+        return reply.code(e.code ?? 400).send({ error: e.message });
+      }
+      const st = await fs.lstat(plan.abs).catch(() => null);
+      if (!st) return reply.code(404).send({ error: 'not found' });
+      try {
+        if (st.isDirectory()) await fs.rmdir(plan.abs);
+        else await fs.unlink(plan.abs);
+      } catch (e: any) {
+        if (e?.code === 'ENOTEMPTY' || e?.code === 'EEXIST') {
+          return reply.code(409).send({ error: 'directory not empty' });
+        }
+        return reply.code(500).send({ error: e?.message ?? 'delete failed' });
+      }
+      return { path: plan.rel };
     },
   );
 

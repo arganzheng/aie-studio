@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { lookupMime, planMkdir, planMove, resolveRel } from '../fs.js';
+import { lookupMime, planDelete, planMkdir, planMove, planUpload, resolveRel } from '../fs.js';
 
 describe('lookupMime', () => {
   it('treats TypeScript as text, not MPEG transport stream', () => {
@@ -93,5 +93,39 @@ describe('planMkdir', () => {
     expect(() => planMkdir('/p', '')).toThrow(/project root/);
     expect(() => planMkdir('/p', 'a/..')).toThrow(/project root/);
     expect(() => planMkdir('/p', '../x')).toThrow(/escapes/);
+  });
+});
+
+// Model: server.UploadFile rule-448.
+describe('planUpload', () => {
+  it('joins dir and name under the root and normalises the returned path', () => {
+    expect(planUpload('/p', 'docs', 'a.md')).toEqual({ dirAbs: '/p/docs', abs: '/p/docs/a.md', rel: 'docs/a.md' });
+    expect(planUpload('/p', '', 'a.md').rel).toBe('a.md');
+    expect(planUpload('/p', '/docs//', 'a.md').rel).toBe('docs/a.md');
+  });
+
+  it('refuses escapes in the directory', () => {
+    expect(() => planUpload('/p', '../x', 'a.md')).toThrow(/escapes/);
+  });
+
+  it('refuses anything but a plain basename', () => {
+    expect(() => planUpload('/p', '', '')).toThrow(/invalid file name/);
+    expect(() => planUpload('/p', '', '.')).toThrow(/invalid file name/);
+    expect(() => planUpload('/p', '', '..')).toThrow(/invalid file name/);
+    expect(() => planUpload('/p', '', 'sub/a.md')).toThrow(/invalid file name/);
+    expect(() => planUpload('/p', '', '../a.md')).toThrow(/invalid file name/);
+  });
+});
+
+// Model: server.DeleteEntry rule-456.
+describe('planDelete', () => {
+  it('normalises the path under the root', () => {
+    expect(planDelete('/p', '/docs//a.md')).toEqual({ abs: '/p/docs/a.md', rel: 'docs/a.md' });
+  });
+
+  it('refuses the root and escapes', () => {
+    expect(() => planDelete('/p', '')).toThrow(/project root/);
+    expect(() => planDelete('/p', '.')).toThrow(/project root/);
+    expect(() => planDelete('/p', '../x')).toThrow(/escapes/);
   });
 });

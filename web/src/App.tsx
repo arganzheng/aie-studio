@@ -1661,6 +1661,7 @@ export default function App() {
             ) : sidebarView === 'files' ? (
               <FileTree
                 projectId={activeProject.id}
+                projectName={activeProject.name}
                 projectPath={activeProject.path}
                 onSelect={(p) => {
                   openFileTab(p);
@@ -1685,6 +1686,29 @@ export default function App() {
                     return { ...t, path: np };
                   });
                   if (changed) updateProjectTabs(pid, next);
+                }}
+                // Model: web.FileTree rule-459 — Tabs showing a deleted entry
+                // close. Done against the live list (not closeTab, whose
+                // `tabs` closure would go stale if several Tabs match).
+                onEntryDeleted={(path) => {
+                  const pid = activeProject.id;
+                  const live = workspaceRef.current.projects[pid]?.tabs ?? [];
+                  const gone = live.filter((t) => (t.type === 'file' || t.type === 'editor') && t.path === path);
+                  if (gone.length === 0) return;
+                  const goneIds = new Set(gone.map((t) => t.id));
+                  for (const id of goneIds) closeGuardRef.current.delete(id);
+                  const next = live.filter((t) => !goneIds.has(t.id));
+                  updateProjectTabs(pid, next);
+                  setVisitedTabs((prev) => {
+                    const n = new Set(prev);
+                    for (const id of goneIds) n.delete(id);
+                    return n;
+                  });
+                  if (activeTabId && goneIds.has(activeTabId)) {
+                    const gid = tabGroupId(gone.find((t) => t.id === activeTabId)!);
+                    const fallback = next.find((t) => tabGroupId(t) === gid)?.id ?? null;
+                    setActiveSelection(pid, gid, fallback);
+                  }
                 }}
                 onNotice={showAppToast}
               />

@@ -112,6 +112,49 @@ export async function writeFile(
 }
 
 // Model: web.FileTree rule-412 → server.MakeDir (auc-127).
+// Model: web.FileTree rule-453 → server.UploadFile (auc-133). Raw bytes via
+// XHR so the caller gets upload progress; fetch cannot report it.
+export type FsUploadResult = { path: string; size: number; mtimeMs: number };
+export function uploadFile(
+  projectId: string,
+  dir: string,
+  file: File,
+  opts: { overwrite?: boolean; onProgress?: (sent: number, total: number) => void } = {},
+): Promise<FsUploadResult> {
+  return new Promise((resolve, reject) => {
+    const q = new URLSearchParams({ project: projectId, dir, name: file.name });
+    if (opts.overwrite) q.set('overwrite', '1');
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/fs/upload?${q.toString()}`);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) opts.onProgress?.(e.loaded, e.total);
+    };
+    xhr.onerror = () => reject(new ApiError(0, 'network error'));
+    xhr.onload = () => {
+      let j: any = {};
+      try { j = JSON.parse(xhr.responseText); } catch { /* non-JSON error body */ }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(j);
+      else reject(new ApiError(xhr.status, j.error || `HTTP ${xhr.status}`));
+    };
+    xhr.send(file);
+  });
+}
+
+// Model: web.FileTree rule-459 → server.DeleteEntry (auc-134). Files and
+// empty directories only; a non-empty directory comes back as a 409.
+export async function deleteEntry(projectId: string, path: string): Promise<{ path: string }> {
+  const r = await fetch(
+    `/api/fs/entry?project=${encodeURIComponent(projectId)}&path=${encodeURIComponent(path)}`,
+    { method: 'DELETE' },
+  );
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new ApiError(r.status, j.error || `HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
 export async function makeDir(projectId: string, path: string): Promise<{ path: string }> {
   const r = await fetch('/api/fs/mkdir', {
     method: 'POST',
