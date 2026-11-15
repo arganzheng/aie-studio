@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Project } from '../types';
+import { DirPicker } from './DirPicker';
 
 // Model: web.ProjectManager — the one place projects are added, archived,
 // reordered and removed. Opened from the ProjectPicker menu ("⚙ Manage projects…"); the
@@ -20,12 +21,21 @@ export function ProjectManager({ projects, activeId, onAdd, onArchive, onReorder
   const [pathInput, setPathInput] = useState('');
   const [nameInput, setNameInput] = useState('');
   const [busy, setBusy] = useState(false);
+  // Model: web.DirPicker — "Browse…" opens a second dialog over this one;
+  // while it is open, Escape closes only the picker.
+  const [browsing, setBrowsing] = useState(false);
+  const browsingRef = useRef(false);
+  browsingRef.current = browsing;
+  const pathRef = useRef<HTMLInputElement>(null);
   // HTML5 drag state (desktop). `over` + `after` = where the insertion line is.
   const [drag, setDrag] = useState<{ id: string; over: string | null; after: boolean } | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.stopPropagation(); onClose(); }
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      if (browsingRef.current) setBrowsing(false);
+      else onClose();
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
@@ -153,16 +163,20 @@ export function ProjectManager({ projects, activeId, onAdd, onArchive, onReorder
         <div className="pm-body">
           {adding ? (
             <div className="pm-add">
-              <input
-                autoFocus
-                placeholder="/absolute/path or ~/path"
-                value={pathInput}
-                onChange={(e) => setPathInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void submitAdd();
-                  if (e.key === 'Escape') { e.stopPropagation(); setAdding(false); }
-                }}
-              />
+              <div className="pm-path-row">
+                <input
+                  ref={pathRef}
+                  autoFocus
+                  placeholder="/absolute/path or ~/path"
+                  value={pathInput}
+                  onChange={(e) => setPathInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void submitAdd();
+                    if (e.key === 'Escape') { e.stopPropagation(); setAdding(false); }
+                  }}
+                />
+                <button type="button" className="pm-btn" onClick={() => setBrowsing(true)} title="Pick a folder on the server">Browse…</button>
+              </div>
               <input
                 placeholder="Display name (optional)"
                 value={nameInput}
@@ -179,6 +193,17 @@ export function ProjectManager({ projects, activeId, onAdd, onArchive, onReorder
             </div>
           ) : (
             <button type="button" className="pm-add-action" onClick={() => setAdding(true)}>+ Add project</button>
+          )}
+          {browsing && (
+            <DirPicker
+              initialPath={pathInput}
+              onClose={() => setBrowsing(false)}
+              onSelect={(p) => {
+                setPathInput(p);
+                setBrowsing(false);
+                pathRef.current?.focus();
+              }}
+            />
           )}
           {projects.length === 0 && <div className="pm-empty">No projects yet — add a directory above.</div>}
           {live.map(row)}

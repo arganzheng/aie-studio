@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { Transform } from 'node:stream';
 import path from 'node:path';
+import os from 'node:os';
 import mime from 'mime-types';
 import { getProject } from './store.js';
 import { getUserId } from './auth.js';
@@ -106,6 +107,17 @@ export function planDelete(root: string, rel: string) {
   return { abs, rel: toRelPosix(root, abs) };
 }
 
+// Model: server.BrowseDirs — the ProjectManager's "Browse…" picker walks the
+// server filesystem (the browser's native folder picker only sees the client
+// machine). Pure path half: '' → home, leading ~ expands like addProject.
+export function resolveBrowsePath(input: string | undefined, home = os.homedir()): string {
+  const raw = (input ?? '').trim();
+  if (!raw) return home;
+  if (raw === '~' || raw.startsWith('~/')) return path.resolve(home, raw.slice(2));
+  if (!path.isAbsolute(raw)) throw Object.assign(new Error('path must be absolute or start with ~'), { code: 400 });
+  return path.resolve(raw);
+}
+
 // rule-449 — one file per request, raw bytes, no multipart dependency.
 export const UPLOAD_MAX_BYTES = 512 * 1024 * 1024;
 
@@ -118,6 +130,40 @@ export function registerFsRoutes(app: FastifyInstance) {
   // buffering it; Fastify's bodyLimit only applies to parsed bodies, so the
   // size cap is enforced in the route while streaming.
   app.addContentTypeParser('application/octet-stream', (_req, payload, done) => done(null, payload));
+
+  // Model: server.BrowseDirs — subdirectories only, dot-dirs hidden. Not
+  // pinned to a project: any logged-in user can already add any path as a
+  // project, so this exposes directory names and nothing more.
+  app.get<{ Querystring: { path?: string } }>('/api/fs/browse', async (req, reply) => {
+    if (!getUserId(req)) return reply.code(401).send({ error: 'unauthorized' });
+    let abs: string;
+    try {
+      abs = resolveBrowsePath(req.query.path);
+    } catch (e: any) {
+      return reply.code(e.code ?? 400).send({ error: e.message });
+    }
+    let entries: import('node:fs').Dirent[];
+    try {
+      entries = await fs.readdir(abs, { withFileTypes: true });
+    } catch (e: any) {
+      const code = e.code === 'ENOENT' ? 404 : e.code === 'ENOTDIR' ? 400 : e.code === 'EACCES' || e.code === 'EPERM' ? 403 : 500;
+      const msg = code === 404 ? 'directory not found' : code === 400 ? 'not a directory' : code === 403 ? 'permission denied' : e.message;
+      return reply.code(code).send({ error: msg });
+    }
+    const dirs: string[] = [];
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue;
+      let isDir = e.isDirectory();
+      // Follow symlinks so linked folders are navigable; broken links drop out.
+      if (!isDir && e.isSymbolicLink()) {
+        isDir = await fs.stat(path.join(abs, e.name)).then((st) => st.isDirectory(), () => false);
+      }
+      if (isDir) dirs.push(e.name);
+    }
+    dirs.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
+    const parent = path.dirname(abs);
+    return { path: abs, parent: parent === abs ? null : parent, home: os.homedir(), dirs };
+  });
 
   app.get<{ Querystring: { project?: string; path?: string } }>(
     '/api/fs/list',

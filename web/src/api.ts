@@ -41,6 +41,17 @@ export async function listDir(projectId: string, path: string): Promise<FsEntry[
   return j.items ?? [];
 }
 
+// Model: server.BrowseDirs — server-side folder picker for "Add project".
+export type BrowseResult = { path: string; parent: string | null; home: string; dirs: string[] };
+export async function browseDirs(path?: string): Promise<BrowseResult> {
+  const r = await fetch(`/api/fs/browse?path=${encodeURIComponent(path ?? '')}`);
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error(j.error || `HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
 // Model: web.FileTree rule-411 / rule-412 → server.MoveEntry (auc-126).
 // Rename and move share this: a rename is a move within the same parent.
 export async function moveEntry(

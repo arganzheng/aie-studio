@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { lookupMime, planDelete, planMkdir, planMove, planUpload, resolveRel } from '../fs.js';
+import { lookupMime, planDelete, planMkdir, planMove, planUpload, resolveBrowsePath, resolveRel } from '../fs.js';
 
 describe('lookupMime', () => {
   it('treats TypeScript as text, not MPEG transport stream', () => {
@@ -127,5 +127,25 @@ describe('planDelete', () => {
     expect(() => planDelete('/p', '')).toThrow(/project root/);
     expect(() => planDelete('/p', '.')).toThrow(/project root/);
     expect(() => planDelete('/p', '../x')).toThrow(/escapes/);
+  });
+});
+
+describe('resolveBrowsePath', () => {
+  const home = '/home/me';
+  it('defaults to home', () => {
+    expect(resolveBrowsePath(undefined, home)).toBe(home);
+    expect(resolveBrowsePath('  ', home)).toBe(home);
+  });
+  it('expands ~', () => {
+    expect(resolveBrowsePath('~', home)).toBe(home);
+    expect(resolveBrowsePath('~/Code/x', home)).toBe('/home/me/Code/x');
+  });
+  it('normalizes absolute paths', () => {
+    expect(resolveBrowsePath('/a/b/../c/', home)).toBe('/a/c');
+    expect(resolveBrowsePath('/', home)).toBe('/');
+  });
+  it('rejects relative paths', () => {
+    expect(() => resolveBrowsePath('Code', home)).toThrow(/absolute/);
+    expect(() => resolveBrowsePath('~user/x', home)).toThrow(/absolute/);
   });
 });
