@@ -4,6 +4,7 @@ import { filterCommands, matchCommandQuery, type CommandItem } from '../lib/comm
 import { imageFilesFromClipboard } from '../lib/imageAttachments';
 import { isSendKeyTrigger } from '../lib/sendKey';
 import { AttachImagesButton } from './ImageAttachments';
+import { addQuotes, composeQuotedPrompt, quoteCardLabel, quoteCardPreview, type ChatQuote } from '../lib/addToChat';
 
 export type ChatInputStatus =
   | 'connecting'
@@ -29,8 +30,9 @@ function isDesktopPointer(): boolean {
 
 // Model: web.InsertBatchPrompt — a composed Review Batch to put in the input
 // box. `seq` makes re-inserting the same batch a new event. No batchId = a
-// single comment sent directly (model: web.SendCommentToPrompt).
-export type PromptInsertion = { seq: number; text: string; batchId?: string };
+// single comment sent directly (model: web.SendCommentToPrompt). `quotes`
+// become cards above the input instead of text (model: web.AddToChat).
+export type PromptInsertion = { seq: number; text: string; batchId?: string; quotes?: ChatQuote[] };
 
 // Model: web.PendingFormInputLock rule-309. While set, the textarea is
 // read-only (text is kept, not cleared), Send / attach are disabled, the
@@ -81,6 +83,8 @@ export const ChatInput = memo(function ChatInput({
   lock?: InputLock | null;
 }) {
   const [text, setText] = useState('');
+  // Model: web.AddToChat — quote cards waiting above the input.
+  const [quotes, setQuotes] = useState<ChatQuote[]>([]);
   // null = picker closed; string = query after the leading "/".
   const [query, setQuery] = useState<string | null>(null);
   const [sel, setSel] = useState(0);
@@ -177,7 +181,8 @@ export const ChatInput = memo(function ChatInput({
     if (!insertion || insertion.seq === lastInsertionSeqRef.current) return;
     lastInsertionSeqRef.current = insertion.seq;
     if (insertion.batchId && !pendingBatchIdsRef.current.includes(insertion.batchId)) pendingBatchIdsRef.current.push(insertion.batchId);
-    setText((prev) => (prev.trim() ? `${prev.replace(/\s+$/, '')}\n\n${insertion.text}` : insertion.text));
+    if (insertion.quotes?.length) setQuotes((prev) => addQuotes(prev, insertion.quotes!));
+    if (insertion.text) setText((prev) => (prev.trim() ? `${prev.replace(/\s+$/, '')}\n\n${insertion.text}` : insertion.text));
     setQuery(null);
     requestAnimationFrame(() => {
       const ta = textareaRef.current;
@@ -190,10 +195,14 @@ export const ChatInput = memo(function ChatInput({
 
   function submit() {
     if (lock) return;
-    if (!text.trim() && pendingImagesCount === 0) return;
-    onSend(text);
-    // The panel drops sends while it has no live connection (!canSend).
-    if (canSend) for (const id of pendingBatchIdsRef.current) onBatchSent?.(id);
+    if (!text.trim() && quotes.length === 0 && pendingImagesCount === 0) return;
+    onSend(composeQuotedPrompt(quotes, text));
+    // The panel drops sends while it has no live connection (!canSend); keep
+    // the cards then, the user would have no way to get them back.
+    if (canSend) {
+      for (const id of pendingBatchIdsRef.current) onBatchSent?.(id);
+      setQuotes([]);
+    }
     pendingBatchIdsRef.current = [];
     setText('');
     setQuery(null);
@@ -205,9 +214,27 @@ export const ChatInput = memo(function ChatInput({
     status !== 'connecting' &&
     status !== 'reconnecting' &&
     status !== 'replaying' &&
-    (text.trim().length > 0 || pendingImagesCount > 0);
+    (text.trim().length > 0 || quotes.length > 0 || pendingImagesCount > 0);
 
   return (
+    <>
+    {quotes.length > 0 && (
+      <div className="chat-quote-cards">
+        {quotes.map((q, i) => (
+          <div key={`${i}:${quoteCardLabel(q)}:${q.quote.length}`} className="quote-card" title={q.quote}>
+            <div className="quote-card-label">{quoteCardLabel(q)}</div>
+            <div className="quote-card-text">“{quoteCardPreview(q)}”</div>
+            <button
+              type="button"
+              className="quote-card-del"
+              onClick={() => setQuotes((prev) => prev.filter((_, j) => j !== i))}
+              title="Remove quote"
+              aria-label="Remove quote"
+            >×</button>
+          </div>
+        ))}
+      </div>
+    )}
     <div className={`chat-input${lock ? ' locked' : ''}`}>
       <div
         className="chat-input-resize"
@@ -303,5 +330,6 @@ export const ChatInput = memo(function ChatInput({
         >Stop</button>
       )}
     </div>
+    </>
   );
 });

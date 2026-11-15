@@ -9,15 +9,17 @@ export type ExportApi = { open: () => void; canExport: boolean };
 // What a session panel exposes to App. reveal (model: web.RevealMessage):
 // scroll to a message anchor — resolves true once it is on screen, false if
 // it isn't in this session (even after paging back through history).
-// insertPrompt (model: web.InsertBatchPrompt / web.AddToChat): put a composed
-// Batch prompt — or, with no batchId, a quoted passage — in the input box
-// without sending it.
+// insertPrompt (model: web.InsertBatchPrompt): put a composed Batch prompt in
+// the input box without sending it. addQuotes (model: web.AddToChat): show
+// quoted passages as cards above the input.
 import type { TabActivity } from '../lib/tabActivity';
+import type { ChatQuote } from '../lib/addToChat';
 export type { TabActivity };
 
 export type SessionPanelApi = {
   reveal: (anchor: string) => Promise<boolean>;
   insertPrompt: (text: string, batchId?: string) => void;
+  addQuotes: (quotes: ChatQuote[]) => void;
 };
 
 // Context passed to every tab renderer. New callbacks belong here (add once,
@@ -51,9 +53,9 @@ export type TabRenderContext = {
   // Review panel (expanding the column / opening the mobile drawer).
   focusComment: (commentId: string) => void;
   // Model: web.AddToChat from a tab that has no prompt input of its own (the
-  // file viewer). `text` is the composed quote; App appends it to the input
-  // of the session the user was last in and toasts where it went.
-  addToChat: (text: string) => void;
+  // file viewer). App adds the quote as a card to the input of the session
+  // the user was last in and toasts where it went.
+  addToChat: (quote: ChatQuote) => void;
   // Model: web.InsertBatchPrompt. The panel reports that a prompt carrying
   // this Batch was actually sent.
   markBatchSent: (batchId: string) => void;
