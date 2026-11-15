@@ -15,6 +15,7 @@ import { CommentComposer, flashMessage, sleep, type NewComment } from './Comment
 import { BookmarkButton, type NewBookmark } from './BookmarkButton';
 import type { PromptInsertion } from './ChatInput';
 import { composeComment, type CommentMark, bookmarkLabel } from '../lib/review';
+import { composeQuote } from '../lib/addToChat';
 import { applyQuoteHighlights } from '../lib/quoteHighlight';
 import { RichCopyButton, useRichCopy } from './RichCopy';
 import type { ExportMessage } from '../lib/export/types';
@@ -386,6 +387,10 @@ export function SdkPanel({
   }
   function sendComment(c: NewComment) {
     setInsertion((prev) => ({ seq: (prev?.seq ?? 0) + 1, text: composeComment(c) }));
+  }
+  // Model: web.AddToChat — quote a selected passage into our own input.
+  function addToChat(quote: string) {
+    setInsertion((prev) => ({ seq: (prev?.seq ?? 0) + 1, text: composeQuote(quote) }));
   }
 
   // Model: web.RichCopy — 🍚 on assistant messages when the setting is on.
@@ -1077,7 +1082,7 @@ export function SdkPanel({
         onStop={stop}
         lock={forms.inputLock}
       />
-      {canComment && <CommentComposer containerRef={scrollRef} onComment={submitComment} onSend={sendComment} highlightOwner={highlightOwner} onFocusComment={(id) => onFocusComment?.(id)} />}
+      <CommentComposer containerRef={scrollRef} onAddToChat={addToChat} onComment={canComment ? submitComment : undefined} onSend={sendComment} highlightOwner={highlightOwner} onFocusComment={(id) => onFocusComment?.(id)} />
       {richCopySource}
       {exportOpen && (
         <Suspense fallback={null}>

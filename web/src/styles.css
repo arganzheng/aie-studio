@@ -679,6 +679,9 @@ body {
 
 /* viewer */
 .viewer-empty { padding: 24px; color: var(--fg-muted); }
+/* Wrapper that only exists to scope text selection (model: web.AddToChat);
+   display: contents keeps the viewer's own root as the layout child. */
+.viewer-root { display: contents; }
 .viewer-html { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .viewer-toolbar {
   display: flex;
@@ -2309,12 +2312,16 @@ pre {
   .review-editor-input, .review-batch-rename { font-size: 16px; }
 }
 
-/* Selection → "💬 Comment" and the comment composer (model:
-   web.CommentOnSelection). Both position: fixed at
+/* Selection → "Add to chat" / "💬 Comment" and the comment composer (model:
+   web.AddToChat / web.CommentOnSelection). Both position: fixed at
    viewport coordinates computed from the selection / button rect. */
-.selection-comment-btn {
+.selection-actions {
   position: fixed;
   z-index: 35;
+  display: flex;
+  gap: 6px;
+}
+.selection-action-btn {
   background: var(--bg-popover);
   color: var(--fg-strong);
   border: 1px solid var(--border-strong);
@@ -2349,7 +2356,7 @@ pre {
     bottom: calc(8px + env(safe-area-inset-bottom)) !important;
     width: auto !important;
   }
-  .selection-comment-btn { padding: 8px 12px; font-size: 14px; }
+  .selection-action-btn { padding: 8px 12px; font-size: 14px; }
 }
 /* Comments on a clicked quote (model: web.ViewQuoteComments). */
 .quote-comments { padding: 4px; gap: 2px; max-height: 40vh; overflow-y: auto; }

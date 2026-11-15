@@ -9,7 +9,7 @@ import type { Bookmark } from './types';
 import * as review from './lib/review';
 import { ProjectPicker } from './components/ProjectPicker';
 import { ProjectManager } from './components/ProjectManager';
-import { TabBar } from './components/TabBar';
+import { TabBar, tabTitle } from './components/TabBar';
 import { Settings as SettingsModal } from './components/Settings';
 import { DevinUsage } from './components/DevinUsage';
 import { SessionPicker, type PickerItem } from './components/SessionPicker';
@@ -41,6 +41,11 @@ import { DEFAULT_GROUP_ID, DEFAULT_GROUP_NAME, tabGroupId, tabRef, sameTabRef } 
 import { isStandalone } from './usePwaInstall';
 
 const DEFAULT_SETTINGS: Settings = { sendKey: 'cmd-enter', theme: 'dark', fontScale: 'normal', model: '', devinModel: '', devinMode: '', devinVersion: '', showStderr: false, richCopy: false, review: false };
+
+// Tabs with a prompt input (model: web.AddToChat / web.SendBatch targets).
+function isSessionTab(tab: Tab): boolean {
+  return tab.type === 'session' || tab.type === 'claude-sdk' || tab.type === 'devin';
+}
 
 // Stable empty value so panels without comments don't re-render (model: web.HighlightQuotes).
 const NO_COMMENT_MARKS: readonly review.CommentMark[] = [];
@@ -436,7 +441,7 @@ export default function App() {
   // panel registers.
   const panelApiRef = useRef<Map<string, SessionPanelApi>>(new Map());
   const pendingRevealRef = useRef<{ tabId: string; anchor: string } | null>(null);
-  const pendingInsertRef = useRef<{ tabId: string; text: string; batchId: string } | null>(null);
+  const pendingInsertRef = useRef<{ tabId: string; text: string; batchId?: string } | null>(null);
   const fireReveal = useCallback((tabId: string, anchor: string) => {
     const api = panelApiRef.current.get(tabId);
     if (!api) return false;
@@ -447,11 +452,11 @@ export default function App() {
     });
     return true;
   }, [showAppToast]);
-  const fireInsert = useCallback((tabId: string, text: string, batchId: string) => {
+  const fireInsert = useCallback((tabId: string, text: string, batchId?: string) => {
     const api = panelApiRef.current.get(tabId);
     if (!api) return false;
     pendingInsertRef.current = null;
-    logDebug('review', `insert batch ${batchId} into tab ${tabId} (${text.length} chars)`);
+    logDebug('review', `insert ${batchId ? `batch ${batchId}` : 'quote'} into tab ${tabId} (${text.length} chars)`);
     api.insertPrompt(text, batchId);
     return true;
   }, []);
@@ -784,6 +789,13 @@ export default function App() {
   useEffect(() => {
     document.title = activeProject ? `${activeProject.name} — AI Studio` : 'AI Studio';
   }, [activeProject]);
+
+  // Model: web.AddToChat — the session tab the user was last in, per project:
+  // where a passage quoted from a file goes.
+  const lastSessionTabRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (activeProjectId && activeTab && isSessionTab(activeTab)) lastSessionTabRef.current.set(activeProjectId, activeTab.id);
+  }, [activeProjectId, activeTab]);
 
   // Record that a tab was visited so lazy-mount keeps it alive after the
   // first switch away. Fires whenever the active tab id changes.
@@ -1507,6 +1519,30 @@ export default function App() {
     revealAt(origin, anchor, origin.key.slice(0, 8), 'observe', `reveal in ${origin.type} ${origin.key}`);
   }
 
+  // Model: web.AddToChat from the file viewer — append the composed quote to
+  // the input of the session the user was last in (else the newest session
+  // tab), staying on the file so more passages can follow. A session that was
+  // never shown since load has no panel yet: mount it hidden and let
+  // registerPanelApi deliver, piling up quotes added in the meantime.
+  function addQuoteToChat(text: string) {
+    if (!activeProjectId) return;
+    const lastId = lastSessionTabRef.current.get(activeProjectId);
+    const target = tabs.find((t) => t.id === lastId && isSessionTab(t)) ?? [...tabs].reverse().find(isSessionTab);
+    if (!target) {
+      showAppToast('Open a chat session first — nowhere to add this');
+      return;
+    }
+    const targetId = target.id;
+    if (!fireInsert(targetId, text)) {
+      const pending = pendingInsertRef.current;
+      pendingInsertRef.current = pending && pending.tabId === targetId && !pending.batchId
+        ? { tabId: targetId, text: pending.text + text }
+        : { tabId: targetId, text };
+      setVisitedTabs((prev) => (prev.has(targetId) ? prev : new Set(prev).add(targetId)));
+    }
+    showAppToast(`Added to chat: ${('title' in target && target.title) || tabTitle(target)}`);
+  }
+
   // Model: web.SendBatch — fill the batch's prompt into the target session's
   // input box. The Batch only turns `sent` when the user really sends it.
   function sendBatch(id: string) {
@@ -1515,7 +1551,7 @@ export default function App() {
     const target = review.batchTargetSession(batch);
     let tabId: string | undefined;
     if (target) tabId = openTabRef(target, batch.name);
-    else if (activeTab && (activeTab.type === 'session' || activeTab.type === 'claude-sdk' || activeTab.type === 'devin')) tabId = activeTab.id;
+    else if (activeTab && isSessionTab(activeTab)) tabId = activeTab.id;
     if (!tabId) {
       showAppToast('Open the session tab you want to send this batch to');
       return;
@@ -1824,6 +1860,7 @@ export default function App() {
                   updateSettings,
                   registerExportApi: (api) => registerExportApi(tab.id, api),
                   addComment: (c) => addSessionComment(tab, c),
+                  addToChat: addQuoteToChat,
                   commentMarks: commentMarksByTab.get(tab.id) ?? NO_COMMENT_MARKS,
                   toggleBookmark: (b) => toggleSessionBookmark(tab, b),
                   bookmarkedAnchors: bookmarkedAnchorsByTab.get(tab.id) ?? NO_BOOKMARKED_ANCHORS,

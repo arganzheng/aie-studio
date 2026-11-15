@@ -7,6 +7,7 @@ import { claudeAnswersFrom, parseAskUserQuestion } from '../lib/elicitation';
 import { isSendKeyTrigger } from '../lib/sendKey';
 import { toWireImages } from '../lib/imageAttachments';
 import { composeComment, type CommentMark, bookmarkLabel } from '../lib/review';
+import { composeQuote } from '../lib/addToChat';
 import { applyQuoteHighlights } from '../lib/quoteHighlight';
 import { RichCopyButton, useRichCopy } from './RichCopy';
 import type { SessionPanelApi, TabActivity } from '../registry/tabRegistry';
@@ -597,6 +598,10 @@ export function ChatPanel({
   // Model: web.SendCommentToPrompt — skip the Batch, append to our own input.
   function sendComment(c: NewComment) {
     setInsertion((prev) => ({ seq: (prev?.seq ?? 0) + 1, text: composeComment(c) }));
+  }
+  // Model: web.AddToChat — quote a selected passage into our own input.
+  function addToChat(quote: string) {
+    setInsertion((prev) => ({ seq: (prev?.seq ?? 0) + 1, text: composeQuote(quote) }));
   }
   // Model: web.HighlightQuotes — outline commented messages, paint quotes.
   const commentedAnchors = useMemo(() => new Set((commentMarks ?? []).map((m) => m.anchor)), [commentMarks]);
@@ -1455,7 +1460,7 @@ export function ChatPanel({
         onStop={stop}
         lock={forms.inputLock}
       />
-      {canComment && <CommentComposer containerRef={scrollRef} onComment={submitComment} onSend={sendComment} highlightOwner={highlightOwner} onFocusComment={(id) => onFocusComment?.(id)} />}
+      <CommentComposer containerRef={scrollRef} onAddToChat={addToChat} onComment={canComment ? submitComment : undefined} onSend={sendComment} highlightOwner={highlightOwner} onFocusComment={(id) => onFocusComment?.(id)} />
 
       {lightbox && (
         <div className="lightbox" onClick={() => setLightbox(null)}>

@@ -94,10 +94,12 @@ export function reopenBatch(batches: Batch[], batchId: string): Batch[] {
 // separated by `---`. A single comment needs none of that scaffolding.
 // Also the whole text of a comment sent straight to the input box (model:
 // web.SendCommentToPrompt).
+export function quoteBlock(quote: string): string {
+  return quote.split('\n').map((l) => (l ? `> ${l}` : '>')).join('\n');
+}
 export function composeComment(c: { text: string; quote?: string }): string {
   if (!c.quote) return c.text;
-  const quoted = c.quote.split('\n').map((l) => (l ? `> ${l}` : '>')).join('\n');
-  return `${quoted}\n${c.text}`;
+  return `${quoteBlock(c.quote)}\n${c.text}`;
 }
 export function composeBatchPrompt(batch: Batch): string {
   const n = batch.comments.length;

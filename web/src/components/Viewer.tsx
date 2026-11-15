@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Theme } from '../types';
 import { CODE_EXT, extOf, isTextFile } from '../lib/textFiles';
+import { composeQuote, locateLines } from '../lib/addToChat';
+import { AddToChatSelection } from './CommentComposer';
 
 function prismStyle(theme: Theme) {
   return theme === 'light' ? oneLight : vscDarkPlus;
@@ -12,10 +14,43 @@ function prismStyle(theme: Theme) {
 
 type Stat = { path: string; size: number; isDir: boolean; mime: string };
 
-export function Viewer({ projectId, file, theme }: { projectId: string; file: { path: string }; theme: Theme }) {
+export function Viewer({ projectId, file, theme, onAddToChat }: {
+  projectId: string;
+  file: { path: string };
+  theme: Theme;
+  // Model: web.AddToChat — receives the composed quote (path, line span when
+  // it could be located, the selected passage). Omit to disable.
+  onAddToChat?: (text: string) => void;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  // The loaded file text (null for non-text files), to locate a selection's lines.
+  const sourceRef = useRef<string | null>(null);
+  return (
+    <div className="viewer-root" ref={rootRef}>
+      <ViewerBody projectId={projectId} file={file} theme={theme} sourceRef={sourceRef} />
+      {onAddToChat && (
+        <AddToChatSelection
+          containerRef={rootRef}
+          onAddToChat={(quote) => {
+            const source = sourceRef.current;
+            onAddToChat(composeQuote(quote, { path: file.path, lines: source == null ? null : locateLines(source, quote) }));
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ViewerBody({ projectId, file, theme, sourceRef }: {
+  projectId: string;
+  file: { path: string };
+  theme: Theme;
+  sourceRef: RefObject<string | null>;
+}) {
   const codeStyle = prismStyle(theme);
   const [stat, setStat] = useState<Stat | null>(null);
   const [text, setText] = useState<string | null>(null);
+  useEffect(() => { sourceRef.current = text; }, [sourceRef, text]);
   const [err, setErr] = useState<string | null>(null);
   const [htmlMode, setHtmlMode] = useState<'rendered' | 'source'>('rendered');
 

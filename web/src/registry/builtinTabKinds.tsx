@@ -40,9 +40,9 @@ function asObserve(tab: Tab): ObserveTab {
 registerTabKind({
   id: 'file',
   label: 'File',
-  render: ({ tab, project, settings }) => {
+  render: ({ tab, project, settings, addToChat }) => {
     const t = asFile(tab);
-    return <Viewer projectId={project.id} file={{ path: t.path }} theme={settings.theme} />;
+    return <Viewer projectId={project.id} file={{ path: t.path }} theme={settings.theme} onAddToChat={addToChat} />;
   },
 });
 
