@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cleanSelection, composeQuote, locateLines } from '../addToChat';
+import { addQuotes, cleanSelection, composeQuote, composeQuotedPrompt, locateLines, quoteCardLabel, quoteCardPreview } from '../addToChat';
 
 describe('cleanSelection', () => {
   it('drops surrounding blank lines but keeps the first line indentation', () => {
@@ -43,5 +43,31 @@ describe('locateLines', () => {
   it('returns null when the selection is absent or blank', () => {
     expect(locateLines(src, 'return 3;')).toBeNull();
     expect(locateLines(src, '  \n ')).toBeNull();
+  });
+});
+
+describe('quote cards', () => {
+  const file = { quote: 'export function average() {}', source: { path: 'src/math.ts', lines: [8, 12] as [number, number] } };
+  const msg = { quote: 'line one\n  line two', origin: 'Claude message' };
+  it('labels a card by file location, else origin', () => {
+    expect(quoteCardLabel(file)).toBe('src/math.ts:8-12');
+    expect(quoteCardLabel(msg)).toBe('Claude message');
+    expect(quoteCardLabel({ quote: 'x' })).toBe('Quote');
+  });
+  it('folds the preview onto one line', () => {
+    expect(quoteCardPreview(msg)).toBe('line one line two');
+  });
+  it('skips exact repeats when adding', () => {
+    expect(addQuotes([msg], [msg, file])).toEqual([msg, file]);
+    expect(addQuotes([msg], [{ ...msg, origin: 'Devin message' }])).toHaveLength(2);
+  });
+  it('sends cards as blockquotes before the typed text', () => {
+    expect(composeQuotedPrompt([msg, file], 'Why?')).toBe(
+      '> line one\n>   line two\n\n`src/math.ts:8-12`:\n> export function average() {}\n\nWhy?',
+    );
+  });
+  it('sends quotes alone without a trailing blank, text alone unchanged', () => {
+    expect(composeQuotedPrompt([msg], '  ')).toBe('> line one\n>   line two');
+    expect(composeQuotedPrompt([], 'hi')).toBe('hi');
   });
 });

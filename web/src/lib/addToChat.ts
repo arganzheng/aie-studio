@@ -13,7 +13,7 @@ export function cleanSelection(raw: string): string {
   return raw.replace(/^(?:[^\S\n]*\n)+/, '').replace(/\s+$/, '');
 }
 
-function sourceLabel(source: QuoteSource): string {
+export function sourceLabel(source: QuoteSource): string {
   if (!source.lines) return source.path;
   const [from, to] = source.lines;
   return from === to ? `${source.path}:${from}` : `${source.path}:${from}-${to}`;
@@ -49,4 +49,42 @@ export function locateLines(source: string, selection: string): [number, number]
   const at = hay.indexOf(needle);
   if (at < 0 || hay.indexOf(needle, at + 1) >= 0) return null;
   return [lineOf[at], lineOf[at + needle.length - 1]];
+}
+
+// Model: web.AddToChat (quote cards) — a quoted passage waiting above the
+// prompt input as a card, not as text in the textarea. `origin` names where a
+// session-message quote came from ("Claude message"); file quotes carry a
+// source instead. Cards are removable one by one and only become text when
+// the prompt is sent.
+export type ChatQuote = { quote: string; source?: QuoteSource; origin?: string };
+
+// The card's first line: the file location, else the origin.
+export function quoteCardLabel(q: ChatQuote): string {
+  return q.source ? sourceLabel(q.source) : q.origin || 'Quote';
+}
+
+// The card's second line: the passage folded onto one line (CSS ellipsizes).
+export function quoteCardPreview(q: ChatQuote): string {
+  return q.quote.replace(/\s+/g, ' ').trim();
+}
+
+// Append quotes to the cards already pending, skipping exact repeats.
+export function addQuotes(pending: readonly ChatQuote[], next: readonly ChatQuote[]): ChatQuote[] {
+  const key = (q: ChatQuote) => `${quoteCardLabel(q)}\u0000${q.quote}`;
+  const seen = new Set(pending.map(key));
+  const out = [...pending];
+  for (const q of next) {
+    if (seen.has(key(q))) continue;
+    seen.add(key(q));
+    out.push(q);
+  }
+  return out;
+}
+
+// What actually gets sent: every card as a blockquote (with its file
+// location), then the typed text. Quotes alone send without a trailing blank.
+export function composeQuotedPrompt(quotes: readonly ChatQuote[], text: string): string {
+  if (quotes.length === 0) return text;
+  const head = quotes.map((q) => composeQuote(q.quote, q.source)).join('');
+  return text.trim() ? head + text : head.replace(/\s+$/, '');
 }

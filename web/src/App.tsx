@@ -7,6 +7,7 @@ import type { NewComment } from './components/CommentComposer';
 import type { NewBookmark } from './components/BookmarkButton';
 import type { Bookmark } from './types';
 import * as review from './lib/review';
+import type { ChatQuote } from './lib/addToChat';
 import { ProjectPicker } from './components/ProjectPicker';
 import { ProjectManager } from './components/ProjectManager';
 import { TabBar, tabTitle } from './components/TabBar';
@@ -442,6 +443,8 @@ export default function App() {
   const panelApiRef = useRef<Map<string, SessionPanelApi>>(new Map());
   const pendingRevealRef = useRef<{ tabId: string; anchor: string } | null>(null);
   const pendingInsertRef = useRef<{ tabId: string; text: string; batchId?: string } | null>(null);
+  // Model: web.AddToChat — quotes for a session panel that isn't mounted yet.
+  const pendingQuotesRef = useRef<{ tabId: string; quotes: ChatQuote[] } | null>(null);
   const fireReveal = useCallback((tabId: string, anchor: string) => {
     const api = panelApiRef.current.get(tabId);
     if (!api) return false;
@@ -474,6 +477,11 @@ export default function App() {
     if (reveal && reveal.tabId === tabId) fireReveal(tabId, reveal.anchor);
     const insert = pendingInsertRef.current;
     if (insert && insert.tabId === tabId) fireInsert(tabId, insert.text, insert.batchId);
+    const quotes = pendingQuotesRef.current;
+    if (quotes && quotes.tabId === tabId) {
+      pendingQuotesRef.current = null;
+      api.addQuotes(quotes.quotes);
+    }
   }, [fireReveal, fireInsert]);
   // Model: web.TabActivityMarkers rule-311. Mounted session panels report
   // generating / awaitingInput; TabBar and GroupList render the markers.
@@ -1524,7 +1532,7 @@ export default function App() {
   // tab), staying on the file so more passages can follow. A session that was
   // never shown since load has no panel yet: mount it hidden and let
   // registerPanelApi deliver, piling up quotes added in the meantime.
-  function addQuoteToChat(text: string) {
+  function addQuoteToChat(quote: ChatQuote) {
     if (!activeProjectId) return;
     const lastId = lastSessionTabRef.current.get(activeProjectId);
     const target = tabs.find((t) => t.id === lastId && isSessionTab(t)) ?? [...tabs].reverse().find(isSessionTab);
@@ -1533,11 +1541,15 @@ export default function App() {
       return;
     }
     const targetId = target.id;
-    if (!fireInsert(targetId, text)) {
-      const pending = pendingInsertRef.current;
-      pendingInsertRef.current = pending && pending.tabId === targetId && !pending.batchId
-        ? { tabId: targetId, text: pending.text + text }
-        : { tabId: targetId, text };
+    const api = panelApiRef.current.get(targetId);
+    if (api) {
+      logDebug('review', `add quote card to tab ${targetId} (${quote.quote.length} chars)`);
+      api.addQuotes([quote]);
+    } else {
+      const pending = pendingQuotesRef.current;
+      pendingQuotesRef.current = pending && pending.tabId === targetId
+        ? { tabId: targetId, quotes: [...pending.quotes, quote] }
+        : { tabId: targetId, quotes: [quote] };
       setVisitedTabs((prev) => (prev.has(targetId) ? prev : new Set(prev).add(targetId)));
     }
     showAppToast(`Added to chat: ${('title' in target && target.title) || tabTitle(target)}`);

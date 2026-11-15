@@ -5,7 +5,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Theme } from '../types';
 import { CODE_EXT, extOf, isTextFile } from '../lib/textFiles';
-import { composeQuote, locateLines } from '../lib/addToChat';
+import { locateLines, type ChatQuote } from '../lib/addToChat';
 import { AddToChatSelection } from './CommentComposer';
 
 function prismStyle(theme: Theme) {
@@ -20,7 +20,7 @@ export function Viewer({ projectId, file, theme, onAddToChat }: {
   theme: Theme;
   // Model: web.AddToChat — receives the composed quote (path, line span when
   // it could be located, the selected passage). Omit to disable.
-  onAddToChat?: (text: string) => void;
+  onAddToChat?: (quote: ChatQuote) => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   // The loaded file text (null for non-text files), to locate a selection's lines.
@@ -33,7 +33,7 @@ export function Viewer({ projectId, file, theme, onAddToChat }: {
           containerRef={rootRef}
           onAddToChat={(quote) => {
             const source = sourceRef.current;
-            onAddToChat(composeQuote(quote, { path: file.path, lines: source == null ? null : locateLines(source, quote) }));
+            onAddToChat({ quote, source: { path: file.path, lines: source == null ? null : locateLines(source, quote) } });
           }}
         />
       )}

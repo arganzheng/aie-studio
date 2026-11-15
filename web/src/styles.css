@@ -1560,6 +1560,73 @@ pre {
   border-top: 1px solid var(--border);
   background: var(--bg-pending-area);
 }
+/* Quote cards above the prompt input (model: web.AddToChat). Two lines: where
+   the passage came from, then the passage folded to one line. */
+.chat-quote-cards {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 8px 0;
+  border-top: 1px solid var(--border);
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.chat-quote-cards + .chat-input { border-top: none; }
+.quote-card {
+  position: relative;
+  flex: 0 1 260px;
+  min-width: 0;
+  max-width: 260px;
+  padding: 6px 12px 7px;
+  border-radius: 10px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 1.35;
+  cursor: default;
+}
+.quote-card-label {
+  color: var(--fg-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quote-card-text {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-quote-cards .quote-card-del {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--fg-strong);
+  color: var(--bg);
+  font-size: 13px;
+  line-height: 18px;
+  text-align: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.quote-card:hover .quote-card-del, .quote-card-del:focus-visible { opacity: 1; }
+/* Touch: no hover, so the × is always there (and a bigger target). */
+@media (hover: none) {
+  .chat-quote-cards { padding-top: 10px; }
+  .chat-quote-cards .quote-card-del { opacity: 1; width: 24px; height: 24px; line-height: 22px; top: -8px; right: -8px; }
+}
+/* Narrow screens: two cards per row, like Devin, so they don't eat the chat. */
+@media (max-width: 600px) {
+  .quote-card { flex: 0 1 calc(50% - 4px); max-width: calc(50% - 4px); padding: 6px 10px 7px; }
+}
 .pending-thumb {
   position: relative;
   width: 56px;
