@@ -54,9 +54,11 @@ export function locateLines(source: string, selection: string): [number, number]
 // Model: web.AddToChat (quote cards) — a quoted passage waiting above the
 // prompt input as a card, not as text in the textarea. `origin` names where a
 // session-message quote came from ("Claude message"); file quotes carry a
-// source instead. Cards are removable one by one and only become text when
-// the prompt is sent.
-export type ChatQuote = { quote: string; source?: QuoteSource; origin?: string };
+// source instead. `comment` is the user's remark on the passage (a Review
+// comment sent straight to the input, model: web.SendCommentToPrompt): it
+// travels on the card so it stays next to its quote. Cards are removable one
+// by one and only become text when the prompt is sent.
+export type ChatQuote = { quote: string; source?: QuoteSource; origin?: string; comment?: string };
 
 // The card's first line: the file location, else the origin.
 export function quoteCardLabel(q: ChatQuote): string {
@@ -70,7 +72,7 @@ export function quoteCardPreview(q: ChatQuote): string {
 
 // Append quotes to the cards already pending, skipping exact repeats.
 export function addQuotes(pending: readonly ChatQuote[], next: readonly ChatQuote[]): ChatQuote[] {
-  const key = (q: ChatQuote) => `${quoteCardLabel(q)}\u0000${q.quote}`;
+  const key = (q: ChatQuote) => `${quoteCardLabel(q)}\u0000${q.quote}\u0000${q.comment ?? ''}`;
   const seen = new Set(pending.map(key));
   const out = [...pending];
   for (const q of next) {
@@ -81,10 +83,17 @@ export function addQuotes(pending: readonly ChatQuote[], next: readonly ChatQuot
   return out;
 }
 
-// What actually gets sent: every card as a blockquote (with its file
-// location), then the typed text. Quotes alone send without a trailing blank.
+// One card as prompt text: the blockquote (with its file location), the
+// comment right under it when there is one, then a blank line.
+function composeCard(q: ChatQuote): string {
+  if (!q.comment) return composeQuote(q.quote, q.source);
+  return `${composeQuote(q.quote, q.source).replace(/\n+$/, '')}\n${q.comment}\n\n`;
+}
+
+// What actually gets sent: every card, then the typed text. Cards alone send
+// without a trailing blank.
 export function composeQuotedPrompt(quotes: readonly ChatQuote[], text: string): string {
   if (quotes.length === 0) return text;
-  const head = quotes.map((q) => composeQuote(q.quote, q.source)).join('');
+  const head = quotes.map(composeCard).join('');
   return text.trim() ? head + text : head.replace(/\s+$/, '');
 }

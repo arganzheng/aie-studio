@@ -597,8 +597,12 @@ export function ChatPanel({
     if (note) showToast(note);
   }
   // Model: web.SendCommentToPrompt — skip the Batch, append to our own input.
+  // A comment on a passage rides on a quote card (model: web.AddToChat), so
+  // the input keeps only what the user types; one without a quote is plain text.
   function sendComment(c: NewComment) {
-    setInsertion((prev) => ({ seq: (prev?.seq ?? 0) + 1, text: composeComment(c) }));
+    setInsertion((prev) => (c.quote
+      ? { seq: (prev?.seq ?? 0) + 1, text: '', quotes: [{ quote: c.quote, comment: c.text, origin: 'Claude message' }] }
+      : { seq: (prev?.seq ?? 0) + 1, text: composeComment(c) }));
   }
   // Model: web.AddToChat — quote a selected passage as a card on our own input.
   function addToChat(quote: string) {
