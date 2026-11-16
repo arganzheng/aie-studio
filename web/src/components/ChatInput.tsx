@@ -85,6 +85,24 @@ export const ChatInput = memo(function ChatInput({
   const [text, setText] = useState('');
   // Model: web.AddToChat — quote cards waiting above the input.
   const [quotes, setQuotes] = useState<ChatQuote[]>([]);
+  // The card whose full text is shown (tap / click a card): the card itself
+  // only fits one line, and touch has no hover to reveal the rest.
+  const [openQuote, setOpenQuote] = useState<ChatQuote | null>(null);
+  const quoteAreaRef = useRef<HTMLDivElement>(null);
+  const shownQuote = openQuote && quotes.includes(openQuote) ? openQuote : null;
+  useEffect(() => {
+    if (!shownQuote) return;
+    const onDown = (e: Event) => {
+      if (!quoteAreaRef.current?.contains(e.target as Node)) setOpenQuote(null);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpenQuote(null); };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [shownQuote]);
   // null = picker closed; string = query after the leading "/".
   const [query, setQuery] = useState<string | null>(null);
   const [sel, setSel] = useState(0);
@@ -219,20 +237,51 @@ export const ChatInput = memo(function ChatInput({
   return (
     <>
     {quotes.length > 0 && (
-      <div className="chat-quote-cards">
-        {quotes.map((q, i) => (
-          <div key={`${i}:${quoteCardLabel(q)}:${q.quote.length}`} className="quote-card" title={q.quote}>
-            <div className="quote-card-label">{quoteCardLabel(q)}</div>
-            <div className="quote-card-text">“{quoteCardPreview(q)}”</div>
-            <button
-              type="button"
-              className="quote-card-del"
-              onClick={() => setQuotes((prev) => prev.filter((_, j) => j !== i))}
-              title="Remove quote"
-              aria-label="Remove quote"
-            >×</button>
+      <div className="chat-quote-area" ref={quoteAreaRef}>
+        {shownQuote && (
+          <div className="quote-card-full" role="dialog" aria-label="Quoted passage">
+            <div className="quote-card-full-head">
+              <span>{quoteCardLabel(shownQuote)}</span>
+              <button type="button" onClick={() => setOpenQuote(null)} title="Close" aria-label="Close">×</button>
+            </div>
+            <div className="quote-card-full-text">{shownQuote.quote}</div>
+            {shownQuote.comment && <div className="quote-card-full-comment">{shownQuote.comment}</div>}
           </div>
-        ))}
+        )}
+        <div className="chat-quote-cards">
+          {quotes.map((q, i) => (
+            <div
+              key={`${i}:${quoteCardLabel(q)}:${q.quote.length}`}
+              className={`quote-card${q === shownQuote ? ' open' : ''}`}
+              role="button"
+              tabIndex={0}
+              title="Show the full quote"
+              onClick={() => setOpenQuote((cur) => (cur === q ? null : q))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenQuote((cur) => (cur === q ? null : q)); }
+              }}
+            >
+              {q.comment ? (
+                <>
+                  <div className="quote-card-label">💬 “{quoteCardPreview(q)}”</div>
+                  <div className="quote-card-text">{q.comment.replace(/\s+/g, ' ')}</div>
+                </>
+              ) : (
+                <>
+                  <div className="quote-card-label">{quoteCardLabel(q)}</div>
+                  <div className="quote-card-text">“{quoteCardPreview(q)}”</div>
+                </>
+              )}
+              <button
+                type="button"
+                className="quote-card-del"
+                onClick={(e) => { e.stopPropagation(); setQuotes((prev) => prev.filter((_, j) => j !== i)); }}
+                title="Remove quote"
+                aria-label="Remove quote"
+              >×</button>
+            </div>
+          ))}
+        </div>
       </div>
     )}
     <div className={`chat-input${lock ? ' locked' : ''}`}>

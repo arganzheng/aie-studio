@@ -118,6 +118,18 @@ export function resolveBrowsePath(input: string | undefined, home = os.homedir()
   return path.resolve(raw);
 }
 
+// Model: server.BrowseMakeDir — pure path half of "+ New folder" in the
+// server folder picker. Dot-names are refused: BrowseDirs hides them, so the
+// new folder would vanish from the tree it was just created in.
+export function planBrowseMkdir(input: string | undefined, home = os.homedir()): string {
+  if (!(input ?? '').trim()) throw Object.assign(new Error('path required'), { code: 400 });
+  const abs = resolveBrowsePath(input, home);
+  const name = path.basename(abs);
+  if (abs === path.dirname(abs)) throw Object.assign(new Error('cannot create the filesystem root'), { code: 400 });
+  if (name.startsWith('.')) throw Object.assign(new Error('folder name cannot start with "."'), { code: 400 });
+  return abs;
+}
+
 // rule-449 — one file per request, raw bytes, no multipart dependency.
 export const UPLOAD_MAX_BYTES = 512 * 1024 * 1024;
 
@@ -163,6 +175,28 @@ export function registerFsRoutes(app: FastifyInstance) {
     dirs.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
     const parent = path.dirname(abs);
     return { path: abs, parent: parent === abs ? null : parent, home: os.homedir(), dirs };
+  });
+
+  // Model: server.BrowseMakeDir — one level only, like server.MakeDir, but
+  // anywhere on the machine (same reach as adding any path as a project).
+  app.post<{ Body: { path?: string } }>('/api/fs/browse/mkdir', async (req, reply) => {
+    if (!getUserId(req)) return reply.code(401).send({ error: 'unauthorized' });
+    let abs: string;
+    try {
+      abs = planBrowseMkdir(req.body?.path);
+    } catch (e: any) {
+      return reply.code(e.code ?? 400).send({ error: e.message });
+    }
+    const parentStat = await fs.stat(path.dirname(abs)).catch(() => null);
+    if (!parentStat?.isDirectory()) return reply.code(400).send({ error: 'parent directory does not exist' });
+    if (await fs.lstat(abs).catch(() => null)) return reply.code(409).send({ error: 'already exists' });
+    try {
+      await fs.mkdir(abs);
+    } catch (e: any) {
+      if (e.code === 'EACCES' || e.code === 'EPERM' || e.code === 'EROFS') return reply.code(403).send({ error: 'permission denied' });
+      throw e;
+    }
+    return { path: abs };
   });
 
   app.get<{ Querystring: { project?: string; path?: string } }>(

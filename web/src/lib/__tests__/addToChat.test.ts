@@ -70,4 +70,16 @@ describe('quote cards', () => {
     expect(composeQuotedPrompt([msg], '  ')).toBe('> line one\n>   line two');
     expect(composeQuotedPrompt([], 'hi')).toBe('hi');
   });
+  it('keeps a comment right under its quote', () => {
+    const c = { quote: 'round half up', origin: 'Claude message', comment: 'Use half-to-even.' };
+    expect(composeQuotedPrompt([c, file], 'Thanks.')).toBe(
+      '> round half up\nUse half-to-even.\n\n`src/math.ts:8-12`:\n> export function average() {}\n\nThanks.',
+    );
+    expect(composeQuotedPrompt([c], '')).toBe('> round half up\nUse half-to-even.');
+  });
+  it('treats the same quote with a different comment as a new card', () => {
+    const c = { quote: 'x', origin: 'Claude message', comment: 'one' };
+    expect(addQuotes([c], [c])).toHaveLength(1);
+    expect(addQuotes([c], [{ ...c, comment: 'two' }, { quote: 'x', origin: 'Claude message' }])).toHaveLength(3);
+  });
 });

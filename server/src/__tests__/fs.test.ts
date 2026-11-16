@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { lookupMime, planDelete, planMkdir, planMove, planUpload, resolveBrowsePath, resolveRel } from '../fs.js';
+import { lookupMime, planBrowseMkdir, planDelete, planMkdir, planMove, planUpload, resolveBrowsePath, resolveRel } from '../fs.js';
 
 describe('lookupMime', () => {
   it('treats TypeScript as text, not MPEG transport stream', () => {
@@ -147,5 +147,22 @@ describe('resolveBrowsePath', () => {
   it('rejects relative paths', () => {
     expect(() => resolveBrowsePath('Code', home)).toThrow(/absolute/);
     expect(() => resolveBrowsePath('~user/x', home)).toThrow(/absolute/);
+  });
+});
+
+describe('planBrowseMkdir', () => {
+  const home = '/home/me';
+  it('resolves ~ and absolute paths', () => {
+    expect(planBrowseMkdir('~/Code/new', home)).toBe('/home/me/Code/new');
+    expect(planBrowseMkdir('/srv/app/', home)).toBe('/srv/app');
+  });
+  it('requires a path', () => {
+    expect(() => planBrowseMkdir('', home)).toThrow(/required/);
+    expect(() => planBrowseMkdir(undefined, home)).toThrow(/required/);
+  });
+  it('rejects relative paths, the root and dot-names', () => {
+    expect(() => planBrowseMkdir('Code/new', home)).toThrow(/absolute/);
+    expect(() => planBrowseMkdir('/', home)).toThrow(/root/);
+    expect(() => planBrowseMkdir('~/Code/.hidden', home)).toThrow(/cannot start/);
   });
 });

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Project } from '../types';
-import { DirPicker } from './DirPicker';
+import { browseDirs, makeServerDir } from '../api';
+import { DirTreePicker } from './DirTreePicker';
 
 // Model: web.ProjectManager — the one place projects are added, archived,
 // reordered and removed. Opened from the ProjectPicker menu ("⚙ Manage projects…"); the
@@ -21,8 +22,8 @@ export function ProjectManager({ projects, activeId, onAdd, onArchive, onReorder
   const [pathInput, setPathInput] = useState('');
   const [nameInput, setNameInput] = useState('');
   const [busy, setBusy] = useState(false);
-  // Model: web.DirPicker — "Browse…" opens a second dialog over this one;
-  // while it is open, Escape closes only the picker.
+  // Model: web.ServerDirPicker — "Browse…" opens a second dialog over this
+  // one; while it is open, Escape closes only the picker.
   const [browsing, setBrowsing] = useState(false);
   const browsingRef = useRef(false);
   browsingRef.current = browsing;
@@ -195,7 +196,7 @@ export function ProjectManager({ projects, activeId, onAdd, onArchive, onReorder
             <button type="button" className="pm-add-action" onClick={() => setAdding(true)}>+ Add project</button>
           )}
           {browsing && (
-            <DirPicker
+            <ServerDirPicker
               initialPath={pathInput}
               onClose={() => setBrowsing(false)}
               onSelect={(p) => {
@@ -212,5 +213,62 @@ export function ProjectManager({ projects, activeId, onAdd, onArchive, onReorder
         </div>
       </div>
     </div>
+  );
+}
+
+function absParent(p: string): string {
+  return p.slice(0, p.lastIndexOf('/')) || '/';
+}
+function absJoin(dir: string, name: string): string {
+  return dir.endsWith('/') ? dir + name : `${dir}/${name}`;
+}
+function isUnder(p: string, dir: string): boolean {
+  return p === dir || p.startsWith(dir.endsWith('/') ? dir : dir + '/');
+}
+
+// Model: web.ServerDirPicker — the shared folder tree over the *server's*
+// filesystem (server.BrowseDirs): the browser's native folder picker only
+// sees the client machine and never yields a path. The tree is rooted at the
+// home directory, or at the typed path when that lies outside it; "↑" on the
+// root row re-roots one level up, so anything on the machine is reachable.
+function ServerDirPicker({ initialPath, onSelect, onClose }: {
+  initialPath?: string;
+  onSelect: (path: string) => void;
+  onClose: () => void;
+}) {
+  const [view, setView] = useState<{ root: string; selected: string; home: string } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const typed = initialPath?.trim();
+      // A typed path that doesn't exist falls back to home.
+      const r = await (typed ? browseDirs(typed).catch(() => browseDirs()) : browseDirs());
+      if (alive) setView({ home: r.home, selected: r.path, root: isUnder(r.path, r.home) ? r.home : r.path });
+    })().catch(() => { if (alive) onClose(); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (!view) return null;
+  const { root, selected, home } = view;
+  // Open the chain from the root down to the selection.
+  const chain: string[] = [];
+  for (let p = selected; p !== root && isUnder(p, root); p = absParent(p)) chain.push(p);
+  return (
+    <DirTreePicker
+      key={root}
+      title="Choose folder"
+      ariaLabel="Choose folder"
+      root={root}
+      rootLabel={root === home ? '~' : root}
+      onRootUp={root === '/' ? undefined : () => setView({ home, root: absParent(root), selected: root })}
+      list={async (path) => (await browseDirs(path)).dirs.map((name) => ({ name, path: absJoin(path, name) }))}
+      mkdir={async (parent, name) => (await makeServerDir(absJoin(parent, name))).path}
+      initialSelected={selected}
+      initialExpanded={chain}
+      confirmLabel="Select this folder"
+      describe={(dir) => dir}
+      onPick={onSelect}
+      onClose={onClose}
+    />
   );
 }
