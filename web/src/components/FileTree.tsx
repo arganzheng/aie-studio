@@ -5,6 +5,7 @@ import { copyText } from '../lib/clipboard';
 import { joinPath, parentPath, rewriteMovedPath } from '../lib/movedPath';
 import { isTextFile } from '../lib/textFiles';
 import { useFitMenuTop } from '../lib/fitMenu';
+import { DirTreePicker } from './DirTreePicker';
 
 // Model: web.FileTree (auc-009). Lazy tree over server.ListDir; the per-row
 // ⋯ menu offers Download (files), Rename, Move to…, Upload here… (dirs) and
@@ -196,11 +197,11 @@ function hasFiles(e: React.DragEvent): boolean {
 
 type UploadProgress = { dir: string; index: number; total: number; name: string; pct: number };
 
-// rule-412 — "Move to…" destination chooser: a dirs-only lazy tree with the
-// project root pinned on top. The entry being moved (and, for a directory,
-// everything under it) is shown but not selectable. "+ New folder" creates a
-// directory under the selected one in place (server.MakeDir).
-function DirPicker({
+// rule-412 — "Move to…" destination chooser: the shared DirTreePicker over
+// this project's folders, root pinned on top. The entry being moved (and, for
+// a directory, everything under it) is shown but not selectable. "+ New
+// folder" creates a directory under the selected one in place (server.MakeDir).
+function MoveDirPicker({
   projectId,
   entry,
   onPick,
@@ -214,152 +215,39 @@ function DirPicker({
   onNotice?: (text: string) => void;
 }) {
   const currentParent = parentPath(entry.path);
-  const [expanded, setExpanded] = useState<Set<string>>(() => {
-    // Pre-open the chain down to the entry's current parent so the user
-    // starts where the entry lives.
-    const s = new Set<string>([ROOT_KEY]);
+  // Pre-open the chain down to the entry's current parent so the user starts
+  // where the entry lives.
+  const initialExpanded = useMemo(() => {
+    const chain: string[] = [];
     let p = currentParent;
-    while (p) { s.add(p); p = parentPath(p); }
-    return s;
-  });
-  const [dirs, setDirs] = useState<Map<string, Entry[]>>(new Map());
-  const [selected, setSelected] = useState<string>(currentParent);
-  // Inline "new folder" input under `selected`; null = not editing.
-  const [newFolder, setNewFolder] = useState<string | null>(null);
-
-  const load = useCallback(async (path: string) => {
-    try {
-      const items = await listDir(projectId, path);
-      setDirs((prev) => {
-        const next = new Map(prev);
-        next.set(path, items.filter((i) => i.isDir));
-        return next;
-      });
-    } catch {
-      // leave the node childless; the user can retry by toggling
-    }
-  }, [projectId]);
-
-  useEffect(() => {
-    for (const p of expanded) if (!dirs.has(p)) load(p);
-  }, [expanded, load]);
-
-  const isBlocked = (dir: string) =>
-    entry.isDir && (dir === entry.path || dir.startsWith(entry.path + '/'));
-
-  function toggle(dir: string) {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(dir)) next.delete(dir); else next.add(dir);
-      return next;
-    });
-  }
-
-  function startNewFolder() {
-    setExpanded((prev) => new Set(prev).add(selected));
-    setNewFolder('');
-  }
-
-  async function commitNewFolder() {
-    if (newFolder === null) return;
-    const name = newFolder.trim();
-    const parent = selected;
-    setNewFolder(null);
-    if (!name) return;
-    if (name.includes('/')) {
-      onNotice?.('Name cannot contain "/"');
-      return;
-    }
-    try {
-      const res = await makeDir(projectId, joinPath(parent, name));
-      await load(parent);
-      setExpanded((prev) => new Set(prev).add(parent));
-      setSelected(res.path);
-    } catch (e) {
-      onNotice?.(`New folder failed: ${(e as Error).message}`);
-    }
-  }
-
-  function renderDir(dir: string, name: string, depth: number) {
-    const open = expanded.has(dir);
-    const kids = dirs.get(dir);
-    const blocked = isBlocked(dir);
-    const hasKids = kids === undefined || kids.length > 0;
-    return (
-      <div key={dir || '/'}>
-        <div
-          className={`dirpicker-row ${selected === dir ? 'selected' : ''} ${blocked ? 'disabled' : ''}`}
-          style={{ paddingLeft: 8 + depth * 12 }}
-          onClick={() => {
-            if (blocked) return;
-            setSelected(dir);
-            if (!open) toggle(dir);
-          }}
-        >
-          <span
-            className="tree-toggle"
-            onClick={(e) => { e.stopPropagation(); if (!blocked) toggle(dir); }}
-          >{hasKids ? (open ? '▾' : '▸') : ' '}</span>
-          <span className="tree-icon">📁</span>
-          <span className="tree-name">{name}</span>
-        </div>
-        {open && !blocked && newFolder !== null && selected === dir && (
-          <div className="dirpicker-row" style={{ paddingLeft: 8 + (depth + 1) * 12 }}>
-            <span className="tree-toggle"> </span>
-            <span className="tree-icon">📁</span>
-            <input
-              autoFocus
-              className="tree-rename"
-              placeholder="New folder name"
-              value={newFolder}
-              onChange={(e) => setNewFolder(e.target.value)}
-              onBlur={() => setNewFolder(null)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); void commitNewFolder(); }
-                if (e.key === 'Escape') { e.preventDefault(); setNewFolder(null); }
-              }}
-            />
-          </div>
-        )}
-        {open && !blocked && kids && kids.map((k) => renderDir(k.path, k.name, depth + 1))}
-      </div>
-    );
-  }
-
-  const unchanged = selected === currentParent;
-  // Portal: the mobile sidebar drawer is transformed, which would otherwise
-  // make it the containing block for this fixed backdrop.
-  return createPortal(
-    <div className="settings-backdrop" onClick={onClose}>
-      <div
-        className="settings-modal dirpicker-modal"
-        role="dialog"
-        aria-label="Move to"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="settings-header">
-          <span>Move “{entry.name}” to…</span>
-          <button className="settings-close" onClick={onClose} aria-label="Close">×</button>
-        </div>
-        <div className="dirpicker-body">
-          {renderDir(ROOT_KEY, '/ (project root)', 0)}
-        </div>
-        <div className="dirpicker-footer">
-          <button
-            className="dirpicker-newfolder"
-            disabled={newFolder !== null || isBlocked(selected)}
-            onClick={startNewFolder}
-          >+ New folder</button>
-          <button onClick={onClose}>Cancel</button>
-          <button
-            className="primary"
-            disabled={unchanged || isBlocked(selected)}
-            onClick={() => onPick(selected)}
-          >Move here</button>
-        </div>
-      </div>
-    </div>,
-    document.body,
+    while (p) { chain.push(p); p = parentPath(p); }
+    return chain;
+  }, [currentParent]);
+  const list = useCallback(
+    async (path: string) => (await listDir(projectId, path)).filter((i) => i.isDir).map((i) => ({ path: i.path, name: i.name })),
+    [projectId],
+  );
+  const mkdir = useCallback(
+    async (parent: string, name: string) => (await makeDir(projectId, joinPath(parent, name))).path,
+    [projectId],
+  );
+  return (
+    <DirTreePicker
+      title={`Move “${entry.name}” to…`}
+      ariaLabel="Move to"
+      root={ROOT_KEY}
+      rootLabel="/ (project root)"
+      list={list}
+      mkdir={mkdir}
+      initialSelected={currentParent}
+      initialExpanded={initialExpanded}
+      isBlocked={(dir) => entry.isDir && (dir === entry.path || dir.startsWith(entry.path + '/'))}
+      canConfirm={(dir) => dir !== currentParent}
+      confirmLabel="Move here"
+      onPick={onPick}
+      onClose={onClose}
+      onNotice={onNotice}
+    />
   );
 }
 
@@ -928,7 +816,7 @@ export function FileTree({
         document.body,
       )}
       {moving && (
-        <DirPicker
+        <MoveDirPicker
           projectId={projectId}
           entry={moving}
           onClose={() => setMoving(null)}

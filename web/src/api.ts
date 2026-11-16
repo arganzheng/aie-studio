@@ -52,6 +52,21 @@ export async function browseDirs(path?: string): Promise<BrowseResult> {
   return r.json();
 }
 
+// Model: server.BrowseMakeDir — "+ New folder" in the server folder picker.
+// `path` is absolute (or ~/…); one level only.
+export async function makeServerDir(path: string): Promise<{ path: string }> {
+  const r = await fetch('/api/fs/browse/mkdir', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error(j.error || `HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
 // Model: web.FileTree rule-411 / rule-412 → server.MoveEntry (auc-126).
 // Rename and move share this: a rename is a move within the same parent.
 export async function moveEntry(
