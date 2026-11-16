@@ -9,6 +9,7 @@ import { devinDbPath, openDevinDb } from './devin-db.js';
 import type { WebSocket } from '@fastify/websocket';
 import { getProject } from './store.js';
 import { getUserId } from './auth.js';
+import { publishSessionEvent, type SessionOwner } from './notify.js';
 import { resolveDevinBinForUser } from './devin-versions.js';
 
 // Devin ACP integration. Kept fully independent of session.ts (Claude
@@ -18,6 +19,9 @@ import { resolveDevinBinForUser } from './devin-versions.js';
 type DevinSessionEntry = {
   proc: ChildProcessWithoutNullStreams;
   cwd: string;
+  // Model: server.SessionEvents — who to tell when a turn ends or the agent
+  // starts waiting on the user.
+  owner: SessionOwner;
   // ACP sessionId — slug like "purrfect-opinion". Null until session/new (or
   // session/load) response arrives.
   sessionId: string | null;
@@ -464,6 +468,8 @@ function forwardAgentRequest(
   if (!idleOnly) armPendingAgentRpc(entry, rpcId, pending, PERMISSION_TIMEOUT_MS);
   else if (entry.clients.size === 0) armPendingAgentRpc(entry, rpcId, pending, ELICITATION_IDLE_TIMEOUT_MS);
   broadcast(entry, { type: 'acp', data: msg });
+  // Devin keeps no title here; the page falls back to the tab's.
+  publishSessionEvent(entry.owner, 'awaiting', entry.sessionId, null);
 }
 
 function attachClientHandlers(entry: DevinSessionEntry, socket: WebSocket) {
@@ -648,6 +654,10 @@ function wireProcess(entry: DevinSessionEntry, onInit: (sessionIdNow: string | n
       entry.inflightPrompts = Math.max(0, entry.inflightPrompts - 1);
       broadcast(entry, { type: 'acp', data: msg });
       if (entry.inflightPrompts === 0 && entry.clients.size === 0) scheduleKillIfIdle(entry);
+      // A turn the user cancelled is not news to them.
+      if (entry.inflightPrompts === 0 && entry.pendingAgentRpcs.size === 0 && msg.result.stopReason !== 'cancelled') {
+        publishSessionEvent(entry.owner, 'done', entry.sessionId, null);
+      }
       return;
     }
 
@@ -1166,6 +1176,7 @@ export function registerDevinRoutes(app: FastifyInstance) {
       const entry: DevinSessionEntry = {
         proc,
         cwd: project.path,
+        owner: { uid, projectId: project.id, tabType: 'devin' },
         sessionId: resumeId ?? null,
         clients: new Set(),
         initialized: false,

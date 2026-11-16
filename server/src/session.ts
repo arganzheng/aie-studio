@@ -8,6 +8,7 @@ import os from 'node:os';
 import type { WebSocket } from '@fastify/websocket';
 import { getProject, getSettings } from './store.js';
 import { getUserId } from './auth.js';
+import { publishSessionEvent, type SessionOwner } from './notify.js';
 import { registerWireSession, wireBaseUrl } from './observe/wire-proxy.js';
 import { isEffortLevel } from './models.js';
 import { markLive, unmarkLive, liveBridge } from './live-sessions.js';
@@ -81,6 +82,9 @@ const PENDING_UUID_TTL_MS = 10 * 60_000;
 type SessionEntry = {
   proc: ChildProcessWithoutNullStreams;
   cwd: string;
+  // Model: server.SessionEvents — who to tell when a turn ends or the agent
+  // starts waiting on the user.
+  owner: SessionOwner;
   resumeId: string | null; // claude's session_id (null until system.init)
   clients: Set<WebSocket>;
   lastSelfWrite: number;
@@ -341,6 +345,7 @@ function handleControlRequest(entry: SessionEntry, event: any) {
   entry.pendingToolRequests.set(rid, { event, timer: null });
   if (entry.clients.size === 0) armIdleToolRequests(entry);
   broadcast(entry, { type: 'event', data: event });
+  publishSessionEvent(entry.owner, 'awaiting', entry.resumeId, entry.title);
 }
 
 // Replay still-pending requests to a client that just got `started`.
@@ -563,6 +568,7 @@ function wireProcess(entry: SessionEntry) {
       scheduleTitleRefresh(entry);
       // Task finished. If nobody's listening, start the kill timer now.
       if (entry.clients.size === 0) scheduleKillIfIdle(entry);
+      if (entry.pendingToolRequests.size === 0) publishSessionEvent(entry.owner, 'done', entry.resumeId, entry.title);
     }
     // Any prompt claude has started on is in the JSONL by the time it emits
     // assistant output; `result` catches the tail end (rule-229).
@@ -869,6 +875,7 @@ export function registerSessionRoutes(app: FastifyInstance) {
       const entry: SessionEntry = {
         proc,
         cwd: project.path,
+        owner: { uid, projectId: project.id, tabType: 'session' },
         resumeId: resumeId ?? null,
         clients: new Set(),
         lastSelfWrite: Date.now(),

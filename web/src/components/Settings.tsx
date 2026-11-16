@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { requestSystemNotify, systemNotifyState } from '../lib/sessionAlertEffects';
 import type { Settings, SendKey, Theme, FontScale, LocalPrefs } from '../types';
 import { usePwaInstall } from '../usePwaInstall';
 import { sectionsForGroup, type SettingsGroupId } from '../registry';
@@ -198,6 +199,8 @@ export function Settings({
   const [savedFlash, setSavedFlash] = useState(false);
   const flashTimer = useRef<number | null>(null);
   const [group, setGroup] = useState<SettingsGroupId>('general');
+  // Browser permission for OS notifications (per device, not a stored setting).
+  const [sysNotify, setSysNotify] = useState(systemNotifyState);
   const pwa = usePwaInstall();
   const [devinVersions, setDevinVersions] = useState<DevinVersion[] | null>(null);
   useEffect(() => {
@@ -421,6 +424,41 @@ export function Settings({
 
           {group === 'features' && (
             <>
+              <Toggle
+                label="Session alerts"
+                checked={settings.notify ?? true}
+                onChange={(v) => commit({ ...settings, notify: v })}
+                text="Pop up when a session finishes or needs your input"
+                hint="Shown on whichever project or tab you are in, for every session running on the server — not for the one you are looking at. Click a card to go to the session."
+              />
+              {(settings.notify ?? true) && (
+                <>
+                  <Toggle
+                    label="Alert sound"
+                    checked={settings.notifySound ?? true}
+                    onChange={(v) => commit({ ...settings, notifySound: v })}
+                    text="Play a short chime with each alert"
+                    hint="Browsers only allow sound after you have clicked or typed in the page."
+                  />
+                  <Toggle
+                    label="System notifications"
+                    checked={!!settings.notifySystem && sysNotify === 'granted'}
+                    onChange={(v) => {
+                      if (!v) { commit({ ...settings, notifySystem: false }); return; }
+                      void requestSystemNotify().then((state) => {
+                        setSysNotify(state);
+                        commit({ ...settings, notifySystem: state === 'granted' });
+                      });
+                    }}
+                    text="Also notify through the browser / OS while this page is in the background"
+                    hint={
+                      sysNotify === 'unsupported' ? 'Not available here: needs HTTPS (or localhost), and on iPhone / iPad the app must be added to the Home Screen first.'
+                      : sysNotify === 'denied' ? 'Blocked for this site in the browser — allow notifications in the site settings, then turn this on.'
+                      : 'Permission is per browser: turning this on asks once on each device.'
+                    }
+                  />
+                </>
+              )}
               <Toggle
                 label="Review"
                 checked={settings.review ?? false}

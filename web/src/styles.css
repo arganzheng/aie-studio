@@ -2913,3 +2913,92 @@ pre {
   .details-label { grid-column: 1 / -1; padding-bottom: 0; }
   .details-copy { min-height: 36px; padding: 6px 14px; }
 }
+
+/* Session alerts (model: web.SessionAlerts): "finished / needs you" cards,
+   above everything, top-right on desktop and full-width on phones. */
+.session-alerts {
+  position: fixed;
+  top: 44px;
+  right: 12px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  pointer-events: none;
+}
+.session-alerts > * { pointer-events: auto; }
+.session-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 8px 10px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: var(--shadow-modal);
+  cursor: pointer;
+  animation: session-alert-in 0.18s ease-out;
+}
+.session-alert.awaiting { border-left-color: #d97706; }
+.session-alert:hover { background: var(--bg-hover); }
+.session-alert-dot {
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.session-alert.awaiting .session-alert-dot { background: #d97706; }
+.session-alert-main { flex: 1 1 auto; min-width: 0; }
+.session-alert-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-alert-sub {
+  font-size: 12px;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-alert-kind { color: var(--accent); }
+.session-alert.awaiting .session-alert-kind { color: #d97706; }
+.session-alert-close {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.session-alert-close:hover { color: var(--fg-strong); }
+.session-alerts-clear {
+  align-self: flex-end;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.session-alerts-clear:hover { color: var(--fg-strong); }
+@keyframes session-alert-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+@media (max-width: 600px) {
+  .session-alerts { top: 60px; left: 8px; right: 8px; width: auto; max-width: none; }
+  .session-alert { padding: 12px 8px 12px 12px; }
+  .session-alert-close { padding: 4px 10px; font-size: 20px; }
+}
