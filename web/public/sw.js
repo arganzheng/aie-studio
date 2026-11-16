@@ -16,3 +16,21 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', () => {
   // Intentional pass-through.
 });
+
+// Session alerts (web.SessionAlerts): the page shows its system notifications
+// through this worker. A click brings the app's window forward and hands the
+// alert back to the page, which opens the session.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const data = event.notification.data;
+  event.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const win = wins[0];
+    if (win) {
+      await win.focus().catch(() => {});
+      win.postMessage({ type: 'session-alert-open', event: data });
+    } else {
+      await self.clients.openWindow('/');
+    }
+  })());
+});

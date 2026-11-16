@@ -24,6 +24,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { getProject, getSettings } from './store.js';
 import { getUserId } from './auth.js';
+import { publishSessionEvent, type SessionOwner } from './notify.js';
 import { isEffortLevel } from './models.js';
 import { markLive, unmarkLive, liveBridge } from './live-sessions.js';
 import { registerWireSession, wireBaseUrl } from './observe/wire-proxy.js';
@@ -69,6 +70,9 @@ type PendingAsk = {
 
 type SdkEntry = {
   cwd: string;
+  // Model: server.SessionEvents — who to tell when a turn ends or the agent
+  // starts waiting on the user.
+  owner: SessionOwner;
   sessionId: string | null; // claude's session_id (null until system.init)
   q: Query | null;
   queue: InputQueue;
@@ -183,6 +187,7 @@ function makeCanUseTool(entry: SdkEntry): CanUseTool {
         }
       });
       broadcast(entry, { type: 'ask', data: askEvent(id, ask) });
+      publishSessionEvent(entry.owner, 'awaiting', entry.sessionId, entry.title);
     });
   };
 }
@@ -291,6 +296,7 @@ function onSdkMessage(entry: SdkEntry, m: any) {
     entry.thinking = false;
     scheduleTitleRefresh(entry);
     if (entry.clients.size === 0) scheduleKillIfIdle(entry);
+    if (entry.pendingAsks.size === 0) publishSessionEvent(entry.owner, 'done', entry.sessionId, entry.title);
   }
   broadcast(entry, { type: 'message', data: m });
 }
@@ -593,6 +599,7 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
       if (observeWire && resumeId) registerWireSession(resumeId, project.path);
       const entry: SdkEntry = {
         cwd: project.path,
+        owner: { uid, projectId: project.id, tabType: 'claude-sdk' },
         sessionId: resumeId ?? null,
         q: null,
         queue: makeInputQueue(),

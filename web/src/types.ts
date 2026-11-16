@@ -180,6 +180,12 @@ export type LocalPrefs = {
 };
 
 export type Settings = {
+  // Model: web.SessionAlerts. Pop-up when a session finishes or needs input
+  // (default on), with a chime (default on) and — while the page is in the
+  // background — an OS notification (default off; needs browser permission).
+  notify?: boolean;
+  notifySound?: boolean;
+  notifySystem?: boolean;
   sendKey: SendKey;
   theme: Theme;
   fontScale: FontScale;

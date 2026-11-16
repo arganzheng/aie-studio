@@ -8,6 +8,10 @@ import type { NewBookmark } from './components/BookmarkButton';
 import type { Bookmark } from './types';
 import * as review from './lib/review';
 import type { ChatQuote } from './lib/addToChat';
+import { alertHeadline, alertKey, alertSessionTitle, dropSeen, isViewing, titleWithUnread, upsertAlert, type SessionEvent, type ViewState } from './lib/sessionAlerts';
+import { playChime, showSystemNotification } from './lib/sessionAlertEffects';
+import { useSessionEvents } from './useSessionEvents';
+import { SessionAlerts } from './components/SessionAlerts';
 import { ProjectPicker } from './components/ProjectPicker';
 import { ProjectManager } from './components/ProjectManager';
 import { TabBar, tabTitle } from './components/TabBar';
@@ -336,6 +340,8 @@ export default function App() {
   // renders the same panel as a permanent third column.
   const [reviewDrawerOpen, setReviewDrawerOpen] = useState(false);
   const [appToast, setAppToast] = useState<string | null>(null);
+  // Model: web.SessionAlerts — pending "finished / needs you" cards, oldest first.
+  const [alerts, setAlerts] = useState<SessionEvent[]>([]);
   const appToastTimer = useRef<number | null>(null);
   const showAppToast = useCallback((text: string) => {
     setAppToast(text);
@@ -795,8 +801,64 @@ export default function App() {
   // Reflect the active project name into the browser tab title so users with
   // multiple windows open can tell them apart from the OS tab strip.
   useEffect(() => {
-    document.title = activeProject ? `${activeProject.name} — AI Studio` : 'AI Studio';
-  }, [activeProject]);
+    document.title = titleWithUnread(activeProject ? `${activeProject.name} — AI Studio` : 'AI Studio', alerts.length);
+  }, [activeProject, alerts.length]);
+
+  // Model: web.SessionAlerts — what the user is looking at, for deciding
+  // whether an event is news. Refs: the socket callback outlives renders.
+  const viewState = (): ViewState => ({
+    attending: document.visibilityState === 'visible' && document.hasFocus(),
+    activeProjectId,
+    activeTab: activeTab && isSessionTab(activeTab) ? activeTab : null,
+  });
+  const viewStateRef = useRef(viewState);
+  viewStateRef.current = viewState;
+  const describeAlert = (e: SessionEvent) => ({
+    event: e,
+    title: alertSessionTitle(e, workspace.projects[e.projectId]?.tabs ?? []),
+    project: projects.find((p) => p.id === e.projectId)?.name ?? '',
+  });
+  const describeAlertRef = useRef(describeAlert);
+  describeAlertRef.current = describeAlert;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const openSessionAlertRef = useRef<(e: SessionEvent) => void>(() => {});
+  const onSessionEvent = useCallback((e: SessionEvent) => {
+    const view = viewStateRef.current();
+    if (isViewing(e, view)) return;
+    setAlerts((prev) => upsertAlert(prev, e));
+    const s = settingsRef.current;
+    if (s.notifySound ?? true) playChime(e.kind);
+    if (s.notifySystem && !view.attending) {
+      const d = describeAlertRef.current(e);
+      void showSystemNotification(
+        { title: d.title, body: `${alertHeadline(e.kind)}${d.project ? ` · ${d.project}` : ''}`, tag: alertKey(e), data: e },
+        () => openSessionAlertRef.current(e),
+      );
+    }
+  }, []);
+  useSessionEvents(!!authState && (!authState.required || authState.authenticated) && (settings.notify ?? true), onSessionEvent);
+  // Going to a session on your own clears its alert; so does coming back to
+  // the page while it is the one on screen.
+  useEffect(() => {
+    const sweep = () => setAlerts((prev) => dropSeen(prev, viewStateRef.current()) as SessionEvent[]);
+    sweep();
+    window.addEventListener('focus', sweep);
+    document.addEventListener('visibilitychange', sweep);
+    return () => {
+      window.removeEventListener('focus', sweep);
+      document.removeEventListener('visibilitychange', sweep);
+    };
+  }, [activeProjectId, activeTab]);
+  // A clicked system notification comes back through the service worker.
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const onMessage = (m: MessageEvent) => {
+      if (m.data?.type === 'session-alert-open' && m.data.event?.projectId) openSessionAlertRef.current(m.data.event as SessionEvent);
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, []);
 
   // Model: web.AddToChat — the session tab the user was last in, per project:
   // where a passage quoted from a file goes.
@@ -1489,6 +1551,34 @@ export default function App() {
     return undefined;
   }
 
+  // Model: web.SessionAlerts — a clicked card: go to that session, in
+  // whichever project it lives. Another project is switched to first; the
+  // tab is opened once that project's tabs are the ones on screen.
+  const pendingAlertOpenRef = useRef<{ projectId: string; ref: TabRef; title: string } | null>(null);
+  function openSessionAlert(e: SessionEvent) {
+    setAlerts((prev) => prev.filter((a) => alertKey(a) !== alertKey(e)));
+    if (!projects.some((p) => p.id === e.projectId)) {
+      showAppToast('That project is no longer in the list');
+      return;
+    }
+    const title = describeAlert(e).title;
+    const ref: TabRef | null = e.sessionId ? { type: e.tabType === 'devin' ? 'devin' : 'session', key: e.sessionId } : null;
+    if (e.projectId !== activeProjectId) {
+      pendingAlertOpenRef.current = ref ? { projectId: e.projectId, ref, title } : null;
+      setActiveProject(e.projectId);
+      return;
+    }
+    if (ref) openTabRef(ref, title);
+  }
+  openSessionAlertRef.current = openSessionAlert;
+  useEffect(() => {
+    const p = pendingAlertOpenRef.current;
+    if (!p || p.projectId !== activeProjectId) return;
+    pendingAlertOpenRef.current = null;
+    openTabRef(p.ref, p.title);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId]);
+
   // Model: web.RevealMessage via OpenTab — the one path behind JumpToComment,
   // JumpToBookmark and ObserveTab: bring back the tab `ref` points at (title
   // used if it has to be re-opened), then ask its panel to scroll to `anchor`.
@@ -1952,6 +2042,12 @@ export default function App() {
       )}
 
       {appToast && <div className="app-toast">{appToast}</div>}
+      <SessionAlerts
+        alerts={alerts.map(describeAlert)}
+        onOpen={openSessionAlert}
+        onDismiss={(e) => setAlerts((prev) => prev.filter((a) => a.id !== e.id))}
+        onClear={() => setAlerts([])}
+      />
 
       {settingsOpen && (
         <SettingsModal
