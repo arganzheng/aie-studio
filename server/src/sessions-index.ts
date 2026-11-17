@@ -5,6 +5,7 @@ import { getProject, getSessionMeta, listProjects, putSessionMeta, type Project,
 import { liveBridge, type LiveState } from './live-sessions.js';
 import { cliLiveState, stopCliSession } from './session.js';
 import { sdkLiveState, stopSdkSession } from './sdk-session.js';
+import { countSubagents } from './subagents.js';
 import { devinLiveState, listDevinSessionsInDb, stopDevinSession } from './devin.js';
 
 // Model: server.ListAllSessions — one list of every AI session, Claude and
@@ -25,6 +26,9 @@ export type SessionRow = {
   live: 'cli' | 'sdk' | 'devin' | null;
   state: LiveState | null;
   archived: boolean;
+  // Claude: the subagents it has spawned (absent for Devin). `running` is
+  // only known while the SDK bridge holds the session.
+  subagents?: { total: number; running: number };
 };
 
 export const MAX_TITLE_LENGTH = 200;
@@ -66,7 +70,7 @@ export function cleanTitle(raw: unknown): string | null {
 async function claudeRows(project: Project): Promise<Omit<SessionRow, 'archived'>[]> {
   let list: Awaited<ReturnType<typeof listSessions>> = [];
   try { list = await listSessions({ dir: project.path, includeWorktrees: false }); } catch {}
-  return list.map((s) => {
+  return Promise.all(list.map(async (s) => {
     const live = liveBridge(s.sessionId);
     return {
       kind: 'claude' as const,
@@ -76,8 +80,9 @@ async function claudeRows(project: Project): Promise<Omit<SessionRow, 'archived'
       updatedAt: s.lastModified,
       live,
       state: live === 'sdk' ? sdkLiveState(s.sessionId) : live === 'cli' ? cliLiveState(s.sessionId) : null,
+      subagents: await countSubagents(project.path, s.sessionId),
     };
-  });
+  }));
 }
 
 function devinRows(project: Project): Omit<SessionRow, 'archived'>[] {

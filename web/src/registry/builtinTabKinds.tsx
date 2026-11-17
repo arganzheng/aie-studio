@@ -4,7 +4,8 @@ import { ChatPanel } from '../components/ChatPanel';
 import { DevinPanel } from '../components/DevinPanel';
 import { SdkPanel } from '../components/SdkPanel';
 import { ObservePanel } from '../components/ObservePanel';
-import type { Tab, DevinTab, SessionTab, FileTab, EditorTab, ObserveTab, ClaudeSdkTab } from '../types';
+import { SubagentPanel } from '../components/SubagentPanel';
+import type { Tab, DevinTab, SessionTab, FileTab, EditorTab, ObserveTab, ClaudeSdkTab, SubagentTab } from '../types';
 import { registerTabKind } from './tabRegistry';
 
 function shortId() { return Math.random().toString(36).slice(2, 10); }
@@ -204,5 +205,29 @@ registerTabKind({
   render: ({ tab, project, revealInSession }) => {
     const t = asObserve(tab);
     return <ObservePanel projectId={project.id} origin={t.origin} onReveal={(anchor) => revealInSession(t.origin, anchor)} />;
+  },
+});
+
+// Model: web.SubagentPanel — read-only view of one subagent of a Claude
+// session. Opened from the Sessions tree (App dedupes by session + agent),
+// never from the generic "+" list.
+registerTabKind({
+  id: 'subagent',
+  label: 'Subagent',
+  render: ({ tab, project, settings, updateTabs, openTab, revealInSession }) => {
+    if (tab.type !== 'subagent') throw new Error(`tabRegistry: expected subagent tab, got ${tab.type}`);
+    const t: SubagentTab = tab;
+    return (
+      <SubagentPanel
+        projectId={project.id}
+        projectPath={project.path}
+        sessionId={t.sessionId}
+        agentId={t.agentId}
+        theme={settings.theme}
+        onTitle={(title) => updateTabs((tabs) => tabs.map((x) => (x.id === t.id && x.type === 'subagent' && x.title !== title ? { ...x, title } : x)))}
+        onOpenFile={(relPath) => openTab({ id: shortId(), type: 'file', path: relPath })}
+        onOpenParent={(toolUseId) => revealInSession({ type: 'session', key: t.sessionId }, `t:${toolUseId}`)}
+      />
+    );
   },
 });

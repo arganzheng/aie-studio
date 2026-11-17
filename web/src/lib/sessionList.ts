@@ -15,6 +15,8 @@ export type SessionRow = {
   live: 'cli' | 'sdk' | 'devin' | null;
   state: LiveState | null;
   archived: boolean;
+  // Claude: the subagents it has spawned (absent for Devin).
+  subagents?: { total: number; running: number };
 };
 
 // Same shape as lib/sessionAlerts.alertKey, so a pending alert marks its row.

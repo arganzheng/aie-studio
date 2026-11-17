@@ -7,6 +7,7 @@ A browser-based workbench for driving AI coding agents (Claude Code, Devin CLI) 
 - **Agent tabs** — run multiple Claude Code / Devin sessions side by side, each pinned to a project directory; resume previous sessions
 - **File browser & viewer** — tree view of the project, preview of text, Markdown, images, PDFs
 - **Sessions & groups** — one sidebar view for every session: open sessions sit under their cmux-style tab group (switch, rename, drag to reorder or move tabs between groups), the rest under History; search, filter, archive
+- **Subagent tree** — a Claude session that spawned subagents (its Agent tool) gets a caret and a `⑂ 2/3` badge in the Sessions list; expand it to see each subagent with its status, click one to follow its conversation live in a read-only tab, and stop a running one without stopping the session.
 - **Export** — render a chat or file to PNG/PDF via headless Chrome
 - **Multi-user** — password login per user; state stored per user under `~/.config/remote-ide/`
 - **PWA** — installable on iOS/Android home screen

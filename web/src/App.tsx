@@ -40,6 +40,7 @@ import {
   putSettings,
   getAuthStatus,
   logout,
+  type SubagentInfo,
 } from './api';
 import { rewriteMovedPath } from './lib/movedPath';
 import type { Project, Tab, Group, Batch, Comment, TabRef, Workspace, ProjectWorkspace, Settings, LocalPrefs, ClaudeBridge } from './types';
@@ -1238,6 +1239,19 @@ export default function App() {
     openTab({ id: randomId(), type: 'observe', origin, title });
   }
 
+  // Model: web.SessionList tree → web.SubagentPanel. Open (or re-activate)
+  // the read-only view of one subagent; one tab per subagent per project.
+  function openSubagentTab(row: SessionRow, s: SubagentInfo) {
+    if (!activeProjectId) return;
+    if (row.projectId !== activeProjectId) {
+      showAppToast('Switch to that session\'s project to open its subagents');
+      return;
+    }
+    const existing = tabs.find((t) => t.type === 'subagent' && t.sessionId === row.sessionId && t.agentId === s.agentId);
+    if (existing) { setActiveTab(activeProjectId, existing.id); return; }
+    openTab({ id: randomId(), type: 'subagent', sessionId: row.sessionId, agentId: s.agentId, title: s.description });
+  }
+
   function activateTab(id: string) {
     if (!activeProjectId) return;
     setActiveTab(activeProjectId, id);
@@ -1884,7 +1898,9 @@ export default function App() {
                   onReorderGroups: reorderGroups,
                   onMoveTab: moveTabToGroup,
                 }}
+                activeSubagent={activeTab?.type === 'subagent' ? `${activeTab.sessionId}:${activeTab.agentId}` : null}
                 onOpen={(row) => { setDrawerOpen(false); openSessionRow(row); }}
+                onOpenSubagent={(row, s) => { setDrawerOpen(false); openSubagentTab(row, s); }}
                 onNewClaude={localPrefs.enableClaude ? () => { setDrawerOpen(false); if (localPrefs.claudeBridge === 'sdk') openSdkTab(); else openSessionTab(); } : undefined}
                 onNewDevin={localPrefs.enableDevin ? () => { setDrawerOpen(false); openDevinTab(); } : undefined}
                 onRenamed={retitleSessionTabs}

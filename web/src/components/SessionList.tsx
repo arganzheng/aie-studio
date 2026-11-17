@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { archiveSession, deleteSessionForever, listAllSessions, renameAnySession, stopSession } from '../api';
+import { archiveSession, deleteSessionForever, listAllSessions, renameAnySession, stopSession, type SubagentInfo } from '../api';
 import { useFitMenuTop } from '../lib/fitMenu';
 import {
   NO_FILTER, filterSessions, isFiltering, sectionSessions, sessionRowKey, sessionStatus,
@@ -10,6 +10,7 @@ import { groupActivityMark, type TabActivity } from '../lib/tabActivity';
 import { TabActivityMark } from './TabActivityMark';
 import { tabGroupId } from '../types';
 import { providerIcon } from './TabBar';
+import { SessionSubagents } from './SessionSubagents';
 
 // Model: web.SessionList — the sidebar's Sessions view: every Claude and
 // Devin session of this project (or of all projects), newest first, with
@@ -30,11 +31,18 @@ const POLL_MS = 5000;
 const SCOPE_LS_KEY = 'remote-ide:sessionListScope';
 const COLLAPSED_LS_KEY = 'remote-ide:sessionSectionsCollapsed';
 const HISTORY_ID = '__history__';
+const SUBAGENTS_OPEN_LS_KEY = 'remote-ide:sessionSubagentsOpen';
 
 type Scope = 'project' | 'all';
 
 function loadScope(): Scope {
   try { return localStorage.getItem(SCOPE_LS_KEY) === 'all' ? 'all' : 'project'; } catch { return 'project'; }
+}
+function loadStringSet(key: string): Set<string> {
+  try {
+    const v = JSON.parse(localStorage.getItem(key) || '[]');
+    return new Set(Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
+  } catch { return new Set(); }
 }
 function loadCollapsed(): Set<string> {
   try {
@@ -73,7 +81,9 @@ export function SessionList({
   activeKey,
   refreshSignal,
   workspace,
+  activeSubagent,
   onOpen,
+  onOpenSubagent,
   onNewClaude,
   onNewDevin,
   onRenamed,
@@ -89,7 +99,11 @@ export function SessionList({
   refreshSignal: number;
   // Present → Group sections in the "This project" scope.
   workspace?: SessionListWorkspace;
+  // The subagent in the tab on screen, if any: `<sessionId>:<agentId>`.
+  activeSubagent?: string | null;
   onOpen: (row: SessionRow) => void;
+  // A subagent row under an expanded Claude session was clicked.
+  onOpenSubagent?: (row: SessionRow, s: SubagentInfo) => void;
   // Omitted when that provider is switched off on this device.
   onNewClaude?: () => void;
   onNewDevin?: () => void;
@@ -108,6 +122,9 @@ export function SessionList({
   const [renaming, setRenaming] = useState<{ key: string; text: string } | null>(null);
   const [groupRenaming, setGroupRenaming] = useState<{ id: string; text: string } | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed);
+  // Session rows (sessionRowKey) whose subagents are shown.
+  const [subagentsOpen, setSubagentsOpen] = useState<Set<string>>(() => loadStringSet(SUBAGENTS_OPEN_LS_KEY));
+  const [tick, setTick] = useState(0);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [drop, setDrop] = useState<Drop | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -121,6 +138,9 @@ export function SessionList({
   useEffect(() => {
     try { localStorage.setItem(COLLAPSED_LS_KEY, JSON.stringify([...collapsed])); } catch {}
   }, [collapsed]);
+  useEffect(() => {
+    try { localStorage.setItem(SUBAGENTS_OPEN_LS_KEY, JSON.stringify([...subagentsOpen].slice(-200))); } catch {}
+  }, [subagentsOpen]);
 
   const target = scope === 'all' ? 'all' : projectId;
   const refresh = useCallback(async () => {
@@ -135,6 +155,7 @@ export function SessionList({
       setError((e as Error).message);
     }
     setNow(Date.now());
+    setTick((n) => n + 1);
   }, [target]);
 
   // A different project / scope: drop the old rows rather than show them
@@ -302,9 +323,15 @@ export function SessionList({
     const kind = row?.kind ?? opts.kind ?? 'claude';
     const isActive = opts.tabId ? opts.tabId === workspace?.activeTabId : key === activeKey;
     const draggable = !!(opts.tabId && opts.groupId && workspace && !editing);
+    const subs = row?.kind === 'claude' && row.subagents && row.subagents.total > 0 ? row.subagents : null;
+    const subsOpen = subs !== null && subagentsOpen.has(key);
+    const toggleSubs = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      setSubagentsOpen((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+    };
     return (
+      <Fragment key={key}>
       <div
-        key={key}
         className={`session-row tone-${status.tone}${isActive ? ' active' : ''}${row?.archived ? ' archived' : ''}${drag?.kind === 'tab' && drag.id === opts.tabId ? ' dragging' : ''}`}
         title={row?.title ?? opts.title}
         draggable={draggable}
@@ -321,6 +348,15 @@ export function SessionList({
           else if (row) onOpen(row);
         }}
       >
+        {subs ? (
+          <button
+            type="button"
+            className="session-row-caret"
+            aria-label={subsOpen ? 'Hide subagents' : 'Show subagents'}
+            aria-expanded={subsOpen}
+            onClick={toggleSubs}
+          >{subsOpen ? '▾' : '▸'}</button>
+        ) : null}
         <span className="session-row-icon">{providerIcon(kind === 'devin' ? 'devin' : 'session')}</span>
         <div className="session-row-main">
           {editing ? (
@@ -345,6 +381,14 @@ export function SessionList({
             {project && <span> · {project}</span>}
           </div>
         </div>
+        {subs && (
+          <button
+            type="button"
+            className={`session-row-subagents${subs.running > 0 ? ' running' : ''}`}
+            title={`${subs.total} subagent${subs.total === 1 ? '' : 's'}${subs.running > 0 ? `, ${subs.running} running` : ', all finished'} — click to ${subsOpen ? 'hide' : 'show'}`}
+            onClick={toggleSubs}
+          >⑂ {subs.total - subs.running}/{subs.total}</button>
+        )}
         {(status.tone === 'awaiting' || status.tone === 'running' || isUnread) && (
           <span className={`session-row-dot ${status.tone}`} aria-hidden="true" />
         )}
@@ -356,6 +400,20 @@ export function SessionList({
           onClick={(e) => setMenu({ kind: 'row', row, tabId: opts.tabId ?? null, groupId: opts.groupId ?? null, ...menuAt(e, 200) })}
         >⋯</button>
       </div>
+      {subsOpen && row && subs && (
+        <SessionSubagents
+          projectId={row.projectId}
+          sessionId={row.sessionId}
+          tick={tick}
+          total={subs.total}
+          running={subs.running}
+          now={now}
+          activeAgentId={activeSubagent?.startsWith(`${row.sessionId}:`) ? activeSubagent.slice(row.sessionId.length + 1) : null}
+          onOpen={(s) => onOpenSubagent?.(row, s)}
+          onNotice={onNotice}
+        />
+      )}
+      </Fragment>
     );
   }
 

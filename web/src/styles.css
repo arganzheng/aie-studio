@@ -3151,6 +3151,56 @@ pre {
 .session-row-sub { font-size: 11px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-row.tone-awaiting .session-row-status { color: #d97706; }
 .session-row.tone-running .session-row-status { color: var(--accent); }
+/* Subagent tree: the caret sits in the row's left padding, so rows without
+   subagents keep their layout. */
+.session-row { position: relative; }
+.session-row-caret {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 14px;
+  display: flex; align-items: flex-start; justify-content: center; padding: 8px 0 0;
+  background: transparent; border: none; color: var(--fg-muted); font-size: 10px; cursor: pointer;
+}
+.session-row-caret:hover { color: var(--fg); }
+.session-row-subagents {
+  flex: 0 0 auto;
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: 9px;
+  padding: 0 6px; height: 18px; line-height: 16px;
+  font-size: 10px; font-variant-numeric: tabular-nums; color: var(--fg-muted); cursor: pointer; white-space: nowrap;
+}
+.session-row-subagents:hover { color: var(--fg); }
+.session-row-subagents.running { color: var(--accent); border-color: var(--accent); }
+.subagent-rows { border-left: 1px solid var(--border); margin-left: 19px; }
+.subagent-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px 4px 30px; margin-left: -19px; cursor: pointer;
+}
+.subagent-row:hover { background: var(--bg-hover); }
+.subagent-row.active { background: var(--bg-active); }
+.subagent-row .session-row-title { font-size: 12px; }
+.subagent-rows-note { padding: 4px 12px 6px 30px; font-size: 11px; color: var(--fg-muted); }
+.subagent-rows-note.error { color: var(--danger); }
+.subagent-dot { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--fg-muted); opacity: 0.55; }
+.subagent-dot.running { background: var(--accent); opacity: 1; animation: session-row-pulse 1.4s ease-in-out infinite; }
+.subagent-dot.done { background: #3fb950; opacity: 0.9; }
+.subagent-dot.failed { background: var(--danger); opacity: 1; }
+.subagent-status.running { color: var(--accent); }
+.subagent-status.failed { color: var(--danger); }
+.subagent-row-stop, .subagent-head-btn {
+  flex: 0 0 auto; background: transparent; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--fg-muted); cursor: pointer; font-size: 11px; padding: 2px 8px; white-space: nowrap;
+}
+.subagent-row-stop { padding: 1px 6px; font-size: 9px; }
+.subagent-row-stop:hover, .subagent-head-btn.danger:hover { color: var(--danger); border-color: var(--danger); }
+.subagent-head-btn:hover { color: var(--fg); background: var(--bg-hover); }
+.subagent-head-btn.danger { color: var(--danger); }
+.subagent-head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+}
+.subagent-head-main { flex: 1 1 auto; min-width: 0; }
+.subagent-head-title { font-size: 13px; font-weight: 600; color: var(--fg-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subagent-head-sub { font-size: 11px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subagent-foot { justify-content: flex-start; }
+.msg-user.subagent-task { white-space: pre-wrap; }
 .session-row-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; background: #3b82f6; }
 .session-row-dot.awaiting { background: #d97706; }
 .session-row-dot.running { background: var(--accent); animation: session-row-pulse 1.4s ease-in-out infinite; }

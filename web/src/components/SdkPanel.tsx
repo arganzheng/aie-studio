@@ -39,7 +39,7 @@ import { useClaudeModels, effortOptionsFor } from '../useClaudeModels';
 
 // ----- message model ------------------------------------------------------
 
-type Msg =
+export type Msg =
   | { id: string; role: 'user'; text: string; images?: string[]; uuid?: string }
   // uuid / blockIdx: the jsonl record + content block this text came from —
   // the comment anchor (model: Comment.anchor = a:<uuid>:<blockIdx>).
@@ -108,7 +108,7 @@ function renderEvent(ev: any): Delta[] {
   return out;
 }
 
-function buildFromEvents(events: any[], orphanResults: Map<string, string>): Msg[] {
+export function buildFromEvents(events: any[], orphanResults: Map<string, string>): Msg[] {
   const msgs: Msg[] = [];
   const pendingTools = new Map<string, Msg & { role: 'tool' }>();
   for (const ev of events) {
@@ -141,7 +141,7 @@ function applyDeltas(prev: Msg[], deltas: Delta[]): Msg[] {
 
 // ----- small presentational helpers --------------------------------------
 
-const MarkdownText = memo(function MarkdownText({ text, theme, projectPath, onOpenFile }: {
+export const MarkdownText = memo(function MarkdownText({ text, theme, projectPath, onOpenFile }: {
   text: string;
   theme: Theme;
   projectPath?: string;
@@ -170,7 +170,7 @@ const MarkdownText = memo(function MarkdownText({ text, theme, projectPath, onOp
   );
 });
 
-function ToolFields({ input, rel }: { input: any; rel: (s: string) => string }) {
+export function ToolFields({ input, rel }: { input: any; rel: (s: string) => string }) {
   if (!input || typeof input !== 'object') return <pre className="tool-field-value">{String(input ?? '')}</pre>;
   const entries = Object.entries(input);
   if (entries.length === 0) return null;
@@ -186,7 +186,7 @@ function ToolFields({ input, rel }: { input: any; rel: (s: string) => string }) 
   );
 }
 
-function summarizeTool(name: string, input: any, rel: (s: string) => string): string {
+export function summarizeTool(name: string, input: any, rel: (s: string) => string): string {
   if (!input || typeof input !== 'object') return '';
   const pick = (keys: string[]) => {
     for (const k of keys) { const v = input[k]; if (typeof v === 'string' && v) return v; }
