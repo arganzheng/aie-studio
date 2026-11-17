@@ -1,4 +1,5 @@
 import type { Project, Workspace, ProjectWorkspace, ResumableSession, ResumableSdkSession, ResumableDevinSession, Settings } from './types';
+import type { SessionRow } from './lib/sessionList';
 import type { ObservationResponse, WireRecord } from './lib/observe';
 
 export type AuthStatus = {
@@ -547,4 +548,40 @@ export async function getWireRecord(projectId: string, sid: string, key: string)
     throw new Error(j.error || `HTTP ${r.status}`);
   }
   return r.json();
+}
+
+// Model: web.SessionList → server.ListAllSessions and its mutations.
+async function postSessionAction(action: string, body: unknown): Promise<any> {
+  const r = await fetch(`/api/sessions/${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+type SessionTarget = Pick<SessionRow, 'projectId' | 'kind' | 'sessionId'>;
+const target = (t: SessionTarget) => ({ projectId: t.projectId, kind: t.kind, sessionId: t.sessionId });
+
+// `scope`: a project id, or 'all' for every (non-archived) project.
+export async function listAllSessions(scope: string): Promise<SessionRow[]> {
+  const r = await fetch(`/api/sessions?project=${encodeURIComponent(scope)}`);
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error(j.error || `HTTP ${r.status}`);
+  }
+  return (await r.json()).sessions ?? [];
+}
+export async function archiveSession(t: SessionTarget, archived: boolean): Promise<void> {
+  await postSessionAction('archive', { ...target(t), archived });
+}
+export async function renameAnySession(t: SessionTarget, title: string): Promise<string> {
+  return (await postSessionAction('rename', { ...target(t), title })).title;
+}
+export async function stopSession(t: SessionTarget): Promise<boolean> {
+  return !!(await postSessionAction('stop', target(t))).stopped;
+}
+export async function deleteSessionForever(t: SessionTarget): Promise<void> {
+  await postSessionAction('delete', target(t));
 }

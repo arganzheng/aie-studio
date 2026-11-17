@@ -12,6 +12,8 @@ import { alertHeadline, alertKey, alertSessionTitle, dropSeen, isViewing, titleW
 import { playChime, showSystemNotification } from './lib/sessionAlertEffects';
 import { useSessionEvents } from './useSessionEvents';
 import { SessionAlerts } from './components/SessionAlerts';
+import { SessionList } from './components/SessionList';
+import { sessionRowKey, type SessionRow } from './lib/sessionList';
 import { ProjectPicker } from './components/ProjectPicker';
 import { ProjectManager } from './components/ProjectManager';
 import { TabBar, tabTitle } from './components/TabBar';
@@ -48,7 +50,7 @@ import { isStandalone } from './usePwaInstall';
 const DEFAULT_SETTINGS: Settings = { sendKey: 'cmd-enter', theme: 'dark', fontScale: 'normal', model: '', devinModel: '', devinMode: '', devinVersion: '', showStderr: false, richCopy: false, review: false };
 
 // Tabs with a prompt input (model: web.AddToChat / web.SendBatch targets).
-function isSessionTab(tab: Tab): boolean {
+function isSessionTab(tab: Tab): tab is Extract<Tab, { type: 'session' | 'claude-sdk' | 'devin' }> {
   return tab.type === 'session' || tab.type === 'claude-sdk' || tab.type === 'devin';
 }
 
@@ -90,7 +92,7 @@ const REVIEW_COLLAPSED_WIDTH = 32;
 // Which draft Batch new comments go to, per project (model:
 // web.SetCurrentBatch). Per-device, like the active tab.
 const REVIEW_CURRENT_BATCH_LS_KEY = `${LS_PREFIX}reviewCurrentBatch`;
-type SidebarView = 'files' | 'groups';
+type SidebarView = 'files' | 'groups' | 'sessions';
 // Active project id. In browser mode the URL hash is authoritative and this
 // is only written (never read on init). In PWA mode the URL hash is ignored
 // on init — iOS "Add to Home Screen" often bakes the install-time hash into
@@ -122,7 +124,10 @@ function loadLocalPrefs(): LocalPrefs {
 }
 
 function loadSidebarView(): SidebarView {
-  try { return localStorage.getItem(SIDEBAR_VIEW_LS_KEY) === 'groups' ? 'groups' : 'files'; } catch { return 'files'; }
+  try {
+    const v = localStorage.getItem(SIDEBAR_VIEW_LS_KEY);
+    return v === 'groups' || v === 'sessions' ? v : 'files';
+  } catch { return 'files'; }
 }
 
 function loadSidebarWidth(): number | null {
@@ -342,6 +347,9 @@ export default function App() {
   const [appToast, setAppToast] = useState<string | null>(null);
   // Model: web.SessionAlerts — pending "finished / needs you" cards, oldest first.
   const [alerts, setAlerts] = useState<SessionEvent[]>([]);
+  // Model: web.SessionList — bumped to make the Sessions view refetch now.
+  const [sessionListSignal, setSessionListSignal] = useState(0);
+  const unreadSessionKeys = useMemo(() => new Set(alerts.map(alertKey)), [alerts]);
   const appToastTimer = useRef<number | null>(null);
   const showAppToast = useCallback((text: string) => {
     setAppToast(text);
@@ -813,6 +821,7 @@ export default function App() {
   });
   const viewStateRef = useRef(viewState);
   viewStateRef.current = viewState;
+  const projectNames = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects]);
   const describeAlert = (e: SessionEvent) => ({
     event: e,
     title: alertSessionTitle(e, workspace.projects[e.projectId]?.tabs ?? []),
@@ -824,6 +833,8 @@ export default function App() {
   settingsRef.current = settings;
   const openSessionAlertRef = useRef<(e: SessionEvent) => void>(() => {});
   const onSessionEvent = useCallback((e: SessionEvent) => {
+    // Model: web.SessionList — any session event means the list is stale.
+    setSessionListSignal((n) => n + 1);
     const view = viewStateRef.current();
     if (isViewing(e, view)) return;
     setAlerts((prev) => upsertAlert(prev, e));
@@ -1554,7 +1565,44 @@ export default function App() {
   // Model: web.SessionAlerts — a clicked card: go to that session, in
   // whichever project it lives. Another project is switched to first; the
   // tab is opened once that project's tabs are the ones on screen.
-  const pendingAlertOpenRef = useRef<{ projectId: string; ref: TabRef; title: string } | null>(null);
+  const pendingAlertOpenRef = useRef<{ projectId: string; ref: TabRef; title: string; live?: 'cli' | 'sdk' | null } | null>(null);
+  // Go to a session in the project on screen: its tab if there is one, else
+  // a new tab. A Claude session whose process is live in one bridge must open
+  // as that bridge's tab kind (rule-378), hence `live`.
+  function openSessionHere(ref: TabRef, title: string, live?: 'cli' | 'sdk' | null) {
+    const existing = tabs.find((t) => sameTabRef(tabRef(t), ref));
+    if (existing || ref.type === 'devin' || !live) { openTabRef(ref, title); return; }
+    openResumedClaude(ref.key, title, live);
+  }
+  // Model: web.SessionList — a clicked row; like a clicked alert card, it may
+  // live in another project.
+  function openSessionRow(row: SessionRow) {
+    setAlerts((prev) => prev.filter((a) => alertKey(a) !== sessionRowKey(row)));
+    const ref: TabRef = { type: row.kind === 'devin' ? 'devin' : 'session', key: row.sessionId };
+    const live = row.live === 'cli' || row.live === 'sdk' ? row.live : null;
+    if (row.projectId !== activeProjectId) {
+      pendingAlertOpenRef.current = { projectId: row.projectId, ref, title: row.title, live };
+      setActiveProject(row.projectId);
+      return;
+    }
+    openSessionHere(ref, row.title, live);
+  }
+  const showsSession = (t: Tab, row: SessionRow) =>
+    isSessionTab(t) && t.resumeId === row.sessionId && (t.type === 'devin') === (row.kind === 'devin');
+  // Renamed in the list: open tabs showing it follow, in whichever project.
+  function retitleSessionTabs(row: SessionRow, title: string) {
+    const pw = workspaceRef.current.projects[row.projectId];
+    if (!pw?.tabs.some((t) => showsSession(t, row))) return;
+    updateProjectTabs(row.projectId, pw.tabs.map((t) => (showsSession(t, row) ? { ...t, title } : t)));
+  }
+  // Deleted in the list: its tabs have nothing left to show.
+  function closeDeletedSessionTabs(row: SessionRow) {
+    const pw = workspaceRef.current.projects[row.projectId];
+    const gone = pw?.tabs.filter((t) => showsSession(t, row)) ?? [];
+    if (gone.length === 0) return;
+    if (row.projectId === activeProjectId) { for (const t of gone) closeTab(t.id); return; }
+    updateProjectTabs(row.projectId, pw!.tabs.filter((t) => !showsSession(t, row)));
+  }
   function openSessionAlert(e: SessionEvent) {
     setAlerts((prev) => prev.filter((a) => alertKey(a) !== alertKey(e)));
     if (!projects.some((p) => p.id === e.projectId)) {
@@ -1575,7 +1623,7 @@ export default function App() {
     const p = pendingAlertOpenRef.current;
     if (!p || p.projectId !== activeProjectId) return;
     pendingAlertOpenRef.current = null;
-    openTabRef(p.ref, p.title);
+    openSessionHere(p.ref, p.title, p.live);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProjectId]);
 
@@ -1789,13 +1837,44 @@ export default function App() {
               onOpenSettings={() => setSettingsOpen(true)}
               onOpenDevinUsage={() => setDevinUsageOpen(true)}
               onOpenDebug={() => setDebugOpen(true)}
-              sidebarView={sidebarView}
-              onToggleSidebarView={() => setSidebarView((v) => (v === 'files' ? 'groups' : 'files'))}
             />
           </div>
+          {activeProject && (
+            <div className="sidebar-views" role="tablist" aria-label="Sidebar view">
+              {([['files', 'Files'], ['groups', 'Groups'], ['sessions', 'Sessions']] as const).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  role="tab"
+                  aria-selected={sidebarView === v}
+                  className={sidebarView === v ? 'on' : ''}
+                  onClick={() => setSidebarView(v)}
+                >
+                  {label}
+                  {v === 'sessions' && alerts.length > 0 && <span className="sidebar-views-badge">{alerts.length}</span>}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="panel-body">
             {!activeProject ? (
               <div className="empty">Select or add a project</div>
+            ) : sidebarView === 'sessions' ? (
+              <SessionList
+                projectId={activeProject.id}
+                projectNames={projectNames}
+                unread={unreadSessionKeys}
+                activeKey={activeTab && isSessionTab(activeTab) && activeTab.resumeId
+                  ? sessionRowKey({ projectId: activeProject.id, kind: activeTab.type === 'devin' ? 'devin' : 'claude', sessionId: activeTab.resumeId })
+                  : null}
+                refreshSignal={sessionListSignal}
+                onOpen={(row) => { setDrawerOpen(false); openSessionRow(row); }}
+                onNewClaude={localPrefs.enableClaude ? () => { setDrawerOpen(false); if (localPrefs.claudeBridge === 'sdk') openSdkTab(); else openSessionTab(); } : undefined}
+                onNewDevin={localPrefs.enableDevin ? () => { setDrawerOpen(false); openDevinTab(); } : undefined}
+                onRenamed={retitleSessionTabs}
+                onDeleted={closeDeletedSessionTabs}
+                onNotice={showAppToast}
+              />
             ) : sidebarView === 'files' ? (
               <FileTree
                 projectId={activeProject.id}
@@ -2042,8 +2121,10 @@ export default function App() {
       )}
 
       {appToast && <div className="app-toast">{appToast}</div>}
+      {/* Hidden under the open phone drawer: the cards would cover the
+          Sessions list, which shows the same states itself. */}
       <SessionAlerts
-        alerts={alerts.map(describeAlert)}
+        alerts={drawerOpen ? [] : alerts.map(describeAlert)}
         onOpen={openSessionAlert}
         onDismiss={(e) => setAlerts((prev) => prev.filter((a) => a.id !== e.id))}
         onClear={() => setAlerts([])}

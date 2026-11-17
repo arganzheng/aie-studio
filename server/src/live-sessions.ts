@@ -19,3 +19,8 @@ export function unmarkLive(sessionId: string, bridge: Bridge): void {
 export function liveBridge(sessionId: string): Bridge | null {
   return live.get(sessionId) ?? null;
 }
+
+// Model: server.ListAllSessions — what a live session is doing right now, as
+// each bridge reports it for the Sessions list. `awaiting` (blocked on the
+// user) outranks `running`.
+export type LiveState = 'running' | 'awaiting' | 'idle';
