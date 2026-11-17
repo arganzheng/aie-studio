@@ -26,7 +26,7 @@ import { getProject, getSettings } from './store.js';
 import { getUserId } from './auth.js';
 import { publishSessionEvent, type SessionOwner } from './notify.js';
 import { isEffortLevel } from './models.js';
-import { markLive, unmarkLive, liveBridge } from './live-sessions.js';
+import { markLive, unmarkLive, liveBridge, type LiveState } from './live-sessions.js';
 import { registerWireSession, wireBaseUrl } from './observe/wire-proxy.js';
 import { encodeCwd } from './observe/transcript.js';
 
@@ -558,6 +558,21 @@ function startedFrame(entry: SdkEntry, attached: boolean) {
     title: entry.title,
     ...catalogOf(entry),
   };
+}
+
+// Model: server.ListAllSessions / server.StopSession — the Sessions list's
+// view of this bridge. Stop ends the process; attached panels get `exit`.
+export function sdkLiveState(sessionId: string): LiveState | null {
+  const entry = byId.get(sessionId);
+  if (!entry) return null;
+  return entry.pendingAsks.size > 0 ? 'awaiting' : entry.thinking ? 'running' : 'idle';
+}
+export function stopSdkSession(sessionId: string, uid: string): boolean {
+  const entry = byId.get(sessionId);
+  if (!entry || entry.owner.uid !== uid) return false;
+  broadcast(entry, { type: 'exit', code: 'stopped' });
+  destroy(entry);
+  return true;
 }
 
 // ----- routes --------------------------------------------------------------

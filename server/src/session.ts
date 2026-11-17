@@ -11,7 +11,7 @@ import { getUserId } from './auth.js';
 import { publishSessionEvent, type SessionOwner } from './notify.js';
 import { registerWireSession, wireBaseUrl } from './observe/wire-proxy.js';
 import { isEffortLevel } from './models.js';
-import { markLive, unmarkLive, liveBridge } from './live-sessions.js';
+import { markLive, unmarkLive, liveBridge, type LiveState } from './live-sessions.js';
 import { getSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 
 export type CliCatalog = {
@@ -810,6 +810,21 @@ function buildUserEvent(text: string, images: Array<{ mediaType?: string; data?:
     content.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } });
   }
   return { type: 'user', message: { role: 'user', content } };
+}
+
+// Model: server.ListAllSessions / server.StopSession — the Sessions list's
+// view of this bridge. Stop kills the CLI; its exit handler cleans up and
+// tells attached panels.
+export function cliLiveState(sessionId: string): LiveState | null {
+  const entry = byResumeId.get(sessionId);
+  if (!entry) return null;
+  return entry.pendingToolRequests.size > 0 ? 'awaiting' : entry.thinking ? 'running' : 'idle';
+}
+export function stopCliSession(sessionId: string, uid: string): boolean {
+  const entry = byResumeId.get(sessionId);
+  if (!entry || entry.owner.uid !== uid) return false;
+  try { entry.proc.kill('SIGTERM'); } catch {}
+  return true;
 }
 
 export function registerSessionRoutes(app: FastifyInstance) {

@@ -10,6 +10,7 @@ import type { WebSocket } from '@fastify/websocket';
 import { getProject } from './store.js';
 import { getUserId } from './auth.js';
 import { publishSessionEvent, type SessionOwner } from './notify.js';
+import type { LiveState } from './live-sessions.js';
 import { resolveDevinBinForUser } from './devin-versions.js';
 
 // Devin ACP integration. Kept fully independent of session.ts (Claude
@@ -1065,6 +1066,24 @@ async function oneShotRpc(bin: string, cwd: string, method: string, params: any)
       reject(e);
     }
   });
+}
+
+// Model: server.ListAllSessions / server.StopSession — the Sessions list's
+// view of this bridge. The list comes straight from Devin's own store.
+export function listDevinSessionsInDb(cwd: string): Array<{ sessionId: string; title?: string; updatedAt?: string }> {
+  return readSessionsFromDb(cwd) ?? [];
+}
+export function devinLiveState(sessionId: string): LiveState | null {
+  const entry = bySessionId.get(sessionId);
+  if (!entry) return null;
+  return entry.pendingAgentRpcs.size > 0 ? 'awaiting' : entry.inflightPrompts > 0 ? 'running' : 'idle';
+}
+export function stopDevinSession(sessionId: string, uid: string): boolean {
+  const entry = bySessionId.get(sessionId);
+  if (!entry || entry.owner.uid !== uid) return false;
+  persistSessionConfig(entry);
+  try { entry.proc.kill('SIGTERM'); } catch {}
+  return true;
 }
 
 export function registerDevinRoutes(app: FastifyInstance) {

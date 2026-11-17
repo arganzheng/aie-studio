@@ -12,8 +12,6 @@ export function ProjectPicker({
   onOpenSettings,
   onOpenDevinUsage,
   onOpenDebug,
-  sidebarView,
-  onToggleSidebarView,
 }: {
   projects: Project[];
   activeId: string | null;
@@ -22,8 +20,6 @@ export function ProjectPicker({
   onOpenSettings?: () => void;
   onOpenDevinUsage?: () => void;
   onOpenDebug?: () => void;
-  sidebarView?: 'files' | 'groups';
-  onToggleSidebarView?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 0 });
@@ -67,14 +63,6 @@ export function ProjectPicker({
           className="project-picker-menu"
           style={{ top: pos.top, left: pos.left, minWidth: pos.width }}
         >
-          {onToggleSidebarView && (
-            <div
-              className="picker-add-action"
-              role="menuitem"
-              onClick={() => { setOpen(false); onToggleSidebarView(); }}
-            >{sidebarView === 'groups' ? '📁 Show files' : '🗂 Show groups'}</div>
-          )}
-          {onToggleSidebarView && <div className="picker-divider" />}
           {onOpenDevinUsage && (
             <div
               className="picker-add-action"

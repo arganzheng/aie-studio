@@ -116,6 +116,7 @@ function userDir(uid: string): string { return path.join(USERS_DIR, uid); }
 function projectsFile(uid: string): string { return path.join(userDir(uid), 'projects.json'); }
 function workspaceFile(uid: string): string { return path.join(userDir(uid), 'workspace.json'); }
 function settingsFile(uid: string): string { return path.join(userDir(uid), 'settings.json'); }
+function sessionMetaFile(uid: string): string { return path.join(userDir(uid), 'session-meta.json'); }
 
 // Legacy single-user file locations — used only for the one-shot migration
 // into the per-user tree on first start after the multi-user upgrade.
@@ -439,4 +440,32 @@ export async function migrateLegacyIfNeeded(): Promise<void> {
   }
   // eslint-disable-next-line no-console
   console.log(`[remote-ide] migrated legacy single-user state → users/${user.id} (name=eric)`);
+}
+
+// Model: entity SessionMeta — what the Sessions list remembers about sessions
+// on top of the agents' own stores: which ones the user archived (hidden from
+// the list, nothing deleted) and display titles for sessions whose own store
+// we don't write to (Devin). Keys are "<kind>:<sessionId>".
+export type SessionMeta = { archived: string[]; titles: Record<string, string> };
+
+export function normalizeSessionMeta(raw: unknown): SessionMeta {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as { archived?: unknown; titles?: unknown };
+  const archived = Array.isArray(r.archived) ? [...new Set(r.archived.filter((k): k is string => typeof k === 'string'))] : [];
+  const titles: Record<string, string> = {};
+  if (r.titles && typeof r.titles === 'object') {
+    for (const [k, v] of Object.entries(r.titles as Record<string, unknown>)) {
+      if (typeof v === 'string' && v.trim()) titles[k] = v.trim();
+    }
+  }
+  return { archived, titles };
+}
+
+export async function getSessionMeta(uid: string): Promise<SessionMeta> {
+  return normalizeSessionMeta(await readJson<unknown>(sessionMetaFile(uid), {}));
+}
+
+export async function putSessionMeta(uid: string, meta: SessionMeta): Promise<SessionMeta> {
+  const clean = normalizeSessionMeta(meta);
+  await writeJson(sessionMetaFile(uid), clean);
+  return clean;
 }
