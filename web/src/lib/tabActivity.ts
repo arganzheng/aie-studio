@@ -1,5 +1,5 @@
 // Model: web.TabActivityMarkers. Live activity a mounted session panel reports
-// for its Tab, and the pure helpers TabBar / GroupList use to turn it into a
+// for its Tab, and the pure helpers TabBar / SessionList use to turn it into a
 // marker. Kept free of React so it can be unit-tested.
 
 export type TabActivity = {

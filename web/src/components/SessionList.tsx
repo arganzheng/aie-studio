@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { archiveSession, deleteSessionForever, listAllSessions, renameAnySession, stopSession } from '../api';
 import { useFitMenuTop } from '../lib/fitMenu';
 import {
-  NO_FILTER, filterSessions, isFiltering, sessionRowKey, sessionStatus,
-  type SessionFilter, type SessionKind, type SessionRow,
+  NO_FILTER, filterSessions, isFiltering, sectionSessions, sessionRowKey, sessionStatus,
+  type SectionGroup, type SectionTab, type SessionFilter, type SessionKind, type SessionRow, type SessionSection,
 } from '../lib/sessionList';
+import { groupActivityMark, type TabActivity } from '../lib/tabActivity';
+import { TabActivityMark } from './TabActivityMark';
+import { tabGroupId } from '../types';
 import { providerIcon } from './TabBar';
 
 // Model: web.SessionList — the sidebar's Sessions view: every Claude and
@@ -14,15 +17,54 @@ import { providerIcon } from './TabBar';
 // ⋯ menu renames, archives, stops and deletes. Fed by server.ListAllSessions,
 // refreshed on a timer while visible and whenever `refreshSignal` changes
 // (a session event arrived).
+//
+// It also hosts the project's tab Groups (the former Groups view): in the
+// "This project" scope the list is split into one section per Group — its
+// open session tabs, in tab order — then a History section for sessions with
+// no open tab. A section header switches to that Group; its ⋯ menu renames
+// or deletes it; headers drag to reorder, and session rows drag onto a
+// section (or use "Move to …") to move their tab. "All projects" and the
+// Archived filter keep the flat list: Groups are per project.
 
 const POLL_MS = 5000;
 const SCOPE_LS_KEY = 'remote-ide:sessionListScope';
+const COLLAPSED_LS_KEY = 'remote-ide:sessionSectionsCollapsed';
+const HISTORY_ID = '__history__';
 
 type Scope = 'project' | 'all';
 
 function loadScope(): Scope {
   try { return localStorage.getItem(SCOPE_LS_KEY) === 'all' ? 'all' : 'project'; } catch { return 'project'; }
 }
+function loadCollapsed(): Set<string> {
+  try {
+    const v = JSON.parse(localStorage.getItem(COLLAPSED_LS_KEY) || '[]');
+    return new Set(Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
+  } catch { return new Set(); }
+}
+
+// The project's tab Groups, owned by App.
+export type SessionListWorkspace = {
+  tabs: readonly SectionTab[];
+  groups: readonly SectionGroup[];
+  defaultGroupName: string;
+  activeGroupId: string;
+  activeTabId: string | null;
+  activity: Readonly<Record<string, TabActivity>>;
+  onSelectGroup: (groupId: string) => void;
+  onActivateTab: (tabId: string) => void;
+  onCreateGroup: () => void;
+  onRenameGroup: (groupId: string, name: string) => void;
+  onDeleteGroup: (groupId: string) => void;
+  onReorderGroups: (next: SectionGroup[]) => void;
+  onMoveTab: (tabId: string, groupId: string) => void;
+};
+
+type Menu =
+  | { kind: 'row'; row: SessionRow | null; tabId: string | null; groupId: string | null; top: number; left: number }
+  | { kind: 'group'; groupId: string; top: number; left: number };
+type Drag = { kind: 'group'; id: string } | { kind: 'tab'; id: string; from: string };
+type Drop = { id: string; pos: 'before' | 'after' | 'into' };
 
 export function SessionList({
   projectId,
@@ -30,6 +72,7 @@ export function SessionList({
   unread,
   activeKey,
   refreshSignal,
+  workspace,
   onOpen,
   onNewClaude,
   onNewDevin,
@@ -44,6 +87,8 @@ export function SessionList({
   // The session in the tab on screen, if any.
   activeKey: string | null;
   refreshSignal: number;
+  // Present → Group sections in the "This project" scope.
+  workspace?: SessionListWorkspace;
   onOpen: (row: SessionRow) => void;
   // Omitted when that provider is switched off on this device.
   onNewClaude?: () => void;
@@ -59,8 +104,12 @@ export function SessionList({
   const [filter, setFilter] = useState<SessionFilter>(NO_FILTER);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [newMenuOpen, setNewMenuOpen] = useState(false);
-  const [menu, setMenu] = useState<{ row: SessionRow; top: number; left: number } | null>(null);
+  const [menu, setMenu] = useState<Menu | null>(null);
   const [renaming, setRenaming] = useState<{ key: string; text: string } | null>(null);
+  const [groupRenaming, setGroupRenaming] = useState<{ id: string; text: string } | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed);
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const [drop, setDrop] = useState<Drop | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const menuRef = useRef<HTMLDivElement>(null);
   const menuTop = useFitMenuTop(menuRef, menu, menu?.top ?? 0);
@@ -69,6 +118,9 @@ export function SessionList({
   useEffect(() => {
     try { localStorage.setItem(SCOPE_LS_KEY, scope); } catch {}
   }, [scope]);
+  useEffect(() => {
+    try { localStorage.setItem(COLLAPSED_LS_KEY, JSON.stringify([...collapsed])); } catch {}
+  }, [collapsed]);
 
   const target = scope === 'all' ? 'all' : projectId;
   const refresh = useCallback(async () => {
@@ -117,6 +169,21 @@ export function SessionList({
 
   const shown = useMemo(() => filterSessions(rows ?? [], filter, unread), [rows, filter, unread]);
   const archivedCount = useMemo(() => (rows ?? []).filter((r) => r.archived).length, [rows]);
+  const filtering = filter.query.trim() !== '' || isFiltering(filter);
+
+  // Sections only where Groups mean something: this project, current sessions.
+  const sectioned = useMemo(() => {
+    if (!workspace || scope !== 'project' || filter.archived || rows === null) return null;
+    return sectionSessions({
+      projectId,
+      rows: shown,
+      allRows: rows.filter((r) => !r.archived),
+      tabs: workspace.tabs,
+      groups: workspace.groups,
+      defaultName: workspace.defaultGroupName,
+      filtering,
+    });
+  }, [workspace, scope, filter.archived, rows, shown, projectId, filtering]);
 
   async function act(what: string, fn: () => Promise<void>) {
     setMenu(null);
@@ -138,6 +205,12 @@ export function SessionList({
     });
   }
 
+  function commitGroupRename() {
+    if (!groupRenaming || !workspace) return;
+    workspace.onRenameGroup(groupRenaming.id, groupRenaming.text);
+    setGroupRenaming(null);
+  }
+
   function confirmDelete(row: SessionRow) {
     setMenu(null);
     const running = row.live ? '\n\nIt is running now and will be stopped first.' : '';
@@ -154,6 +227,62 @@ export function SessionList({
   }
   const newKinds: SessionKind[] = [...(onNewClaude ? ['claude' as const] : []), ...(onNewDevin ? ['devin' as const] : [])];
 
+  function toggleCollapsed(id: string) {
+    const key = `${projectId}:${id}`;
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+  const isCollapsed = (id: string) => collapsed.has(`${projectId}:${id}`) && !filtering;
+
+  function menuAt(e: React.MouseEvent, width: number) {
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    return { top: r.bottom + 2, left: Math.max(4, Math.min(r.right - width, window.innerWidth - width - 14)) };
+  }
+
+  // ---- drag and drop (HTML5; mouse only — touch uses the menus) ----
+  function endDrag() { setDrag(null); setDrop(null); }
+
+  function onSectionDragOver(e: React.DragEvent, s: SessionSection) {
+    if (!drag) return;
+    if (drag.kind === 'tab') {
+      if (drag.from === s.groupId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (drop?.id !== s.groupId || drop.pos !== 'into') setDrop({ id: s.groupId, pos: 'into' });
+      return;
+    }
+    // Reordering: user Groups only, onto another user Group's header.
+    if (s.isDefault || drag.id === s.groupId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const pos = e.clientY < r.top + r.height / 2 ? 'before' : 'after';
+    if (drop?.id !== s.groupId || drop.pos !== pos) setDrop({ id: s.groupId, pos });
+  }
+
+  function onSectionDrop(e: React.DragEvent, s: SessionSection) {
+    e.preventDefault();
+    const d = drag;
+    const target = drop?.id === s.groupId ? drop : null;
+    endDrag();
+    if (!d || !target || !workspace) return;
+    if (d.kind === 'tab') { workspace.onMoveTab(d.id, s.groupId); return; }
+    const groups = workspace.groups;
+    const moved = groups.find((g) => g.id === d.id);
+    if (!moved) return;
+    const without = groups.filter((g) => g.id !== d.id);
+    let idx = without.findIndex((g) => g.id === s.groupId);
+    if (idx < 0) return;
+    if (target.pos === 'after') idx += 1;
+    const next = [...without.slice(0, idx), moved, ...without.slice(idx)];
+    if (next.every((g, i) => g.id === groups[i]?.id)) return;
+    workspace.onReorderGroups(next);
+  }
+
   const seg = <T extends string>(value: T, options: ReadonlyArray<readonly [T, string]>, onPick: (v: T) => void) => (
     <div className="sessions-seg" role="group">
       {options.map(([v, label]) => (
@@ -162,10 +291,216 @@ export function SessionList({
     </div>
   );
 
+  // One session line. `tabId`/`groupId` are set for rows inside a Group
+  // section (an open tab); `row` is null for a tab not listed yet.
+  function renderRow(row: SessionRow | null, opts: { tabId?: string; groupId?: string; title?: string; kind?: SessionKind } = {}): ReactNode {
+    const key = row ? sessionRowKey(row) : `tab:${opts.tabId}`;
+    const isUnread = row ? unread.has(key) : false;
+    const status = row ? sessionStatus(row, isUnread, now) : { tone: 'idle' as const, label: 'Not started' };
+    const project = row && scope === 'all' ? projectNames.get(row.projectId) : undefined;
+    const editing = row !== null && renaming?.key === key;
+    const kind = row?.kind ?? opts.kind ?? 'claude';
+    const isActive = opts.tabId ? opts.tabId === workspace?.activeTabId : key === activeKey;
+    const draggable = !!(opts.tabId && opts.groupId && workspace && !editing);
+    return (
+      <div
+        key={key}
+        className={`session-row tone-${status.tone}${isActive ? ' active' : ''}${row?.archived ? ' archived' : ''}${drag?.kind === 'tab' && drag.id === opts.tabId ? ' dragging' : ''}`}
+        title={row?.title ?? opts.title}
+        draggable={draggable}
+        onDragStart={draggable ? (e) => {
+          e.stopPropagation();
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', opts.tabId!);
+          setDrag({ kind: 'tab', id: opts.tabId!, from: opts.groupId! });
+        } : undefined}
+        onDragEnd={endDrag}
+        onClick={() => {
+          if (editing) return;
+          if (opts.tabId && workspace) workspace.onActivateTab(opts.tabId);
+          else if (row) onOpen(row);
+        }}
+      >
+        <span className="session-row-icon">{providerIcon(kind === 'devin' ? 'devin' : 'session')}</span>
+        <div className="session-row-main">
+          {editing ? (
+            <input
+              autoFocus
+              className="tree-rename"
+              value={renaming!.text}
+              onFocus={(e) => e.currentTarget.select()}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => setRenaming({ key, text: e.target.value })}
+              onBlur={() => commitRename(row!)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); commitRename(row!); }
+                if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setRenaming(null); }
+              }}
+            />
+          ) : (
+            <div className="session-row-title">{row?.title ?? opts.title}</div>
+          )}
+          <div className="session-row-sub">
+            <span className="session-row-status">{status.label}</span>
+            {project && <span> · {project}</span>}
+          </div>
+        </div>
+        {(status.tone === 'awaiting' || status.tone === 'running' || isUnread) && (
+          <span className={`session-row-dot ${status.tone}`} aria-hidden="true" />
+        )}
+        <button
+          type="button"
+          className="session-row-menu-btn"
+          title="More"
+          aria-label="More"
+          onClick={(e) => setMenu({ kind: 'row', row, tabId: opts.tabId ?? null, groupId: opts.groupId ?? null, ...menuAt(e, 200) })}
+        >⋯</button>
+      </div>
+    );
+  }
+
+  function renderSection(s: SessionSection): ReactNode {
+    const ws = workspace!;
+    const closed = isCollapsed(s.groupId);
+    const isActive = s.groupId === ws.activeGroupId;
+    const renamingThis = groupRenaming?.id === s.groupId;
+    const dropCls = drop?.id === s.groupId ? ` drop-${drop.pos}` : '';
+    const dragCls = drag?.kind === 'group' && drag.id === s.groupId ? ' dragging' : '';
+    return (
+      <div
+        key={s.groupId}
+        className={`sessions-section${isActive ? ' active' : ''}${dropCls}${dragCls}`}
+        onDragOver={(e) => onSectionDragOver(e, s)}
+        onDragLeave={(e) => { if (drop?.id === s.groupId && !e.currentTarget.contains(e.relatedTarget as Node)) setDrop(null); }}
+        onDrop={(e) => onSectionDrop(e, s)}
+      >
+        <div
+          className="sessions-section-head"
+          draggable={!s.isDefault && !renamingThis}
+          onDragStart={(e) => {
+            if (s.isDefault) { e.preventDefault(); return; }
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', s.groupId);
+            setDrag({ kind: 'group', id: s.groupId });
+          }}
+          onDragEnd={endDrag}
+          onClick={() => { if (!renamingThis) ws.onSelectGroup(s.groupId); }}
+          onDoubleClick={() => { if (!s.isDefault) setGroupRenaming({ id: s.groupId, text: s.name }); }}
+          title={s.isDefault ? 'Default group (cannot be deleted) — click to switch to it' : `${s.name} — click to switch to this group`}
+        >
+          <button
+            type="button"
+            className="sessions-section-caret"
+            aria-label={closed ? 'Expand' : 'Collapse'}
+            aria-expanded={!closed}
+            onClick={(e) => { e.stopPropagation(); toggleCollapsed(s.groupId); }}
+          >{closed ? '▸' : '▾'}</button>
+          <span className="sessions-section-icon">{s.isDefault ? '▣' : '▢'}</span>
+          {renamingThis ? (
+            <input
+              autoFocus
+              className="group-rename"
+              value={groupRenaming!.text}
+              onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => setGroupRenaming({ id: s.groupId, text: e.target.value })}
+              onBlur={commitGroupRename}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitGroupRename();
+                if (e.key === 'Escape') setGroupRenaming(null);
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <span className="sessions-section-name">{s.name}</span>
+          )}
+          <TabActivityMark mark={groupActivityMark(ws.tabs, ws.activity, s.groupId, tabGroupId)} />
+          <span className="sessions-section-count" title={`${s.tabCount} tab${s.tabCount === 1 ? '' : 's'}`}>{s.tabCount}</span>
+          {!s.isDefault && !renamingThis && (
+            <button
+              type="button"
+              className="sessions-section-menu-btn"
+              title="Group menu"
+              aria-label="Group menu"
+              onClick={(e) => setMenu({ kind: 'group', groupId: s.groupId, ...menuAt(e, 200) })}
+            >⋯</button>
+          )}
+        </div>
+        {!closed && (
+          <>
+            {s.items.map((it) => renderRow(it.row, { tabId: it.tabId, groupId: s.groupId, title: it.title, kind: it.kind }))}
+            {s.otherTabs > 0 && (
+              <div className="sessions-section-note" onClick={() => ws.onSelectGroup(s.groupId)}>
+                + {s.otherTabs} other tab{s.otherTabs === 1 ? '' : 's'}
+              </div>
+            )}
+            {s.tabCount === 0 && <div className="sessions-section-note">Empty — new tabs open in the selected group</div>}
+            {s.tabCount > 0 && s.items.length === 0 && s.otherTabs === 0 && (
+              <div className="sessions-section-note">No sessions</div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  function renderBody(): ReactNode {
+    if (error) return <div className="sessions-empty error">{error}</div>;
+    if (rows === null) return <div className="sessions-empty">Loading…</div>;
+    if (sectioned) {
+      const { sections, history } = sectioned;
+      const historyClosed = isCollapsed(HISTORY_ID);
+      if (sections.length === 0 && history.length === 0) {
+        return <div className="sessions-empty">{rows.length === 0 ? 'No sessions yet — start one with ＋' : 'No sessions match'}</div>;
+      }
+      return (
+        <>
+          {sections.map(renderSection)}
+          {history.length > 0 && (
+            <div className="sessions-section history">
+              <div className="sessions-section-head" onClick={() => toggleCollapsed(HISTORY_ID)} title="Sessions with no open tab">
+                <span className="sessions-section-caret" aria-hidden="true">{historyClosed ? '▸' : '▾'}</span>
+                <span className="sessions-section-name">History</span>
+                <span className="sessions-section-count">{history.length}</span>
+              </div>
+              {!historyClosed && history.map((r) => renderRow(r))}
+            </div>
+          )}
+        </>
+      );
+    }
+    if (shown.length === 0) {
+      return (
+        <div className="sessions-empty">
+          {rows.length === 0 ? 'No sessions yet — start one with ＋'
+            : filter.archived ? 'Nothing archived'
+            : 'No sessions match'}
+        </div>
+      );
+    }
+    return shown.map((r) => renderRow(r));
+  }
+
+  const menuGroup = menu?.kind === 'group' ? workspace?.groups.find((g) => g.id === menu.groupId) : undefined;
+  const moveTargets = menu?.kind === 'row' && menu.tabId && workspace
+    ? [
+        ...workspace.groups.map((g) => ({ id: g.id, name: g.name })),
+        { id: 'default', name: workspace.defaultGroupName },
+      ].filter((g) => g.id !== menu.groupId)
+    : [];
+
   return (
     <div className="sessions-view">
       <div className="sessions-head">
         <span className="sessions-title">Sessions</span>
+        {workspace && scope === 'project' && (
+          <button
+            type="button"
+            className="sessions-icon-btn"
+            title="New group"
+            aria-label="New group"
+            onClick={workspace.onCreateGroup}
+          >⊞</button>
+        )}
         {newKinds.length > 0 && (
           <div className="sessions-new">
             <button
@@ -211,91 +546,53 @@ export function SessionList({
           {seg(filter.archived ? 'archived' : 'current', [['current', 'Current'], ['archived', `Archived${archivedCount ? ` (${archivedCount})` : ''}`]] as const, (v) => setFilter((f) => ({ ...f, archived: v === 'archived' })))}
         </div>
       )}
-      <div className="sessions-list">
-        {error && <div className="sessions-empty error">{error}</div>}
-        {!error && rows === null && <div className="sessions-empty">Loading…</div>}
-        {!error && rows !== null && shown.length === 0 && (
-          <div className="sessions-empty">
-            {rows.length === 0 ? 'No sessions yet — start one with ＋'
-              : filter.archived ? 'Nothing archived'
-              : 'No sessions match'}
-          </div>
-        )}
-        {shown.map((row) => {
-          const key = sessionRowKey(row);
-          const isUnread = unread.has(key);
-          const status = sessionStatus(row, isUnread, now);
-          const project = scope === 'all' ? projectNames.get(row.projectId) : undefined;
-          const editing = renaming?.key === key;
-          return (
-            <div
-              key={key}
-              className={`session-row tone-${status.tone}${key === activeKey ? ' active' : ''}${row.archived ? ' archived' : ''}`}
-              title={row.title}
-              onClick={() => { if (!editing) onOpen(row); }}
-            >
-              <span className="session-row-icon">{providerIcon(row.kind === 'devin' ? 'devin' : 'session')}</span>
-              <div className="session-row-main">
-                {editing ? (
-                  <input
-                    autoFocus
-                    className="tree-rename"
-                    value={renaming.text}
-                    onFocus={(e) => e.currentTarget.select()}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => setRenaming({ key, text: e.target.value })}
-                    onBlur={() => commitRename(row)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') { e.preventDefault(); commitRename(row); }
-                      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setRenaming(null); }
-                    }}
-                  />
-                ) : (
-                  <div className="session-row-title">{row.title}</div>
-                )}
-                <div className="session-row-sub">
-                  <span className="session-row-status">{status.label}</span>
-                  {project && <span> · {project}</span>}
-                </div>
-              </div>
-              {(status.tone === 'awaiting' || status.tone === 'running' || isUnread) && (
-                <span className={`session-row-dot ${status.tone}`} aria-hidden="true" />
-              )}
-              <button
-                type="button"
-                className="session-row-menu-btn"
-                title="More"
-                aria-label="More"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const r = e.currentTarget.getBoundingClientRect();
-                  setMenu({ row, top: r.bottom + 2, left: Math.max(4, Math.min(r.right - 200, window.innerWidth - 214)) });
-                }}
-              >⋯</button>
-            </div>
-          );
-        })}
-      </div>
-      {menu && createPortal(
+      <div className="sessions-list">{renderBody()}</div>
+      {menu?.kind === 'row' && createPortal(
         <div ref={menuRef} className="tab-overflow-menu" style={{ top: menuTop, left: menu.left }}>
-          <button className="overflow-action" onClick={() => { const row = menu.row; setMenu(null); onOpen(row); }}>↗ Open</button>
           <button
             className="overflow-action"
-            onClick={() => { const row = menu.row; setMenu(null); setRenaming({ key: sessionRowKey(row), text: row.title }); }}
-          >✎ Rename</button>
-          <button
-            className="overflow-action"
-            onClick={() => { const row = menu.row; void act(row.archived ? 'Unarchive' : 'Archive', () => archiveSession(row, !row.archived)); }}
-          >{menu.row.archived ? '↩ Unarchive' : '🗄 Archive'}</button>
-          {menu.row.live && (
+            onClick={() => {
+              setMenu(null);
+              if (menu.tabId && workspace) workspace.onActivateTab(menu.tabId);
+              else if (menu.row) onOpen(menu.row);
+            }}
+          >↗ Open</button>
+          {menu.row && (
             <button
               className="overflow-action"
-              onClick={() => { const row = menu.row; void act('Stop', async () => { await stopSession(row); }); }}
+              onClick={() => { const row = menu.row!; setMenu(null); setRenaming({ key: sessionRowKey(row), text: row.title }); }}
+            >✎ Rename</button>
+          )}
+          {moveTargets.map((g) => (
+            <button
+              key={g.id}
+              className="overflow-action"
+              onClick={() => { const tabId = menu.tabId!; setMenu(null); workspace!.onMoveTab(tabId, g.id); }}
+            >⇢ Move to {g.name}</button>
+          ))}
+          {menu.row && (
+            <button
+              className="overflow-action"
+              onClick={() => { const row = menu.row!; void act(row.archived ? 'Unarchive' : 'Archive', () => archiveSession(row, !row.archived)); }}
+            >{menu.row.archived ? '↩ Unarchive' : '🗄 Archive'}</button>
+          )}
+          {menu.row?.live && (
+            <button
+              className="overflow-action"
+              onClick={() => { const row = menu.row!; void act('Stop', async () => { await stopSession(row); }); }}
             >■ Stop</button>
           )}
-          {menu.row.kind === 'claude' && (
-            <button className="overflow-action danger" onClick={() => confirmDelete(menu.row)}>🗑 Delete…</button>
+          {menu.row?.kind === 'claude' && (
+            <button className="overflow-action danger" onClick={() => confirmDelete(menu.row!)}>🗑 Delete…</button>
           )}
+        </div>,
+        document.body,
+      )}
+      {menu?.kind === 'group' && menuGroup && workspace && createPortal(
+        <div ref={menuRef} className="tab-overflow-menu" style={{ top: menuTop, left: menu.left }}>
+          <button className="overflow-action" onClick={() => { setMenu(null); workspace.onSelectGroup(menuGroup.id); }}>↗ Switch to group</button>
+          <button className="overflow-action" onClick={() => { setMenu(null); setGroupRenaming({ id: menuGroup.id, text: menuGroup.name }); }}>✎ Rename group</button>
+          <button className="overflow-action danger" onClick={() => { setMenu(null); workspace.onDeleteGroup(menuGroup.id); }}>🗑 Delete group…</button>
         </div>,
         document.body,
       )}

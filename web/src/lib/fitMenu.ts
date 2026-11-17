@@ -2,7 +2,7 @@ import { useLayoutEffect, useState, type RefObject } from 'react';
 
 const MARGIN = 4;
 
-// Model: web.FileTree rule-076 (and the ⋯ menus of GroupList / ReviewPanel).
+// Model: web.FileTree rule-076 (and the ⋯ menus of SessionList / ReviewPanel).
 // A row menu opens below its button at `requestedTop`; near the bottom of
 // the viewport that would run off-screen and get clipped. Measure the
 // rendered menu once per open and pull it up so it fits — returns the top
