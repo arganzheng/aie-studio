@@ -255,8 +255,32 @@ function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: 
     entry.agents = (init.agents ?? []).map((a: any) => String(a?.name ?? '')).filter(Boolean);
     entry.models = init.models ?? [];
     broadcast(entry, { type: 'catalog', ...catalogOf(entry) });
+    // system.init — where the model normally comes from — only arrives with
+    // the first turn. Until then the status bar had no model to show (and so
+    // no way to switch it): work it out from the catalog now.
+    if (!entry.model) {
+      const initial = resolveInitialModel(entry.models, entry.requestedModel);
+      if (initial) {
+        entry.model = initial;
+        broadcast(entry, { type: 'model', model: initial });
+      }
+    }
   }).catch(() => {});
   void pump(entry, q, gen);
+}
+
+// Model: server.ClaudeSdkSessionBridge — the model a fresh query will run,
+// before it has run anything: the catalog entry for what was asked for (or
+// for "default" when nothing was), resolved to a concrete model id. Null when
+// the catalog can't say.
+export function resolveInitialModel(
+  models: ReadonlyArray<{ value: string; resolvedModel?: string }>,
+  requested: string,
+): string | null {
+  const want = requested.trim();
+  const hit = models.find((m) => m.value === (want || 'default'));
+  if (hit) return hit.resolvedModel || (want ? hit.value : null);
+  return want || null;
 }
 
 async function pump(entry: SdkEntry, q: Query, gen: number) {

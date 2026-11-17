@@ -1210,6 +1210,7 @@ pre {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.chat-status-model.unknown { font-style: italic; }
 .chat-status-model {
   color: var(--fg-muted);
   font-family: ui-monospace, SFMono-Regular, monospace;
