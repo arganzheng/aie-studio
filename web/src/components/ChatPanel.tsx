@@ -1344,7 +1344,6 @@ export function ChatPanel({
         // Keep the bar visible whenever we have anything to show. `thinking`
         // has its own bottom-of-flow indicator, so the left label is dropped
         // in that state — but the model id on the right should still render.
-        if (status === 'thinking' && !toast && !model) return null;
         const label =
           toast ??
           (status === 'ready' ? 'Ready'
@@ -1357,14 +1356,18 @@ export function ChatPanel({
         return (
           <div className={`chat-status status-${status}`}>
             <span>{showLabel ? label : ''}</span>
-            {model && (
+            {/* Always there: the model is only reported once the session has
+                started (or run a turn), and switching must not wait for that. */}
+            {(
               <div className="chat-status-model-wrap">
                 <button
-                  className="chat-status-model"
-                  title={`${model}${effort ? ` · effort ${effort}` : ''} — click to switch`}
+                  className={`chat-status-model${model ? '' : ' unknown'}`}
+                  title={model
+                    ? `${model}${effort ? ` · effort ${effort}` : ''} — click to switch`
+                    : 'Claude\'s default model — its name shows once the session reports it. Click to choose a model.'}
                   onClick={() => setModelPickerOpen((v) => !v)}
                   type="button"
-                >{model}{effort ? ` · ${effort}` : ''}</button>
+                >{model ?? 'default'}{effort ? ` · ${effort}` : ''}</button>
                 {wireOn && (
                   <span className="chat-status-wire" title="Wire capture on: API requests/responses of this session are recorded under .aie/observations/wire/ (plaintext)">wire</span>
                 )}
