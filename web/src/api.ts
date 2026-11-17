@@ -408,6 +408,17 @@ export async function getDevinUsage(refresh = false): Promise<DevinUsage> {
   return r.json();
 }
 
+export type ClaudeQuotaWindow = { key: string; label: string; short: string; usedPercent: number; resetAt: string | null };
+export type ClaudeUsage =
+  | { ok: true; plan: string | null; windows: ClaudeQuotaWindow[]; fetchedAt: string }
+  | { ok: false; error: string };
+
+export async function getClaudeUsage(refresh = false): Promise<ClaudeUsage> {
+  const r = await fetch(`/api/claude/usage${refresh ? '?refresh=1' : ''}`);
+  if (!r.ok && r.status !== 502) return { ok: false, error: `HTTP ${r.status}` };
+  return r.json();
+}
+
 // ─── AIE Test tab ────────────────────────────────────────────
 export type AieTestCase = {
   slug: string;
