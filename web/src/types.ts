@@ -42,6 +42,12 @@ export type ClaudeSdkTab = { id: string; type: 'claude-sdk'; resumeId?: string; 
 // source session. Deduped per project by origin.
 export type ObserveTab = { id: string; type: 'observe'; origin: TabRef; title?: string; groupId?: string };
 
+// Model: entity Tab (type=subagent) / web.SubagentPanel. A read-only view of
+// one subagent of a Claude session (its own conversation, live while it
+// runs). No process of its own: closing it never touches the subagent.
+// Deduped per project by sessionId + agentId.
+export type SubagentTab = { id: string; type: 'subagent'; sessionId: string; agentId: string; title?: string; groupId?: string };
+
 // Extension point: panel modules can add entries to TabKindMap via TS
 // declaration merging (`declare module '../types' { interface TabKindMap { ... } }`)
 // to teach the type system about their tab shape without editing this file or
@@ -53,6 +59,7 @@ export interface TabKindMap {
   'claude-sdk': ClaudeSdkTab;
   devin: DevinTab;
   observe: ObserveTab;
+  subagent: SubagentTab;
 }
 export type Tab = TabKindMap[keyof TabKindMap];
 
@@ -71,6 +78,7 @@ export function tabRef(tab: Tab | null | undefined): TabRef | null {
   // observe tabs are identified by what they observe, so two observe tabs of
   // the same session compare equal (web.ObserveTab dedupe).
   if (tab.type === 'observe') return { type: 'observe', key: `${tab.origin.type}:${tab.origin.key}` };
+  if (tab.type === 'subagent') return { type: 'subagent', key: `${tab.sessionId}:${tab.agentId}` };
   const type: string = (tab as Tab).type;
   return { type, key: type };
 }

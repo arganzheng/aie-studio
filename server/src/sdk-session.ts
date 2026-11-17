@@ -69,6 +69,68 @@ type PendingAsk = {
   timer: NodeJS.Timeout | null;
 };
 
+// Model: Claude Session.tasks — one subagent / background task of the live
+// query, as the SDK's task_started / task_progress / task_updated /
+// task_notification events describe it.
+export type SdkTask = {
+  taskId: string;
+  toolUseId: string | null;
+  description: string;
+  subagentType: string | null;
+  status: 'running' | 'completed' | 'failed' | 'stopped';
+  background: boolean;
+  totalTokens: number | null;
+  toolUses: number | null;
+  lastTool: string | null;
+};
+
+// Pure: fold one SDK system message into the task table. Returns true when
+// it was a task event.
+export function applyTaskEvent(tasks: Map<string, SdkTask>, m: any): boolean {
+  if (m?.type !== 'system' || typeof m.task_id !== 'string' || !m.task_id) return false;
+  const id: string = m.task_id;
+  const cur = tasks.get(id);
+  const usage = (t: SdkTask) => {
+    if (typeof m.usage?.total_tokens === 'number') t.totalTokens = m.usage.total_tokens;
+    if (typeof m.usage?.tool_uses === 'number') t.toolUses = m.usage.tool_uses;
+  };
+  if (m.subtype === 'task_started') {
+    tasks.set(id, {
+      taskId: id,
+      toolUseId: typeof m.tool_use_id === 'string' ? m.tool_use_id : cur?.toolUseId ?? null,
+      description: typeof m.description === 'string' ? m.description : cur?.description ?? '',
+      subagentType: typeof m.subagent_type === 'string' ? m.subagent_type : cur?.subagentType ?? null,
+      status: 'running',
+      background: m.is_backgrounded === true,
+      totalTokens: cur?.totalTokens ?? null,
+      toolUses: cur?.toolUses ?? null,
+      lastTool: cur?.lastTool ?? null,
+    });
+    return true;
+  }
+  if (!cur) return m.subtype === 'task_progress' || m.subtype === 'task_updated' || m.subtype === 'task_notification';
+  if (m.subtype === 'task_progress') {
+    usage(cur);
+    if (typeof m.last_tool_name === 'string') cur.lastTool = m.last_tool_name;
+    if (typeof m.description === 'string' && m.description) cur.description = m.description;
+    return true;
+  }
+  if (m.subtype === 'task_updated') {
+    const st = m.patch?.status;
+    if (st === 'completed' || st === 'failed') cur.status = st;
+    else if (st === 'killed') cur.status = 'stopped';
+    else if (st === 'running' || st === 'pending' || st === 'paused') cur.status = 'running';
+    if (typeof m.patch?.is_backgrounded === 'boolean') cur.background = m.patch.is_backgrounded;
+    return true;
+  }
+  if (m.subtype === 'task_notification') {
+    if (m.status === 'completed' || m.status === 'failed' || m.status === 'stopped') cur.status = m.status;
+    usage(cur);
+    return true;
+  }
+  return false;
+}
+
 type SdkEntry = {
   cwd: string;
   // Model: server.SessionEvents — who to tell when a turn ends or the agent
@@ -92,6 +154,9 @@ type SdkEntry = {
   title: string | null;
   // Last /context-style reading of the window (null until the first one).
   context: ContextSnapshot | null;
+  // Background tasks and subagents of the live query, by task id (SDK
+  // task_* events). Kept after they end so the Sessions tree can show how.
+  tasks: Map<string, SdkTask>;
   commands: SlashCommand[];
   agents: string[];
   models: ModelInfo[];
@@ -233,6 +298,8 @@ function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: 
   entry.generation++;
   const gen = entry.generation;
   entry.queue = makeInputQueue();
+  // Tasks die with the process that ran them.
+  for (const t of entry.tasks.values()) if (t.status === 'running') t.status = 'stopped';
   const q = query({
     prompt: entry.queue.iterable(),
     options: {
@@ -306,6 +373,7 @@ async function pump(entry: SdkEntry, q: Query, gen: number) {
 
 function onSdkMessage(entry: SdkEntry, m: any) {
   touchActivity(entry);
+  applyTaskEvent(entry.tasks, m);
   if (m?.type === 'system' && m?.subtype === 'init') {
     const sid: string | undefined = m.session_id;
     if (sid && entry.sessionId !== sid) {
@@ -614,6 +682,19 @@ export function sdkLiveState(sessionId: string): LiveState | null {
   if (!entry) return null;
   return entry.pendingAsks.size > 0 ? 'awaiting' : entry.thinking ? 'running' : 'idle';
 }
+// Model: Claude Session.tasks, read by server.ListSubagents.
+export function sdkTasks(sessionId: string): SdkTask[] {
+  return [...(byId.get(sessionId)?.tasks.values() ?? [])];
+}
+// Model: server.StopSubagent. False when the session isn't the caller's, isn't
+// live here, or the task is no longer running.
+export async function stopSdkTask(sessionId: string, uid: string, taskId: string): Promise<boolean> {
+  const entry = byId.get(sessionId);
+  if (!entry || entry.owner.uid !== uid || !entry.q) return false;
+  if (entry.tasks.get(taskId)?.status !== 'running') return false;
+  try { await entry.q.stopTask(taskId); } catch { return false; }
+  return true;
+}
 export function stopSdkSession(sessionId: string, uid: string): boolean {
   const entry = byId.get(sessionId);
   if (!entry || entry.owner.uid !== uid) return false;
@@ -674,6 +755,7 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
         observeWire,
         title: null,
         context: null,
+        tasks: new Map(),
         commands: [],
         agents: [],
         models: [],

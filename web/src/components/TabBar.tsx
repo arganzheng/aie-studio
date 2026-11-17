@@ -22,6 +22,7 @@ export function tabLabel(tab: Tab): string {
   // Tabs persisted before 2026-11-01 carry a "👁 " prefix in the title; strip
   // it so the icon slot is the only eye.
   if (tab.type === 'observe') return (tab.title || tab.origin.key.slice(0, 8)).replace(/^👁\s*/, '');
+  if (tab.type === 'subagent') return tab.title || `Subagent ${tab.agentId.slice(0, 8)}`;
   // Registered tab kind — no baked-in title shape, look up label from registry.
   // (Read the id before narrowing: with only built-in kinds declared, TS
   // narrows `tab` to never here, but panels can widen TabKindMap at any time.)
@@ -46,6 +47,7 @@ export function tabIcon(tab: Tab): ReactNode {
   // the two Claude bridges are telling apart in the strip.
   if (tab.type === 'claude-sdk') return <>{providerIcon('session')}<span className="tab-sdk-mark">sdk</span></>;
   if (tab.type === 'observe') return '👁';
+  if (tab.type === 'subagent') return '⑂';
   return '🧩';
 }
 
@@ -56,6 +58,7 @@ export function tabTitle(tab: Tab): string {
   if (tab.type === 'session') return 'AI session';
   if (tab.type === 'claude-sdk') return 'Claude session (Agent SDK)';
   if (tab.type === 'observe') return `Observe ${tab.origin.type} ${tab.origin.key}`;
+  if (tab.type === 'subagent') return `Subagent ${tab.agentId} of session ${tab.sessionId}`;
   const kindId: string = (tab as Tab).type;
   return listTabKinds().find((k) => k.id === kindId)?.label ?? kindId;
 }

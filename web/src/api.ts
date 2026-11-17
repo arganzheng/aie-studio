@@ -596,3 +596,43 @@ export async function stopSession(t: SessionTarget): Promise<boolean> {
 export async function deleteSessionForever(t: SessionTarget): Promise<void> {
   await postSessionAction('delete', target(t));
 }
+
+// Model: Claude Session.subagents (server/src/subagents.ts) — the child
+// agents a Claude session spawned through its Agent tool.
+export type SubagentStatus = 'running' | 'done' | 'failed' | 'stopped';
+export type SubagentInfo = {
+  agentId: string;
+  parentAgentId: string | null;
+  // 0 = spawned by the session itself; 1+ = by another subagent.
+  depth: number;
+  agentType: string;
+  description: string;
+  status: SubagentStatus;
+  background: boolean;
+  model: string | null;
+  startedAt: number;
+  updatedAt: number;
+  totalTokens: number | null;
+  toolUses: number | null;
+  lastTool: string | null;
+  canStop: boolean;
+  // The session's Agent tool call that spawned it.
+  toolUseId: string | null;
+};
+const subagentsUrl = (projectId: string, sessionId: string) =>
+  `/api/projects/${encodeURIComponent(projectId)}/sdk-sessions/${encodeURIComponent(sessionId)}/subagents`;
+async function jsonOrThrow(r: Response) {
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+export async function listSubagents(projectId: string, sessionId: string): Promise<SubagentInfo[]> {
+  return (await jsonOrThrow(await fetch(subagentsUrl(projectId, sessionId)))).subagents ?? [];
+}
+// `after`: how many events the caller already has (a poll fetches the tail).
+export async function getSubagentTranscript(projectId: string, sessionId: string, agentId: string, after = 0): Promise<{ events: any[]; startIndex: number; total: number; info: SubagentInfo | null }> {
+  return jsonOrThrow(await fetch(`${subagentsUrl(projectId, sessionId)}/${encodeURIComponent(agentId)}/transcript?after=${after}`));
+}
+export async function stopSubagent(projectId: string, sessionId: string, agentId: string): Promise<void> {
+  await jsonOrThrow(await fetch(`${subagentsUrl(projectId, sessionId)}/${encodeURIComponent(agentId)}/stop`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }));
+}
