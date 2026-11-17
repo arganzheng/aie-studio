@@ -23,6 +23,7 @@ import type { ExportMessage } from '../lib/export/types';
 // Lazy like ChatPanel: the export pipeline only loads when ⤓ is clicked.
 const ExportDialog = lazy(() => import('./ExportDialog').then((m) => ({ default: m.ExportDialog })));
 import { ChatInput } from './ChatInput';
+import { bangCommand, isBangInput, splitBangTexts } from '../lib/bang';
 import { ClaudeUsageBadge, refreshClaudeUsage } from './ClaudeUsage';
 import { ContextBadge, type ContextSnapshot } from './ContextUsage';
 import { ImageAttachmentStrip, useImageAttachments, type ImageAttachment } from './ImageAttachments';
@@ -45,7 +46,20 @@ export type Msg =
   // the comment anchor (model: Comment.anchor = a:<uuid>:<blockIdx>).
   | { id: string; role: 'assistant'; text: string; uuid?: string; blockIdx?: number }
   | { id: string; role: 'system'; text: string }
-  | { id: string; role: 'tool'; name: string; input: any; toolUseId?: string; output?: string };
+  | { id: string; role: 'tool'; name: string; input: any; toolUseId?: string; output?: string }
+  // Model: web.BangCommand. bangId: the live command's id (absent when read
+  // back from the transcript). pending: ran, but the model hasn't seen it yet
+  // — it goes out with the next prompt.
+  | { id: string; role: 'bang'; command: string; bangId?: string; result?: BangOutcome; pending?: boolean };
+
+type BangOutcome = {
+  stdout: string;
+  stderr: string;
+  code?: number | null;
+  blocked?: string;
+  timedOut?: boolean;
+  interrupted?: boolean;
+};
 
 type Status = 'connecting' | 'replaying' | 'ready' | 'thinking' | 'reconnecting' | 'closed';
 
@@ -65,11 +79,19 @@ function toExport(msgs: Msg[]): ExportMessage[] {
     if (m.role === 'user') return { kind: 'user', text: m.text, images: m.images };
     if (m.role === 'assistant') return { kind: 'assistant', text: m.text };
     if (m.role === 'system') return { kind: 'system', text: m.text };
+    if (m.role === 'bang') {
+      const out = [m.result?.stdout, m.result?.stderr, m.result?.blocked && `Blocked: ${m.result.blocked}`].filter(Boolean).join('\n');
+      return { kind: 'tool', name: 'Bash (!)', input: { command: m.command }, output: out };
+    }
     return { kind: 'tool', name: m.name, input: m.input, output: m.output };
   });
 }
 
-type Delta = { kind: 'append'; msg: Msg } | { kind: 'tool_result'; toolUseId: string; output: string };
+type Delta =
+  | { kind: 'append'; msg: Msg }
+  | { kind: 'tool_result'; toolUseId: string; output: string }
+  // Claude Code writes a `!` command's output as its own user record.
+  | { kind: 'bang_output'; stdout: string; stderr: string };
 
 // One transcript / SDK message → message deltas. Both ReadSdkTranscript
 // events and live SDKMessages have {type, uuid, message}.
@@ -101,8 +123,14 @@ function renderEvent(ev: any): Delta[] {
         out.push({ kind: 'tool_result', toolUseId: block.tool_use_id, output: text });
       }
     }
-    if (texts.length || images.length) {
-      out.push({ kind: 'append', msg: { id: shortId(), role: 'user', text: texts.join('\n'), images: images.length ? images : undefined, uuid } });
+    const prompt: string[] = [];
+    for (const part of splitBangTexts(texts)) {
+      if (part.kind === 'input') out.push({ kind: 'append', msg: { id: shortId(), role: 'bang', command: part.command } });
+      else if (part.kind === 'output') out.push({ kind: 'bang_output', stdout: part.stdout, stderr: part.stderr });
+      else prompt.push(part.text);
+    }
+    if (prompt.length || images.length) {
+      out.push({ kind: 'append', msg: { id: shortId(), role: 'user', text: prompt.join('\n'), images: images.length ? images : undefined, uuid } });
     }
   }
   return out;
@@ -120,6 +148,8 @@ export function buildFromEvents(events: any[], orphanResults: Map<string, string
           else pendingTools.set(d.msg.toolUseId, d.msg);
         }
         msgs.push(d.msg);
+      } else if (d.kind === 'bang_output') {
+        attachBangOutput(msgs, d);
       } else {
         const target = pendingTools.get(d.toolUseId);
         if (target && target.output === undefined) { target.output = d.output; pendingTools.delete(d.toolUseId); }
@@ -130,16 +160,53 @@ export function buildFromEvents(events: any[], orphanResults: Map<string, string
   return msgs;
 }
 
+// Pairs a transcript bang output with the latest command still lacking one.
+function attachBangOutput(msgs: Msg[], d: { stdout: string; stderr: string }) {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.role === 'bang' && !m.result) { msgs[i] = { ...m, result: { stdout: d.stdout, stderr: d.stderr } }; return; }
+  }
+}
+
 function applyDeltas(prev: Msg[], deltas: Delta[]): Msg[] {
   let arr = prev;
   for (const d of deltas) {
     if (d.kind === 'append') arr = [...arr, d.msg];
+    else if (d.kind === 'bang_output') { arr = [...arr]; attachBangOutput(arr, d); }
     else arr = arr.map((m) => (m.role === 'tool' && m.toolUseId === d.toolUseId && m.output === undefined ? { ...m, output: d.output } : m));
   }
   return arr;
 }
 
 // ----- small presentational helpers --------------------------------------
+
+// Model: web.BangCommand — one `!` command: the command line, its state and
+// output. Long output scrolls inside the block.
+export function BangBlock({ msg, onInterrupt }: { msg: Msg & { role: 'bang' }; onInterrupt?: () => void }) {
+  const r = msg.result;
+  const running = !r;
+  let state: string;
+  let tone = '';
+  if (!r) state = 'running…';
+  else if (r.blocked) { state = `blocked — ${r.blocked}`; tone = ' bad'; }
+  else if (r.timedOut) { state = 'timed out'; tone = ' bad'; }
+  else if (r.interrupted) { state = 'interrupted'; tone = ' bad'; }
+  else if (r.code != null && r.code !== 0) { state = `exit ${r.code}`; tone = ' bad'; }
+  else state = r.code === 0 ? 'exit 0' : '';
+  const output = r ? [r.stdout, r.stderr].filter(Boolean).join(r.stdout && r.stderr ? '\n' : '') : '';
+  return (
+    <div className={`msg msg-bang${running ? ' running' : ''}`}>
+      <div className="bang-head">
+        <span className="bang-prompt">!</span>
+        <code className="bang-command">{msg.command}</code>
+        {state && <span className={`bang-state${tone}`}>{state}</span>}
+        {running && onInterrupt && <button type="button" className="bang-stop" onClick={onInterrupt}>Stop</button>}
+      </div>
+      {output && <pre className="bang-output">{output}</pre>}
+      {msg.pending && r && <div className="bang-note">Claude will see this with your next message</div>}
+    </div>
+  );
+}
 
 export const MarkdownText = memo(function MarkdownText({ text, theme, projectPath, onOpenFile }: {
   text: string;
@@ -209,9 +276,9 @@ export function summarizeTool(name: string, input: any, rel: (s: string) => stri
 
 function sendKeyHint(k: SendKey): string {
   switch (k) {
-    case 'cmd-enter': return 'Ask Claude (SDK)… (⌘/Ctrl+Enter to send)';
-    case 'shift-enter': return 'Ask Claude (SDK)… (Shift+Enter to send)';
-    case 'enter': return 'Ask Claude (SDK)… (Enter to send)';
+    case 'cmd-enter': return 'Ask Claude (SDK)… (⌘/Ctrl+Enter to send · !cmd runs a shell command)';
+    case 'shift-enter': return 'Ask Claude (SDK)… (Shift+Enter to send · !cmd runs a shell command)';
+    case 'enter': return 'Ask Claude (SDK)… (Enter to send · !cmd runs a shell command)';
   }
 }
 
@@ -661,16 +728,26 @@ export function SdkPanel({
     if (m.type === 'user_echo') {
       // rule-370: our own (or another client's) prompt with its jsonl uuid.
       const deltas = renderEvent({ type: 'user', uuid: m.uuid, message: m.message });
-      const bubble = deltas.find((d): d is Extract<Delta, { kind: 'append' }> => d.kind === 'append');
-      if (!bubble || bubble.msg.role !== 'user') return;
+      const bubble = deltas.find((d): d is Extract<Delta, { kind: 'append' }> => d.kind === 'append' && d.msg.role === 'user');
+      if (!bubble) return;
       const msgId = typeof m.msgId === 'string' ? m.msgId : null;
-      setMsgs((prev) => {
+      // This prompt carried every finished `!` command along (server side).
+      const carriedBang = deltas.some((d) => d.kind === 'append' && d.msg.role === 'bang');
+      setMsgs((prev0) => {
+        const prev = carriedBang ? prev0.map((x) => (x.role === 'bang' && x.pending && x.result ? { ...x, pending: false } : x)) : prev0;
         if (msgId && prev.some((x) => x.role === 'user' && x.id === msgId)) {
           return prev.map((x) => (x.role === 'user' && x.id === msgId ? { ...x, uuid: m.uuid } : x));
         }
         return [...prev, bubble.msg];
       });
       setStatus('thinking');
+      return;
+    }
+    if (m.type === 'bang_start') { upsertBang(String(m.id), { command: String(m.command ?? '') }); return; }
+    if (m.type === 'bang_result') { upsertBang(String(m.id), { command: String(m.result?.command ?? ''), result: m.result }); return; }
+    if (m.type === 'bang_state') {
+      for (const r of m.running ?? []) upsertBang(String(r.id), { command: String(r.command ?? '') });
+      for (const p of m.pending ?? []) upsertBang(String(p.id), { command: String(p.result?.command ?? ''), result: p.result });
       return;
     }
     if (m.type === 'ask') {
@@ -808,8 +885,31 @@ export function SdkPanel({
     setStatus('thinking');
   }
 
+  // Model: web.BangCommand — add or update a `!` command block by its id.
+  function upsertBang(bangId: string, patch: { command: string; result?: BangOutcome }) {
+    setMsgs((prev) => {
+      const i = prev.findIndex((x) => x.role === 'bang' && x.bangId === bangId);
+      if (i < 0) return [...prev, { id: shortId(), role: 'bang', bangId, command: patch.command, result: patch.result, pending: true }];
+      const cur = prev[i] as Msg & { role: 'bang' };
+      const next = [...prev];
+      next[i] = { ...cur, command: patch.command || cur.command, result: patch.result ?? cur.result };
+      return next;
+    });
+  }
+
+  function runBangCommand(command: string) {
+    const bangId = shortId();
+    if (!wsSend({ type: 'bang', id: bangId, command })) { showToast('Not connected — command not run'); return; }
+    upsertBang(bangId, { command });
+  }
+
   function send(raw: string) {
     if (!wsRef.current || status === 'closed' || status === 'connecting' || status === 'reconnecting') return;
+    if (isBangInput(raw)) {
+      const cmd = bangCommand(raw);
+      if (cmd) runBangCommand(cmd);
+      return;
+    }
     const text = raw.trim();
     if (!text && pendingImages.length === 0) return;
     sendPrompt(text, pendingImages);
@@ -966,6 +1066,15 @@ export function SdkPanel({
             );
           }
           if (m.role === 'system') return <div key={m.id} className="msg msg-system">{m.text}</div>;
+          if (m.role === 'bang') {
+            return (
+              <BangBlock
+                key={m.id}
+                msg={m}
+                onInterrupt={m.bangId ? () => wsSend({ type: 'bang_interrupt', id: m.bangId }) : undefined}
+              />
+            );
+          }
           const isOpen = expanded.has(m.id);
           const summary = summarizeTool(m.name, m.input, rel);
           return (
@@ -1098,6 +1207,7 @@ export function SdkPanel({
         onAddFiles={attachments.addFiles}
         onStop={stop}
         lock={forms.inputLock}
+        bashMode
       />
       <CommentComposer containerRef={scrollRef} onAddToChat={addToChat} onComment={canComment ? submitComment : undefined} onSend={sendComment} highlightOwner={highlightOwner} onFocusComment={(id) => onFocusComment?.(id)} />
       {richCopySource}
