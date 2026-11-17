@@ -101,6 +101,14 @@
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
+/* The shell never scrolls (model: MainShell invariant). With a mouse there is
+   no reason for the document to scroll at all, so don't let a wheel at the
+   end of a list chain into it. Touch devices keep document scrolling: the
+   browser uses it to lift a focused input above the on-screen keyboard.
+   lib/shellScrollGuard.ts covers what CSS can't (scrolling by script). */
+@media (hover: hover) and (pointer: fine) {
+  html, body { overflow: hidden; }
+}
 
 /* ===== content font scale (settings.fontScale) =====
    Only readable content scales; UI chrome and the textarea (iOS zoom-safe) stay fixed. */
