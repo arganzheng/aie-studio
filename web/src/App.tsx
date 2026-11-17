@@ -1,7 +1,6 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileTree } from './components/FileTree';
-import { GroupList } from './components/GroupList';
 import { ReviewPanel } from './components/ReviewPanel';
 import type { NewComment } from './components/CommentComposer';
 import type { NewBookmark } from './components/BookmarkButton';
@@ -77,7 +76,8 @@ const CLAUDE_BRIDGE_LS_KEY = `${LS_PREFIX}claudeBridge`;
 const SHOW_WIRE_MENU_LS_KEY = `${LS_PREFIX}showWireMenu`;
 const ENABLE_CLAUDE_LS_KEY = `${LS_PREFIX}enableClaude`;
 const ENABLE_DEVIN_LS_KEY = `${LS_PREFIX}enableDevin`;
-// Which list the left sidebar shows: the file tree or the tab-group list.
+// Which list the left sidebar shows: the file tree or the Sessions view
+// (which also holds the tab Groups; a saved "groups" maps to it).
 const SIDEBAR_VIEW_LS_KEY = `${LS_PREFIX}sidebarView`;
 // Desktop sidebar width (model: web.ResizeSidebar). null = CSS default (260px).
 const SIDEBAR_WIDTH_LS_KEY = `${LS_PREFIX}sidebarWidth`;
@@ -92,7 +92,8 @@ const REVIEW_COLLAPSED_WIDTH = 32;
 // Which draft Batch new comments go to, per project (model:
 // web.SetCurrentBatch). Per-device, like the active tab.
 const REVIEW_CURRENT_BATCH_LS_KEY = `${LS_PREFIX}reviewCurrentBatch`;
-type SidebarView = 'files' | 'groups' | 'sessions';
+// 'groups' is gone: the tab Groups now live in the Sessions view.
+type SidebarView = 'files' | 'sessions';
 // Active project id. In browser mode the URL hash is authoritative and this
 // is only written (never read on init). In PWA mode the URL hash is ignored
 // on init — iOS "Add to Home Screen" often bakes the install-time hash into
@@ -126,7 +127,7 @@ function loadLocalPrefs(): LocalPrefs {
 function loadSidebarView(): SidebarView {
   try {
     const v = localStorage.getItem(SIDEBAR_VIEW_LS_KEY);
-    return v === 'groups' || v === 'sessions' ? v : 'files';
+    return v === 'groups' || v === 'sessions' ? 'sessions' : 'files';
   } catch { return 'files'; }
 }
 
@@ -498,7 +499,7 @@ export default function App() {
     }
   }, [fireReveal, fireInsert]);
   // Model: web.TabActivityMarkers rule-311. Mounted session panels report
-  // generating / awaitingInput; TabBar and GroupList render the markers.
+  // generating / awaitingInput; TabBar and the Sessions view's Group sections render the markers.
   const [tabActivity, setTabActivity] = useState<Record<string, TabActivity>>({});
   const reportActivity = useCallback((tabId: string, activity: TabActivity | null) => {
     setTabActivity((cur) => {
@@ -1291,7 +1292,7 @@ export default function App() {
     setActiveSelection(activeProjectId, group.id, null);
   }
 
-  // Drag-to-reorder from GroupList: same id set, new order. Persisted via the
+  // Drag-to-reorder from the Sessions view's Group headers: same id set, new order. Persisted via the
   // usual whole-project PUT; groups[] order is the display order.
   function reorderGroups(next: Group[]) {
     if (!activeProjectId) return;
@@ -1841,7 +1842,7 @@ export default function App() {
           </div>
           {activeProject && (
             <div className="sidebar-views" role="tablist" aria-label="Sidebar view">
-              {([['files', 'Files'], ['groups', 'Groups'], ['sessions', 'Sessions']] as const).map(([v, label]) => (
+              {([['files', 'Files'], ['sessions', 'Sessions']] as const).map(([v, label]) => (
                 <button
                   key={v}
                   type="button"
@@ -1868,6 +1869,21 @@ export default function App() {
                   ? sessionRowKey({ projectId: activeProject.id, kind: activeTab.type === 'devin' ? 'devin' : 'claude', sessionId: activeTab.resumeId })
                   : null}
                 refreshSignal={sessionListSignal}
+                workspace={{
+                  tabs,
+                  groups,
+                  defaultGroupName: DEFAULT_GROUP_NAME,
+                  activeGroupId,
+                  activeTabId,
+                  activity: tabActivity,
+                  onSelectGroup: (gid) => { setDrawerOpen(false); setActiveGroup(activeProject.id, gid); },
+                  onActivateTab: (id) => { setDrawerOpen(false); activateTab(id); },
+                  onCreateGroup: createGroup,
+                  onRenameGroup: renameGroup,
+                  onDeleteGroup: deleteGroup,
+                  onReorderGroups: reorderGroups,
+                  onMoveTab: moveTabToGroup,
+                }}
                 onOpen={(row) => { setDrawerOpen(false); openSessionRow(row); }}
                 onNewClaude={localPrefs.enableClaude ? () => { setDrawerOpen(false); if (localPrefs.claudeBridge === 'sdk') openSdkTab(); else openSessionTab(); } : undefined}
                 onNewDevin={localPrefs.enableDevin ? () => { setDrawerOpen(false); openDevinTab(); } : undefined}
@@ -1929,19 +1945,7 @@ export default function App() {
                 }}
                 onNotice={showAppToast}
               />
-            ) : (
-              <GroupList
-                groups={groups}
-                tabs={tabs}
-                activeGroupId={activeGroupId}
-                onSelectGroup={(gid) => setActiveGroup(activeProject.id, gid)}
-                onCreateGroup={createGroup}
-                onRenameGroup={renameGroup}
-                onDeleteGroup={deleteGroup}
-                onReorderGroups={reorderGroups}
-                activity={tabActivity}
-              />
-            )}
+            ) : null}
           </div>
         </div>
       </div>

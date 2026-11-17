@@ -79,3 +79,96 @@ export function timeAgo(ts: number, now: number): string {
   if (d < 365 * DAY) return `${Math.floor(d / (30 * DAY))} months ago`;
   return new Date(ts).toLocaleDateString();
 }
+
+// ---- Sections: the project's tab Groups folded into the list -------------
+//
+// In the "This project" scope the list is split by tab Group (model: web.
+// SessionList rule "groups"): each Group heads a section holding the session
+// tabs it has open, in tab order; sessions with no open tab fall to a final
+// History section. Non-session tabs (files, editors, observe) only count.
+
+export const DEFAULT_SECTION_ID = 'default';
+
+// The slice of a Tab this needs (web/src/types.ts Tab).
+export type SectionTab = { id: string; type: string; resumeId?: string; title?: string; groupId?: string };
+export type SectionGroup = { id: string; name: string };
+
+export type SectionItem = {
+  tabId: string;
+  kind: SessionKind;
+  // null: the tab has no listed session yet (a fresh tab before its first
+  // reply, or the list hasn't caught up) — shown with the tab's own title.
+  row: SessionRow | null;
+  title: string;
+};
+export type SessionSection = {
+  groupId: string;
+  name: string;
+  isDefault: boolean;
+  items: SectionItem[];
+  // Every tab in the Group, and how many of them are not sessions.
+  tabCount: number;
+  otherTabs: number;
+};
+
+function tabKind(t: SectionTab): SessionKind | null {
+  if (t.type === 'devin') return 'devin';
+  if (t.type === 'session' || t.type === 'claude-sdk') return 'claude';
+  return null;
+}
+
+export function sectionSessions(input: {
+  projectId: string;
+  // After filterSessions — what may be shown.
+  rows: readonly SessionRow[];
+  // Before filtering — to tell "filtered out" from "not listed yet".
+  allRows: readonly SessionRow[];
+  tabs: readonly SectionTab[];
+  groups: readonly SectionGroup[];
+  defaultName: string;
+  // A search or filter is on: tabs without a listed session are hidden, and
+  // so are sections left with nothing to show.
+  filtering: boolean;
+}): { sections: SessionSection[]; history: SessionRow[] } {
+  const { projectId, rows, allRows, tabs, groups, defaultName, filtering } = input;
+  const shown = new Map(rows.map((r) => [sessionRowKey(r), r]));
+  const listed = new Set(allRows.map(sessionRowKey));
+  const opened = new Set<string>();
+
+  const byGroup = new Map<string, SessionSection>();
+  const section = (gid: string): SessionSection => {
+    let s = byGroup.get(gid);
+    if (!s) {
+      const g = groups.find((x) => x.id === gid);
+      s = { groupId: gid, name: g?.name ?? defaultName, isDefault: !g, items: [], tabCount: 0, otherTabs: 0 };
+      byGroup.set(gid, s);
+    }
+    return s;
+  };
+  for (const g of groups) section(g.id);
+
+  for (const t of tabs) {
+    // A tab whose Group is gone belongs to the default one (types.tabGroupId).
+    const gid = t.groupId && groups.some((g) => g.id === t.groupId) ? t.groupId : DEFAULT_SECTION_ID;
+    const s = section(gid);
+    s.tabCount++;
+    const kind = tabKind(t);
+    if (!kind) { s.otherTabs++; continue; }
+    const key = t.resumeId ? sessionRowKey({ projectId, kind, sessionId: t.resumeId }) : null;
+    const row = key ? shown.get(key) ?? null : null;
+    if (key) opened.add(key);
+    if (row) { s.items.push({ tabId: t.id, kind, row, title: row.title }); continue; }
+    if (key && listed.has(key)) continue; // listed, but the filter hides it
+    if (filtering) continue;
+    s.items.push({ tabId: t.id, kind, row: null, title: t.title || (kind === 'devin' ? 'New Devin session' : 'New session') });
+  }
+
+  // User Groups in their order; the default Group last, and only while it
+  // holds tabs (same rule as the old Groups view).
+  const sections = [
+    ...groups.map((g) => byGroup.get(g.id)!),
+    ...(byGroup.get(DEFAULT_SECTION_ID)?.tabCount ? [byGroup.get(DEFAULT_SECTION_ID)!] : []),
+  ].filter((s) => !filtering || s.items.length > 0);
+  const history = rows.filter((r) => !opened.has(sessionRowKey(r)));
+  return { sections, history };
+}
