@@ -23,6 +23,7 @@ import type { ExportMessage } from '../lib/export/types';
 // Lazy like ChatPanel: the export pipeline only loads when ⤓ is clicked.
 const ExportDialog = lazy(() => import('./ExportDialog').then((m) => ({ default: m.ExportDialog })));
 import { ChatInput } from './ChatInput';
+import { ClaudeUsageBadge, refreshClaudeUsage } from './ClaudeUsage';
 import { ImageAttachmentStrip, useImageAttachments, type ImageAttachment } from './ImageAttachments';
 import { useElicitationHost } from './ElicitationHost';
 import { MarkdownLink } from './MarkdownLink';
@@ -704,6 +705,7 @@ export function SdkPanel({
     }
     if (ev?.type === 'result') {
       setStatus('ready');
+      refreshClaudeUsage(); // a turn just spent quota; server cache caps this at 1/min
       currentAssistantIdRef.current = null;
       return;
     }
@@ -1008,6 +1010,7 @@ export function SdkPanel({
         return (
           <div className={`chat-status status-${status}`}>
             <span>{showLabel ? label : ''}</span>
+            <ClaudeUsageBadge />
             {model && (
               <div className="chat-status-model-wrap">
                 <button
