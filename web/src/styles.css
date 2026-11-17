@@ -1831,6 +1831,7 @@ pre {
 /* Claude plan quota badge in the SDK chat status bar */
 .claude-usage-badge {
   margin-left: auto;
+  flex-shrink: 0; /* the status text on the left gives way first */
   display: flex; align-items: center; gap: 4px;
   min-width: 0; overflow: hidden; white-space: nowrap;
   background: transparent; border: none; border-radius: 3px;
@@ -1843,10 +1844,45 @@ pre {
 .claude-usage-seg[data-level='low'] { color: #d9a72c; }
 .claude-usage-seg[data-level='critical'] { color: var(--danger); }
 .claude-usage-sep { color: var(--fg-muted); opacity: 0.6; }
+.context-badge {
+  flex: none; white-space: nowrap;
+  background: transparent; border: none; border-radius: 3px;
+  padding: 2px 6px; cursor: pointer;
+  font: 11px ui-monospace, SFMono-Regular, monospace; font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+.context-badge:hover { background: var(--bg-hover); color: var(--fg); }
+.context-badge.pending { cursor: default; opacity: 0.6; }
+.context-badge.pending:hover { background: transparent; color: var(--fg-muted); }
+.context-badge[data-level='low'] { color: #d9a72c; }
+.context-badge[data-level='critical'] { color: var(--danger); }
+.context-badge-wrap { position: relative; flex: none; display: inline-flex; }
+.context-pop {
+  display: none; position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 50;
+  min-width: 250px; padding: 10px 12px 8px;
+  background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  color: var(--fg); white-space: nowrap; text-align: left;
+}
+.context-pop .context-facts { margin: 0 0 6px; }
+.context-pop-hint { display: block; font-size: 11px; color: var(--fg-muted); }
+/* hover only on real pointers: on touch, the tap opens the full card instead */
+@media (hover: hover) {
+  .context-badge-wrap:hover .context-pop { display: block; }
+}
+.context-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0 0 12px; font-size: 12px; }
+.context-facts dt { color: var(--fg-muted); }
+.context-facts dd { margin: 0; font-variant-numeric: tabular-nums; }
+.context-facts .settings-mono { margin-left: 0; }
+.context-table { width: 100%; border-collapse: collapse; margin: 10px 0 8px; font-size: 12px; }
+.context-table td { padding: 3px 0; border-bottom: 1px solid var(--border); }
+.context-table .context-num { text-align: right; font-variant-numeric: tabular-nums; padding-left: 12px; color: var(--fg-muted); }
+.context-table .context-free td, .context-table .context-buffer td { color: var(--fg-muted); }
 @media (max-width: 600px) {
   /* phones: keep 5h + weekly, drop per-model windows (still in the detail card) */
   .claude-usage-seg:nth-child(n+3) { display: none; }
   .claude-usage-badge { padding: 2px 4px; }
+  .context-badge { padding: 2px 4px; }
 }
 .settings-mono {
   font-family: ui-monospace, SFMono-Regular, monospace;

@@ -22,6 +22,7 @@ import {
   type SlashCommand,
   type ModelInfo,
 } from '@anthropic-ai/claude-agent-sdk';
+import { mapContextUsage, type ContextSnapshot } from './context-usage.js';
 import { getProject, getSettings } from './store.js';
 import { getUserId } from './auth.js';
 import { publishSessionEvent, type SessionOwner } from './notify.js';
@@ -89,6 +90,8 @@ type SdkEntry = {
   // every re-create (effort change, rewind).
   observeWire: boolean;
   title: string | null;
+  // Last /context-style reading of the window (null until the first one).
+  context: ContextSnapshot | null;
   commands: SlashCommand[];
   agents: string[];
   models: ModelInfo[];
@@ -255,6 +258,7 @@ function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: 
     entry.agents = (init.agents ?? []).map((a: any) => String(a?.name ?? '')).filter(Boolean);
     entry.models = init.models ?? [];
     broadcast(entry, { type: 'catalog', ...catalogOf(entry) });
+    refreshContext(entry);
     // system.init — where the model normally comes from — only arrives with
     // the first turn. Until then the status bar had no model to show (and so
     // no way to switch it): work it out from the catalog now.
@@ -318,11 +322,28 @@ function onSdkMessage(entry: SdkEntry, m: any) {
   }
   if (m?.type === 'result') {
     entry.thinking = false;
+    refreshContext(entry);
     scheduleTitleRefresh(entry);
     if (entry.clients.size === 0) scheduleKillIfIdle(entry);
     if (entry.pendingAsks.size === 0) publishSessionEvent(entry.owner, 'done', entry.sessionId, entry.title);
   }
   broadcast(entry, { type: 'message', data: m });
+}
+
+// Re-read the context window and push it to every client. Summary detail
+// answers locally (no model / token-count calls); a reply from a replaced
+// query is dropped.
+function refreshContext(entry: SdkEntry) {
+  const q = entry.q;
+  if (!q) return;
+  const gen = entry.generation;
+  q.getContextUsage({ detail: 'summary' }).then((r) => {
+    if (gen !== entry.generation) return;
+    const context = mapContextUsage(r);
+    if (!context) return;
+    entry.context = context;
+    broadcast(entry, { type: 'context', context });
+  }).catch(() => {});
 }
 
 function catalogOf(entry: SdkEntry) {
@@ -467,6 +488,7 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
       entry.model = model;
       entry.requestedModel = model;
       broadcast(entry, { type: 'model', model });
+      refreshContext(entry); // the window size follows the model
     } catch (e) {
       send(socket, { type: 'error', message: `set_model failed: ${String(e)}` });
     }
@@ -580,6 +602,7 @@ function startedFrame(entry: SdkEntry, attached: boolean) {
     effort: entry.effort,
     wire: entry.observeWire,
     title: entry.title,
+    context: entry.context,
     ...catalogOf(entry),
   };
 }
@@ -650,6 +673,7 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
         effort: isEffortLevel(settings.effort) ? settings.effort : '',
         observeWire,
         title: null,
+        context: null,
         commands: [],
         agents: [],
         models: [],

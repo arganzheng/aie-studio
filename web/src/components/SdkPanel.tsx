@@ -24,6 +24,7 @@ import type { ExportMessage } from '../lib/export/types';
 const ExportDialog = lazy(() => import('./ExportDialog').then((m) => ({ default: m.ExportDialog })));
 import { ChatInput } from './ChatInput';
 import { ClaudeUsageBadge, refreshClaudeUsage } from './ClaudeUsage';
+import { ContextBadge, type ContextSnapshot } from './ContextUsage';
 import { ImageAttachmentStrip, useImageAttachments, type ImageAttachment } from './ImageAttachments';
 import { useElicitationHost } from './ElicitationHost';
 import { MarkdownLink } from './MarkdownLink';
@@ -289,6 +290,8 @@ export function SdkPanel({
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [wireOn, setWireOn] = useState(false);
+  // Context window reading, pushed by the server after each turn.
+  const [contextUsage, setContextUsage] = useState<ContextSnapshot | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [insertion, setInsertion] = useState<PromptInsertion | null>(null);
   const pendingInitialPromptRef = useRef<string | null>(initialPrompt?.trim() || null);
@@ -625,11 +628,13 @@ export function SdkPanel({
       else if (m.requestedModel) setModel((cur) => cur ?? m.requestedModel);
       if (typeof m.effort === 'string') setEffort(m.effort);
       setWireOn(m.wire === true);
+      setContextUsage(m.context ?? null);
       if (typeof m.title === 'string' && m.title) onTitleRef.current?.(m.title);
       if (Array.isArray(m.commands)) setCatalog({ commands: m.commands, agents: m.agents ?? [], models: m.models ?? [] });
       showToast(m.resumed ? (m.attached ? 'Attached to live session' : 'Resumed session') : 'Session started');
       return;
     }
+    if (m.type === 'context') { if (m.context) setContextUsage(m.context); return; }
     if (m.type === 'catalog') { setCatalog({ commands: m.commands ?? [], agents: m.agents ?? [], models: m.models ?? [] }); return; }
     if (m.type === 'title') { if (typeof m.title === 'string' && m.title) onTitleRef.current?.(m.title); return; }
     if (m.type === 'model') { if (typeof m.model === 'string') setModel(m.model); return; }
@@ -1010,6 +1015,7 @@ export function SdkPanel({
           <div className={`chat-status status-${status}`}>
             <span>{showLabel ? label : ''}</span>
             <ClaudeUsageBadge />
+            <ContextBadge context={contextUsage} />
             {/* Always there: the model is only reported once the session has
                 started (or run a turn), and switching must not wait for that. */}
             {(
