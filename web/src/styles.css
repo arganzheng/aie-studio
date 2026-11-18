@@ -3179,6 +3179,8 @@ pre {
   background: transparent; border: none; color: var(--fg-muted); font-size: 10px; cursor: pointer;
 }
 .session-row-caret:hover { color: var(--fg); }
+.session-row-worktree { color: #b48ead; }
+.chat-status-worktree { color: #b48ead; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-row-subagents {
   flex: 0 0 auto;
   background: var(--bg-input); border: 1px solid var(--border); border-radius: 9px;

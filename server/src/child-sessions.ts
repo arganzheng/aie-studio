@@ -22,6 +22,7 @@ export const CHILD_TOOLS_INSTRUCTIONS = [
   'Use spawn_child_session for a substantial, self-contained piece of work that the user may want to follow or steer (a feature slice, a long investigation, work that can run in parallel with yours).',
   'For a quick lookup or a short helper task, prefer the built-in Agent tool: it is cheaper and faster.',
   'A child starts with none of your context: give it a complete brief (goal, relevant files, constraints, what to report back).',
+  'When a child will edit files while you or other children are editing too, open it with isolation "worktree": it then works on its own branch in its own checkout, and its report says which branch to merge. For read-only work (investigation, review) leave isolation out.',
   'If a child goes the wrong way or is no longer needed, stop_child_session interrupts it.',
   'spawn_child_session returns at once. When the child finishes, its answer arrives as a message in this conversation starting with "[Child session". Do not wait, sleep or poll for it; carry on with other work or end your turn.',
 ].join(' ');
@@ -60,6 +61,15 @@ export function isTurnResult(result: any): boolean {
   return true;
 }
 
+// What a child opened in its own worktree is told ahead of its brief.
+export function worktreePreface(o: { path: string; branch: string; projectPath: string }): string {
+  return [
+    `You are working in your own git worktree at ${o.path}, on branch ${o.branch}. It was created for this task from the latest commit; uncommitted changes of the main checkout are not in it.`,
+    `Make all your changes here and commit them on ${o.branch} before you finish. Do not switch branches, and do not modify the main checkout at ${o.projectPath}.`,
+    'If you need dependencies that are not installed in this worktree (for example node_modules), install them here.',
+  ].join(' ');
+}
+
 export function cleanChildTitle(raw: string): string {
   return raw.replace(/\s+/g, ' ').trim().slice(0, 80) || 'Child session';
 }
@@ -77,7 +87,9 @@ const STOP_STATE: Record<ChildStop, string> = {
   parent: 'was stopped by its parent session',
   restart: 'was interrupted by an aie-studio restart',
 };
-export function childReport(opts: { title: string; sessionId: string; ok: boolean; result: string; errorKind?: string; userNotes?: readonly string[]; stopped?: ChildStop }): string {
+// `worktreeNote`: where the child's file changes are, when it worked in its
+// own git worktree (worktrees.ts worktreeNote).
+export function childReport(opts: { title: string; sessionId: string; ok: boolean; result: string; errorKind?: string; userNotes?: readonly string[]; stopped?: ChildStop; worktreeNote?: string }): string {
   const notes = (opts.userNotes ?? []).map((n) => n.trim()).filter(Boolean);
   const state = opts.stopped
     ? STOP_STATE[opts.stopped]
@@ -91,12 +103,14 @@ export function childReport(opts: { title: string; sessionId: string; ok: boolea
   const answer = body || (opts.stopped
     ? `(no final answer: the child session ${STOP_STATE[opts.stopped]} before it finished${opts.stopped === 'parent' ? '' : '; use send_to_child_session to have it continue'})`
     : '(the child session gave no final answer)');
-  if (notes.length === 0) return [head, answer, tail].join('\n\n');
+  const wt = opts.worktreeNote ? [opts.worktreeNote] : [];
+  if (notes.length === 0) return [head, answer, ...wt, tail].join('\n\n');
   const quoted = notes.map((n) => clipNote(n).split('\n').map((l) => `> ${l}`).join('\n')).join('\n>\n');
   return [
     head,
     `${USER_NOTES_HEADING}\n\n${quoted}`,
     `${CHILD_ANSWER_HEADING}\n\n${answer}`,
+    ...wt,
     'If this changes your plan, adjust it; otherwise no reply is needed.',
     tail,
   ].join('\n\n');

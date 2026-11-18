@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { deleteSession, listSessions, renameSession } from '@anthropic-ai/claude-agent-sdk';
+import { deleteSession, renameSession } from '@anthropic-ai/claude-agent-sdk';
+import { listProjectSessions, removeWorktreeIfClean } from './worktrees.js';
 import { getUserId } from './auth.js';
 import { getProject, getSessionMeta, listProjects, putSessionMeta, type Project, type SessionMeta } from './store.js';
 import { liveBridge, type LiveState } from './live-sessions.js';
@@ -31,6 +32,9 @@ export type SessionRow = {
   subagents?: { total: number; running: number };
   // The session this one was opened under as a child, if any.
   parentId?: string;
+  // Claude: the git worktree it runs in (a name under .claude/worktrees),
+  // absent when it runs in the project directory.
+  worktree?: string;
 };
 
 export const MAX_TITLE_LENGTH = 200;
@@ -75,8 +79,8 @@ export function cleanTitle(raw: unknown): string | null {
 }
 
 async function claudeRows(project: Project): Promise<Omit<SessionRow, 'archived'>[]> {
-  let list: Awaited<ReturnType<typeof listSessions>> = [];
-  try { list = await listSessions({ dir: project.path, includeWorktrees: false }); } catch {}
+  let list: Awaited<ReturnType<typeof listProjectSessions>> = [];
+  try { list = await listProjectSessions(project.path); } catch {}
   return Promise.all(list.map(async (s) => {
     const live = liveBridge(s.sessionId);
     return {
@@ -87,7 +91,8 @@ async function claudeRows(project: Project): Promise<Omit<SessionRow, 'archived'
       updatedAt: s.lastModified,
       live,
       state: live === 'sdk' ? sdkLiveState(s.sessionId) : live === 'cli' ? cliLiveState(s.sessionId) : null,
-      subagents: await countSubagents(project.path, s.sessionId),
+      subagents: await countSubagents(s.cwd || project.path, s.sessionId),
+      ...(s.worktree ? { worktree: s.worktree } : {}),
     };
   }));
 }
@@ -238,7 +243,14 @@ export function registerSessionIndexRoutes(app: FastifyInstance) {
       }
       await deleteSession(t.sessionId, { dir: t.project.path });
       await putSessionMeta(uid, forgetSession(await getSessionMeta(uid), sessionKey(t.kind, t.sessionId)));
-      return { ok: true };
+      // Its worktree goes with it when nothing would be lost (no uncommitted
+      // files, branch merged) and no other session lives there.
+      let worktree: { name: string; removed: boolean; reason?: string } | undefined;
+      if (t.row.worktree) {
+        const shared = (await listProjectSessions(t.project.path).catch(() => [])).some((s) => s.worktree === t.row.worktree);
+        worktree = { name: t.row.worktree, ...(shared ? { removed: false, reason: 'another session uses it' } : await removeWorktreeIfClean(t.project.path, t.row.worktree)) };
+      }
+      return { ok: true, worktree };
     } catch (e: any) {
       return reply.code(e.code ?? 500).send({ error: e.message });
     }

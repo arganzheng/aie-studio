@@ -7,6 +7,7 @@ import { getUserId } from './auth.js';
 import { getProject } from './store.js';
 import { liveBridge } from './live-sessions.js';
 import { sdkTasks, stopSdkTask, type SdkTask } from './sdk-session.js';
+import { sessionCwd } from './worktrees.js';
 
 // Model: Claude Session.subagents — the child agents a Claude session
 // spawned through its Agent tool (web.SessionList tree, web.SubagentPanel).
@@ -201,7 +202,7 @@ export function registerSubagentRoutes(app: FastifyInstance) {
   app.get<{ Params: P }>('/api/projects/:id/sdk-sessions/:sid/subagents', async (req, reply) => {
     try {
       const project = await resolve(req, getUserId(req));
-      return { subagents: await listSubagentInfo(project.path, req.params.sid) };
+      return { subagents: await listSubagentInfo(await sessionCwd(project.path, req.params.sid), req.params.sid) };
     } catch (e) { return fail(reply, e); }
   });
 
@@ -215,7 +216,7 @@ export function registerSubagentRoutes(app: FastifyInstance) {
       try { msgs = await getSubagentMessages(req.params.sid, req.params.aid!, { dir: project.path }); }
       catch { return reply.code(404).send({ error: 'subagent transcript not found' }); }
       const after = Math.max(0, Math.min(msgs.length, Number(req.query.after ?? 0) || 0));
-      const info = (await listSubagentInfo(project.path, req.params.sid)).find((s) => s.agentId === req.params.aid) ?? null;
+      const info = (await listSubagentInfo(await sessionCwd(project.path, req.params.sid), req.params.sid)).find((s) => s.agentId === req.params.aid) ?? null;
       return {
         events: msgs.slice(after).map((m) => ({ type: m.type, uuid: m.uuid, message: m.message })),
         startIndex: after,
@@ -231,7 +232,7 @@ export function registerSubagentRoutes(app: FastifyInstance) {
     try {
       const uid = getUserId(req);
       const project = await resolve(req, uid);
-      const info = (await listSubagentInfo(project.path, req.params.sid)).find((s) => s.agentId === req.params.aid);
+      const info = (await listSubagentInfo(await sessionCwd(project.path, req.params.sid), req.params.sid)).find((s) => s.agentId === req.params.aid);
       if (!info) return reply.code(404).send({ error: 'subagent not found' });
       if (!info.canStop) return reply.code(409).send({ error: 'subagent is not running in a live Claude (SDK) session' });
       const ok = info.taskId !== null && await stopSdkTask(req.params.sid, uid!, info.taskId);

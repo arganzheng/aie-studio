@@ -28,8 +28,9 @@ import { z } from 'zod';
 import { mapContextUsage, type ContextSnapshot } from './context-usage.js';
 import {
   CHILD_TOOLS_INSTRUCTIONS, MAX_NOTES_PER_TURN, childIdsOf, childReport, cleanChildTitle, isTurnResult, sessionDepth, spawnRefusal,
-  type ChildStop,
+  worktreePreface, type ChildStop,
 } from './child-sessions.js';
+import { createWorktree, isWorktreeName, listProjectSessions, realPath, sessionCwd, worktreeNameOf, worktreeNote, worktreePath, worktreeStatus } from './worktrees.js';
 import {
   getOwedReports, getProject, getSessionMeta, getSettings, listUserIds, putOwedReports, putSessionMeta, setParent,
   type OwedReports, type Settings,
@@ -143,7 +144,11 @@ export function applyTaskEvent(tasks: Map<string, SdkTask>, m: any): boolean {
 }
 
 type SdkEntry = {
+  // Where claude runs: the project directory, or the session's own git
+  // worktree under it (model: Session.worktree).
   cwd: string;
+  // The project's directory — what session lookups by project use.
+  projectPath: string;
   // Model: server.SessionEvents — who to tell when a turn ends or the agent
   // starts waiting on the user.
   owner: SessionOwner;
@@ -453,7 +458,7 @@ function saveOwed(entry: SdkEntry) {
   const owed = owesReport(entry) ? {
     parentId: entry.parentSessionId!,
     projectId: entry.owner.projectId,
-    cwd: entry.cwd,
+    cwd: entry.projectPath, // the project: a session's own directory is looked up from it
     title: entry.title || id.slice(0, 8),
     requested: entry.reportToParent,
     notes: [...entry.userNotes],
@@ -810,6 +815,8 @@ function startedFrame(entry: SdkEntry, attached: boolean) {
     wire: entry.observeWire,
     title: entry.title,
     context: entry.context,
+    // The session's own git worktree, by name (null = the project directory).
+    worktree: entry.cwd === entry.projectPath ? null : path.basename(entry.cwd),
     ...catalogOf(entry),
   };
 }
@@ -852,11 +859,12 @@ export function stopSdkSession(sessionId: string, uid: string, opts: { silent?: 
 
 // A bridge entry with no query yet (startQuery starts one).
 function newEntry(o: {
-  uid: string; projectId: string; cwd: string; settings: Settings;
+  uid: string; projectId: string; cwd: string; projectPath: string; settings: Settings;
   resumeId?: string; parentSessionId?: string | null; observeWire?: boolean; model?: string; spawnedByAgent?: boolean;
 }): SdkEntry {
   return {
     cwd: o.cwd,
+    projectPath: o.projectPath,
     owner: { uid: o.uid, projectId: o.projectId, tabType: 'claude-sdk' },
     sessionId: o.resumeId ?? null,
     q: null,
@@ -904,23 +912,29 @@ function injectUserText(entry: SdkEntry, text: string) {
 // The live entry of one of the caller's sessions, starting its process (a
 // resume, no client attached) when it isn't running. Null when the classic
 // bridge holds it.
-async function wakeSession(who: { uid: string; projectId: string; cwd: string }, sessionId: string): Promise<SdkEntry | null> {
+async function wakeSession(who: { uid: string; projectId: string; projectPath: string }, sessionId: string): Promise<SdkEntry | null> {
   const live = byId.get(sessionId);
   if (live) return live.owner.uid === who.uid ? live : null;
   if (liveBridge(sessionId) === 'cli') return null;
   const settings = await getSettings(who.uid);
-  const entry = newEntry({ uid: who.uid, projectId: who.projectId, cwd: who.cwd, settings, resumeId: sessionId });
+  const entry = newEntry({ uid: who.uid, projectId: who.projectId, cwd: await sessionCwd(who.projectPath, sessionId), projectPath: who.projectPath, settings, resumeId: sessionId });
   byId.set(sessionId, entry);
   markLive(sessionId, 'sdk');
   await loadTreePosition(entry);
-  try { entry.title = (await getSessionInfo(sessionId, { dir: who.cwd }))?.summary?.trim() || null; } catch {}
+  try { entry.title = (await getSessionInfo(sessionId, { dir: who.projectPath }))?.summary?.trim() || null; } catch {}
   startQuery(entry, { resume: sessionId });
   startWatcher(entry);
   // Nobody is attached: end the process again once it goes quiet.
   scheduleKillIfIdle(entry);
   return entry;
 }
-const whoOf = (e: SdkEntry) => ({ uid: e.owner.uid, projectId: e.owner.projectId, cwd: e.cwd });
+const whoOf = (e: SdkEntry) => ({ uid: e.owner.uid, projectId: e.owner.projectId, projectPath: e.projectPath });
+
+// The entry's worktree name, when it runs in one.
+async function worktreeOf(entry: SdkEntry): Promise<string | null> {
+  if (entry.cwd === entry.projectPath) return null;
+  return worktreeNameOf(await realPath(entry.projectPath), await realPath(entry.cwd));
+}
 
 // A resumed session's place in the tree, from SessionMeta.
 async function loadTreePosition(entry: SdkEntry) {
@@ -945,7 +959,10 @@ async function reportToParent(child: SdkEntry, result: any, why: { requested: bo
     const parent = await wakeSession(whoOf(child), parentId);
     if (!parent) return;
     const ok = !why.stopped && result?.subtype === 'success' && result?.is_error !== true;
+    const wtName = await worktreeOf(child);
+    const wt = wtName ? await worktreeStatus(child.projectPath, wtName) : null;
     injectUserText(parent, childReport({
+      worktreeNote: wt ? worktreeNote(wt) : undefined,
       title: child.title || child.sessionId.slice(0, 8),
       sessionId: child.sessionId,
       ok,
@@ -967,7 +984,7 @@ export async function recoverChildReports(): Promise<number> {
     for (const [childId, rec] of Object.entries(owed)) {
       if (byId.has(childId)) continue; // running again already: it will report itself
       try {
-        const parent = await wakeSession({ uid, projectId: rec.projectId, cwd: rec.cwd }, rec.parentId);
+        const parent = await wakeSession({ uid, projectId: rec.projectId, projectPath: rec.cwd }, rec.parentId);
         if (parent) {
           injectUserText(parent, childReport({ title: rec.title || childId.slice(0, 8), sessionId: childId, ok: false, result: '', userNotes: rec.notes, stopped: 'restart' }));
           delivered++;
@@ -1000,6 +1017,7 @@ function childToolsServer(parent: SdkEntry) {
           title: z.string().describe('Short name shown in the Sessions tree, e.g. "Draft Apple Pay tests"'),
           prompt: z.string().describe('The complete task brief for the child: goal, relevant files, constraints, and what to report back'),
           model: z.string().optional().describe('Model for the child (an id or alias this session can use). Omit to use the default.'),
+          isolation: z.enum(['shared', 'worktree']).optional().describe('"worktree": the child gets its own git worktree and branch (under .claude/worktrees/), branched from your current commit — use it when the child will edit files while you or other children are editing too. "shared" (default): it works in the same directory as you.'),
         },
         async (args) => {
           const parentId = parent.sessionId;
@@ -1015,18 +1033,31 @@ function childToolsServer(parent: SdkEntry) {
           }
           const title = cleanChildTitle(String(args.title ?? ''));
           const settings = await getSettings(parent.owner.uid);
-          const child = newEntry({ uid: parent.owner.uid, projectId: parent.owner.projectId, cwd: parent.cwd, settings, parentSessionId: parentId, model, spawnedByAgent: true });
+          let cwd = parent.cwd;
+          let brief = prompt;
+          let where = '';
+          if (args.isolation === 'worktree') {
+            try {
+              const wt = await createWorktree(parent.projectPath, parent.cwd, title);
+              cwd = wt.path;
+              brief = `${worktreePreface({ path: wt.path, branch: wt.branch, projectPath: parent.projectPath })}\n\n${prompt}`;
+              where = ` It works in its own git worktree (.claude/worktrees/${wt.name}) on branch ${wt.branch}, created from your current commit; your uncommitted changes are not in it. Its report will say what to merge.`;
+            } catch (e) {
+              return toolText(`Could not create a worktree: ${String((e as Error).message)}. Open the child without isolation, or fix that first.`, true);
+            }
+          }
+          const child = newEntry({ uid: parent.owner.uid, projectId: parent.owner.projectId, cwd, projectPath: parent.projectPath, settings, parentSessionId: parentId, model, spawnedByAgent: true });
           child.title = title;
           child.reportToParent = true;
           pending.add(child);
           startQuery(child, {});
-          injectUserText(child, prompt);
+          injectUserText(child, brief);
           // claude names the session on the first turn's system.init.
           for (let i = 0; i < 300 && !child.sessionId && child.q; i++) await new Promise((r) => setTimeout(r, 100));
           if (!child.sessionId) return toolText(`Started child session "${title}", but it has not reported an id yet. Its answer will still arrive as a message when it finishes.`);
           try { await renameSession(child.sessionId, title, { dir: child.cwd }); child.title = title; broadcast(child, { type: 'title', title }); } catch {}
           saveOwed(child);
-          return toolText(`Started child session "${title}" (id ${child.sessionId}). It is working in the background; its answer will arrive as a message starting with "[Child session" when it finishes. Do not wait or poll for it.`);
+          return toolText(`Started child session "${title}" (id ${child.sessionId}).${where} It is working in the background; its answer will arrive as a message starting with "[Child session" when it finishes. Do not wait or poll for it.`);
         },
       ),
       tool(
@@ -1083,7 +1114,7 @@ function childToolsServer(parent: SdkEntry) {
           const lines = await Promise.all(ids.map(async (id) => {
             const live = byId.get(id);
             let title = live?.title ?? null;
-            if (!title) { try { title = (await getSessionInfo(id, { dir: parent.cwd }))?.summary?.trim() || null; } catch {} }
+            if (!title) { try { title = (await getSessionInfo(id, { dir: parent.projectPath }))?.summary?.trim() || null; } catch {} }
             const state = live ? (live.pendingAsks.size > 0 ? 'waiting for the user' : live.thinking ? 'working' : 'idle') : 'not running';
             return `- ${id} "${title ?? id.slice(0, 8)}": ${state}`;
           }));
@@ -1097,7 +1128,7 @@ function childToolsServer(parent: SdkEntry) {
 // ----- routes --------------------------------------------------------------
 
 export function registerSdkSessionRoutes(app: FastifyInstance) {
-  app.get<{ Querystring: { project?: string; resume?: string; wire?: string; parent?: string } }>(
+  app.get<{ Querystring: { project?: string; resume?: string; wire?: string; parent?: string; worktree?: string } }>(
     '/ws/sdk-session',
     { websocket: true },
     async (socket, req) => {
@@ -1132,8 +1163,16 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
       // only while the proxy is listening; `started.wire` tells the client.
       const observeWire = req.query.wire === '1' && wireBaseUrl() !== null;
       if (observeWire && resumeId) registerWireSession(resumeId, project.path);
+      // A resumed session runs where it was started; a fresh one may name an
+      // existing worktree of the project (web.NewChildSession "in a worktree").
+      let cwd = project.path;
+      if (resumeId) cwd = await sessionCwd(project.path, resumeId);
+      else if (isWorktreeName(req.query.worktree)) {
+        const dir = worktreePath(await realPath(project.path), req.query.worktree);
+        if (await nodeFs.promises.stat(dir).then((st) => st.isDirectory(), () => false)) cwd = dir;
+      }
       const entry = newEntry({
-        uid, projectId: project.id, cwd: project.path, settings, resumeId, observeWire,
+        uid, projectId: project.id, cwd, projectPath: project.path, settings, resumeId, observeWire,
         // Only a fresh session can be made a child; a resume keeps its link.
         parentSessionId: !resumeId && /^[A-Za-z0-9-]{8,64}$/.test(req.query.parent ?? '') ? req.query.parent! : null,
       });
@@ -1158,7 +1197,7 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
     if (!uid) return reply.code(401).send({ error: 'unauthorized' });
     const project = await getProject(uid, req.params.id);
     if (!project) return reply.code(404).send({ error: 'project not found' });
-    const list = await listSessions({ dir: project.path, includeWorktrees: false });
+    const list = await listProjectSessions(project.path);
     return {
       sessions: list.map((s) => ({
         sessionId: s.sessionId,

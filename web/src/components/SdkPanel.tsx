@@ -297,6 +297,7 @@ export function SdkPanel({
   resumeId,
   wire,
   parentSessionId,
+  worktree,
   initialPrompt,
   sendKey,
   theme,
@@ -325,6 +326,9 @@ export function SdkPanel({
   // Model: Session.parent — sent as parent=<id> on a fresh session's handshake
   // so the server files it under that session in the Sessions tree.
   parentSessionId?: string;
+  // Model: Session.worktree — a fresh session starts in this worktree of the
+  // project (sent as worktree=<name> on the handshake).
+  worktree?: string;
   // One-shot first message for a fresh session (Tab.initialPrompt); never on resume.
   initialPrompt?: string;
   sendKey: SendKey;
@@ -371,6 +375,9 @@ export function SdkPanel({
   const statusRef = useRef<Status>('connecting');
   const wireRef = useRef(!!wire); wireRef.current = !!wire;
   const parentRef = useRef(parentSessionId); parentRef.current = parentSessionId;
+  const worktreeRef = useRef(worktree); worktreeRef.current = worktree;
+  // The worktree the session actually runs in, as the server reports it.
+  const [worktreeName, setWorktreeName] = useState<string | null>(null);
   const [editingUuid, setEditingUuid] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [rewinding, setRewinding] = useState(false);
@@ -598,7 +605,10 @@ export function SdkPanel({
       const params = new URLSearchParams({ project: projectId });
       const sid = activeSessionIdRef.current;
       if (sid) params.set('resume', sid);
-      else if (parentRef.current) params.set('parent', parentRef.current);
+      else {
+        if (parentRef.current) params.set('parent', parentRef.current);
+        if (worktreeRef.current) params.set('worktree', worktreeRef.current);
+      }
       if (wireRef.current) params.set('wire', '1');
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       const ws = new WebSocket(`${proto}://${location.host}/ws/sdk-session?${params.toString()}`);
@@ -702,6 +712,7 @@ export function SdkPanel({
       else if (m.requestedModel) setModel((cur) => cur ?? m.requestedModel);
       if (typeof m.effort === 'string') setEffort(m.effort);
       setWireOn(m.wire === true);
+      setWorktreeName(typeof m.worktree === 'string' && m.worktree ? m.worktree : null);
       setContextUsage(m.context ?? null);
       if (typeof m.title === 'string' && m.title) onTitleRef.current?.(m.title);
       if (Array.isArray(m.commands)) setCatalog({ commands: m.commands, agents: m.agents ?? [], models: m.models ?? [] });
@@ -1160,6 +1171,9 @@ export function SdkPanel({
                   type="button"
                 >{model ?? 'default'}{effort ? ` · ${effort}` : ''}</button>
                 <span className="chat-status-wire" title="This tab drives Claude through the Agent SDK bridge">sdk</span>
+                {worktreeName && (
+                  <span className="chat-status-wire chat-status-worktree" title={`This session works in its own git worktree: .claude/worktrees/${worktreeName} (branch child/${worktreeName}). Its file changes are not in the project's main checkout until merged.`}>⎇ {worktreeName}</span>
+                )}
                 {wireOn && (
                   <span className="chat-status-wire" title="Wire capture on: API requests/responses of this session are recorded under .aie/observations/wire/ (plaintext)">wire</span>
                 )}
