@@ -947,6 +947,15 @@ pre {
 .tool-child-open + .tool-popout-btn { margin-left: 6px; }
 button.child-report-open { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; color: var(--fg-strong); cursor: pointer; text-align: left; }
 button.child-report-open:hover { text-decoration: underline; color: var(--accent); }
+/* The summary a compaction leaves in place of the earlier turns. */
+.msg-compact {
+  align-self: stretch; max-width: none; white-space: normal;
+  border: 1px dashed var(--border); border-radius: 6px; padding: 6px 12px;
+  color: var(--fg-muted, inherit); font-size: 0.92em;
+}
+.msg-compact > summary { cursor: pointer; opacity: 0.85; }
+.msg-compact-body { margin-top: 6px; }
+.msg-compact-body p { margin: 6px 0; white-space: pre-wrap; }
 
 /* A child session's answer in its parent's chat (model: Session.children). */
 .msg-child-report {

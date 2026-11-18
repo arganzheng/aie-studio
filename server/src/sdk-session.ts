@@ -22,12 +22,12 @@ import {
   type SlashCommand,
   type ModelInfo,
   createSdkMcpServer,
-  tool,
+  tool, forkSession,
 } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { mapContextUsage, type ContextSnapshot } from './context-usage.js';
 import {
-  BUDGET_ERROR, CHILD_TOOLS_INSTRUCTIONS, MAX_NOTES_PER_TURN, cleanBudget, cleanResultSchema, usd, childBrief, childIdsOf, childReport, cleanGroup, joinReports, cleanChildTitle, isTurnResult, sessionDepth, spawnRefusal,
+  BUDGET_ERROR, CHILD_TOOLS_INSTRUCTIONS, MAX_NOTES_PER_TURN, cleanBudget, cleanResultSchema, usd, childBrief, childIdsOf, childReport, cleanGroup, joinReports, cleanChildTitle, isTurnResult, lastModelOf, sessionDepth, spawnRefusal,
   worktreePreface, type ChildStop,
 } from './child-sessions.js';
 import { createWorktree, isWorktreeName, listProjectSessions, realPath, sessionCwd, worktreeNameOf, worktreeNote, worktreePath, worktreeStatus } from './worktrees.js';
@@ -208,6 +208,8 @@ type SdkEntry = {
   overBudget: boolean;
   // Model: Session.activity — the tool call the running turn last made.
   activity: string;
+  // Compacting its conversation right now (SDK status event).
+  compacting: boolean;
   commands: SlashCommand[];
   agents: string[];
   models: ModelInfo[];
@@ -530,8 +532,10 @@ function onSdkMessage(entry: SdkEntry, m: any) {
     }
     if (typeof m.model === 'string') entry.model = m.model;
   }
+  if (m?.type === 'system' && m?.subtype === 'status') entry.compacting = m.status === 'compacting';
   if (m?.type === 'result') {
     entry.thinking = false;
+    entry.compacting = false;
     if (typeof m.total_cost_usd === 'number') entry.spentUsd = m.total_cost_usd;
     entry.overBudget = m.subtype === BUDGET_ERROR;
     if (isTurnResult(m)) {
@@ -877,6 +881,7 @@ function startedFrame(entry: SdkEntry, attached: boolean) {
     attached,
     clients: entry.clients.size,
     thinking: entry.thinking,
+    compacting: entry.compacting,
     model: entry.model,
     requestedModel: entry.requestedModel || null,
     effort: entry.effort,
@@ -973,6 +978,7 @@ function newEntry(o: {
     spentUsd: 0,
     overBudget: false,
     activity: '',
+    compacting: false,
     commands: [],
     agents: [],
     models: [],
@@ -1000,12 +1006,12 @@ function injectUserText(entry: SdkEntry, text: string) {
 // The live entry of one of the caller's sessions, starting its process (a
 // resume, no client attached) when it isn't running. Null when the classic
 // bridge holds it.
-async function wakeSession(who: { uid: string; projectId: string; projectPath: string }, sessionId: string): Promise<SdkEntry | null> {
+async function wakeSession(who: { uid: string; projectId: string; projectPath: string }, sessionId: string, opts: { model?: string } = {}): Promise<SdkEntry | null> {
   const live = byId.get(sessionId);
   if (live) return live.owner.uid === who.uid ? live : null;
   if (liveBridge(sessionId) === 'cli') return null;
   const settings = await getSettings(who.uid);
-  const entry = newEntry({ uid: who.uid, projectId: who.projectId, cwd: await sessionCwd(who.projectPath, sessionId), projectPath: who.projectPath, settings, resumeId: sessionId });
+  const entry = newEntry({ uid: who.uid, projectId: who.projectId, cwd: await sessionCwd(who.projectPath, sessionId), projectPath: who.projectPath, settings, resumeId: sessionId, model: opts.model });
   byId.set(sessionId, entry);
   markLive(sessionId, 'sdk');
   await loadTreePosition(entry);
@@ -1403,6 +1409,41 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
       send(socket, startedFrame(entry, false));
     },
   );
+
+  // Model: web.NewChildSession "with compacted context" — the child starts
+  // as a copy of its parent's whole conversation (SDK forkSession), which is
+  // then compacted, so it knows what the parent knows without carrying all of
+  // it. The copy is what gets compacted — the parent's own conversation is
+  // left as it is — and with the parent's model: the model that held the
+  // conversation writes its summary, and the child carries on with it.
+  // The compaction runs here, on a process nobody is attached to yet; the
+  // tab the client opens next attaches to it.
+  app.post<{ Params: { id: string; sid: string } }>('/api/projects/:id/sdk-sessions/:sid/fork-child', async (req, reply) => {
+    const uid = getUserId(req);
+    if (!uid) return reply.code(401).send({ error: 'unauthorized' });
+    const project = await getProject(uid, req.params.id);
+    if (!project) return reply.code(404).send({ error: 'project not found' });
+    const parentId = req.params.sid;
+    if (!/^[A-Za-z0-9-]{8,64}$/.test(parentId)) return reply.code(400).send({ error: 'bad session id' });
+    try {
+      const dir = await sessionCwd(project.path, parentId);
+      const parentTitle = (await getSessionInfo(parentId, { dir }).catch(() => null))?.summary?.trim() || parentId.slice(0, 8);
+      const title = `Child of ${parentTitle}`.slice(0, 60);
+      const { sessionId } = await forkSession(parentId, { dir, title });
+      const meta = await getSessionMeta(uid);
+      const next = setParent(meta, `claude:${sessionId}`, parentId);
+      if (next !== meta) await putSessionMeta(uid, next);
+      const live = byId.get(parentId);
+      const model = (live?.owner.uid === uid ? live.model || live.requestedModel : '')
+        || lastModelOf(await getSessionMessages(parentId, { dir }).catch(() => []))
+        || undefined;
+      const entry = await wakeSession({ uid, projectId: project.id, projectPath: project.path }, sessionId, { model });
+      if (entry) injectUserText(entry, '/compact');
+      return { sessionId, title };
+    } catch (e: any) {
+      return reply.code(502).send({ error: String(e?.message ?? e) });
+    }
+  });
 
   // Model: server.ListSdkSessions — the same jsonl directory as ListSessions,
   // read through the SDK so the row title is its summary (custom title → AI
