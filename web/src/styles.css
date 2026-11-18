@@ -938,6 +938,15 @@ pre {
 .msg-parent-ctx > summary { cursor: pointer; opacity: 0.85; }
 .msg-parent-ctx-body { margin-top: 6px; padding: 2px 10px; border-radius: 4px; background: rgba(0, 0, 0, 0.18); white-space: normal; text-align: left; }
 
+/* Jump from the parent's chat to a child session. */
+.tool-child-open {
+  margin-left: auto; flex-shrink: 0; padding: 1px 8px; font-size: 0.85em; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 10px; background: transparent; color: var(--accent);
+}
+.tool-child-open:hover { border-color: var(--accent); }
+.tool-child-open + .tool-popout-btn { margin-left: 6px; }
+button.child-report-open { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; color: var(--fg-strong); cursor: pointer; text-align: left; }
+button.child-report-open:hover { text-decoration: underline; color: var(--accent); }
 /* The summary a compaction leaves in place of the earlier turns. */
 .msg-compact {
   align-self: stretch; max-width: none; white-space: normal;

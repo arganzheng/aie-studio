@@ -143,6 +143,7 @@ registerTabKind({
           );
         }}
         onActivity={reportActivity}
+        onOpenSession={(sessionId, title) => openTab({ id: shortId(), type: 'claude-sdk', resumeId: sessionId, ...(title ? { title } : {}) })}
         onTitle={(title) => updateTabs((tabs) => tabs.map((x) => (x.id === t.id ? { ...x, title } : x)))}
         onSessionId={(uuid) => {
           updateTabs((tabs) => {

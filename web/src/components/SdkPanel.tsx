@@ -27,6 +27,7 @@ import { bangCommand, isBangInput, splitBangTexts } from '../lib/bang';
 import { ClaudeUsageBadge, refreshClaudeUsage } from './ClaudeUsage';
 import { ContextBadge, type ContextSnapshot } from './ContextUsage';
 import { resultNote } from '../lib/resultNote';
+import { childLinkOfTool } from '../lib/childLink';
 import { parseCompactNote } from '../lib/compactNote';
 import { parseChildReports } from '../lib/childReport';
 import { parseParentContext, withParentContext, type ParentContext } from '../lib/parentContext';
@@ -312,6 +313,7 @@ export function SdkPanel({
   onInitialPromptConsumed,
   onOpenFile,
   onActivity,
+  onOpenSession,
   onExportApi,
   onComment,
   commentMarks,
@@ -344,6 +346,8 @@ export function SdkPanel({
   onInitialPromptConsumed?: () => void;
   onOpenFile?: (relPath: string) => void;
   onActivity?: (a: TabActivity | null) => void;
+  // Open one of this project's sessions in its own tab (a child session).
+  onOpenSession?: (sessionId: string, title?: string) => void;
   onExportApi?: (api: { open: () => void; canExport: boolean } | null) => void;
   // Review integration — same contract as ChatPanel (omitted when settings.review is off).
   onComment?: (c: NewComment) => string | null;
@@ -1082,7 +1086,9 @@ export function SdkPanel({
                     <div key={ri} className={`msg msg-child-report${report.ok ? '' : ' failed'}`} data-anchor={reports.length === 1 ? anchor ?? undefined : undefined}>
                       <div className="child-report-head">
                         <span className="child-report-mark" aria-hidden="true">⑂</span>
-                        <span className="child-report-title">{report.title}</span>
+                        {onOpenSession
+                          ? <button type="button" className="child-report-title child-report-open" title="Open this child session" onClick={() => onOpenSession(report.sessionId, report.title)}>{report.title}</button>
+                          : <span className="child-report-title">{report.title}</span>}
                         <span className="child-report-state">child session {report.state}</span>
                         {report.intervened && <span className="child-report-flag" title="You typed into this child session during the turn; the parent is told what you said">you stepped in</span>}
                       </div>
@@ -1190,6 +1196,7 @@ export function SdkPanel({
           }
           const isOpen = expanded.has(m.id);
           const summary = summarizeTool(m.name, m.input, rel);
+          const child = onOpenSession ? childLinkOfTool(m.name, m.input, m.output) : null;
           return (
             <div key={m.id} className={`msg msg-tool ${isOpen ? 'open' : ''}${bmCls}`} data-anchor={anchor ?? undefined}>
               <div
@@ -1200,6 +1207,7 @@ export function SdkPanel({
                 <span className="tool-name">{m.name}</span>
                 {summary && <span className="tool-summary">{summary}</span>}
                 {m.output === undefined && <span className="tool-pending">…</span>}
+                {child && <button type="button" className="tool-child-open" onClick={(e) => { e.stopPropagation(); onOpenSession!(child.sessionId, child.title); }} title="Open this child session in its own tab">⑂ Open child</button>}
                 <button className="tool-popout-btn" onClick={(e) => { e.stopPropagation(); setToolPopout(m); }} title="Open full details" aria-label="Open full details">⛶</button>
               </div>
               {isOpen && (

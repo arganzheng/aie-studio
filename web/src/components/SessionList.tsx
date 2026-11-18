@@ -293,7 +293,7 @@ export function SessionList({
             <div className="session-row-title">{row?.title ?? opts.title}</div>
           )}
           <div className="session-row-sub">
-            <span className="session-row-status">{status.label}</span>
+            <span className="session-row-status" title={status.tone === 'running' && row?.activity ? `Working — ${row.activity}` : undefined}>{status.label}</span>
             {row?.worktree && <span className="session-row-worktree" title={`Works in its own git worktree: .claude/worktrees/${row.worktree}`}> · ⎇ {row.worktree}</span>}
             {project && <span> · {project}</span>}
           </div>

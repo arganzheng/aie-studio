@@ -23,6 +23,8 @@ export type SessionRow = {
   worktree?: string;
   // The batch label its parent's agent gave it (children opened together).
   group?: string;
+  // Claude (SDK bridge): the tool call its running turn last made.
+  activity?: string;
 };
 
 // Same shape as lib/sessionAlerts.alertKey, so a pending alert marks its row.
@@ -66,7 +68,7 @@ export type SessionTone = 'awaiting' | 'running' | 'unread' | 'idle';
 // outranks "there is a result you haven't looked at".
 export function sessionStatus(r: SessionRow, unread: boolean, now: number): { tone: SessionTone; label: string } {
   if (r.state === 'awaiting') return { tone: 'awaiting', label: 'Needs your input' };
-  if (r.state === 'running') return { tone: 'running', label: 'Running…' };
+  if (r.state === 'running') return { tone: 'running', label: r.activity || 'Running…' };
   if (unread) return { tone: 'unread', label: `Finished · ${timeAgo(r.updatedAt, now)}` };
   return { tone: 'idle', label: timeAgo(r.updatedAt, now) };
 }

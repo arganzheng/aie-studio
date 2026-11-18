@@ -40,6 +40,7 @@ import { runBang, bangContextBlocks, type BangResult, type RunningBang } from '.
 import { publishSessionEvent, type SessionOwner } from './notify.js';
 import { isEffortLevel } from './models.js';
 import { markLive, unmarkLive, liveBridge, type LiveState } from './live-sessions.js';
+import { activityAfter } from './session-tool-activity.js';
 import { registerWireSession, wireBaseUrl } from './observe/wire-proxy.js';
 import { encodeCwd } from './observe/transcript.js';
 
@@ -205,6 +206,8 @@ type SdkEntry = {
   // The last turn ran into the cap: the process answers nothing more until
   // the cap is raised (parent) or lifted (the user writes to it).
   overBudget: boolean;
+  // Model: Session.activity — the tool call the running turn last made.
+  activity: string;
   // Compacting its conversation right now (SDK status event).
   compacting: boolean;
   commands: SlashCommand[];
@@ -510,6 +513,8 @@ function saveOwed(entry: SdkEntry) {
 function onSdkMessage(entry: SdkEntry, m: any) {
   touchActivity(entry);
   applyTaskEvent(entry.tasks, m);
+  const activity = activityAfter(m, entry.cwd);
+  if (activity !== null) entry.activity = activity;
   if (m?.type === 'system' && m?.subtype === 'init') {
     const sid: string | undefined = m.session_id;
     if (sid && entry.sessionId !== sid) {
@@ -591,12 +596,13 @@ async function refreshTitle(entry: SdkEntry) {
     // The name its parent gave a child must survive claude's own AI title,
     // which is written later and would win. A rename by the user (a custom
     // title other than ours) ends that.
+    // The name its parent gave a child — or the user gave it since — must
+    // survive claude's own AI title: claude keeps appending that, and the
+    // newest title record wins. (The SDK reports an AI title as customTitle
+    // too, so a rename by the user cannot be told from one here; the rename
+    // routes tell us instead — userRenamedSdkSession.)
     if (entry.givenTitle) {
-      const custom = info?.customTitle?.trim();
-      if (custom && custom !== entry.givenTitle) entry.givenTitle = '';
-      else if (t !== entry.givenTitle) {
-        try { await renameSession(entry.sessionId, entry.givenTitle, { dir: entry.cwd }); t = entry.givenTitle; } catch {}
-      }
+      try { await renameSession(entry.sessionId, entry.givenTitle, { dir: entry.cwd }); t = entry.givenTitle; } catch {}
     }
     if (t && t !== entry.title) {
       entry.title = t;
@@ -895,6 +901,19 @@ export function sdkLiveState(sessionId: string): LiveState | null {
   if (!entry) return null;
   return entry.pendingAsks.size > 0 ? 'awaiting' : entry.thinking ? 'running' : 'idle';
 }
+// The user renamed a session: for a child still holding the title its parent
+// gave it, that is now the one to keep.
+export function userRenamedSdkSession(sessionId: string, title: string) {
+  const entry = byId.get(sessionId);
+  if (!entry) return;
+  if (entry.givenTitle) entry.givenTitle = title;
+  entry.title = title;
+}
+// More for the session's row: what its running turn is doing.
+export function sdkLiveDetail(sessionId: string): { activity?: string } {
+  const entry = byId.get(sessionId);
+  return entry?.thinking && entry.activity ? { activity: entry.activity } : {};
+}
 // Model: Claude Session.tasks, read by server.ListSubagents.
 export function sdkTasks(sessionId: string): SdkTask[] {
   return [...(byId.get(sessionId)?.tasks.values() ?? [])];
@@ -958,6 +977,7 @@ function newEntry(o: {
     resultSchema: null,
     spentUsd: 0,
     overBudget: false,
+    activity: '',
     compacting: false,
     commands: [],
     agents: [],
@@ -1479,7 +1499,7 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
       if (!project) return reply.code(404).send({ error: 'project not found' });
       const title = String(req.body?.title ?? '').trim();
       if (!title) return reply.code(400).send({ error: 'title required' });
-      try { await renameSession(req.params.sid, title, { dir: project.path }); }
+      try { await renameSession(req.params.sid, title, { dir: project.path }); userRenamedSdkSession(req.params.sid, title); }
       catch (e) { return reply.code(500).send({ error: `rename failed: ${String(e)}` }); }
       const entry = byId.get(req.params.sid);
       if (entry) { entry.title = title; broadcast(entry, { type: 'title', title }); }

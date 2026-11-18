@@ -1093,6 +1093,12 @@ export default function App() {
     }
     // Editor tabs dedupe on path too, independently of file tabs (a file may
     // be open read-only and in the editor at once).
+    // An existing session, asked for by a panel (a child session's card in
+    // its parent's chat): the tab that already has it, or a new one.
+    if (newTab.type === 'claude-sdk' && newTab.resumeId) {
+      openSdkTab(newTab.resumeId, newTab.title);
+      return;
+    }
     if (newTab.type === 'editor') {
       const existing = tabs.find((t) => t.type === 'editor' && t.path === newTab.path);
       if (existing) {
