@@ -40,7 +40,7 @@ import { runBang, bangContextBlocks, type BangResult, type RunningBang } from '.
 import { publishSessionEvent, type SessionOwner } from './notify.js';
 import { isEffortLevel } from './models.js';
 import { markLive, unmarkLive, liveBridge, type LiveState } from './live-sessions.js';
-import { activityAfter } from './session-activity.js';
+import { activityAfter } from './session-tool-activity.js';
 import { registerWireSession, wireBaseUrl } from './observe/wire-proxy.js';
 import { encodeCwd } from './observe/transcript.js';
 

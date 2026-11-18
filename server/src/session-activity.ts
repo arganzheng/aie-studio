@@ -1,43 +1,85 @@
-// Model: Session.activity — what a running session is doing right now, in a
-// few words, for its row in the Sessions tree: the tool call it last made.
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
-const KEYS: Record<string, string[]> = {
-  Bash: ['description', 'command'],
-  Read: ['file_path'], Write: ['file_path'], Edit: ['file_path'], NotebookEdit: ['notebook_path'],
-  Glob: ['pattern'], Grep: ['pattern'],
-  WebFetch: ['url'], WebSearch: ['query'],
-  Task: ['description', 'prompt'], Agent: ['description', 'prompt'],
-  spawn_child_session: ['title'], send_to_child_session: ['message'],
-};
-const ANY = ['description', 'command', 'file_path', 'path', 'pattern', 'query', 'url', 'title', 'prompt'];
-export const MAX_ACTIVITY_CHARS = 80;
+// Model: server.ListAllSessions — a Claude session's "last activity" for the
+// Sessions list is the time of its last conversation message, not the
+// transcript's mtime. Merely resuming a session makes the CLI append
+// bookkeeping records (ai-title, atis-latch, mode, …), which bumped the mtime
+// and moved an untouched session to the top of the list on every open.
 
-export function toolActivity(name: unknown, input: unknown, cwd = ''): string {
-  if (typeof name !== 'string' || !name) return '';
-  // MCP tools are "mcp__<server>__<tool>": the tool is what matters here.
-  const short = name.startsWith('mcp__') ? name.split('__').slice(2).join('__') || name : name;
-  const o = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
-  let detail = '';
-  for (const k of KEYS[short] ?? ANY) {
-    const v = o[k];
-    if (typeof v === 'string' && v.trim()) { detail = v; break; }
+// Records that are the conversation itself; everything else is bookkeeping.
+const MESSAGE_TYPES = new Set(['user', 'assistant']);
+
+// The timestamp (ms) of the last main-thread user / assistant record in a
+// transcript's text, or null if there is none. A torn last line (the CLI is
+// mid-write) is skipped.
+export function lastMessageAt(text: string): number | null {
+  let end = text.length;
+  while (end > 0) {
+    const start = text.lastIndexOf('\n', end - 1) + 1;
+    const line = text.slice(start, end).trim();
+    end = start - 1;
+    if (!line || !line.includes('"timestamp"')) continue;
+    let rec: any;
+    try { rec = JSON.parse(line); } catch { continue; }
+    if (!rec || !MESSAGE_TYPES.has(rec.type) || rec.isSidechain === true) continue;
+    const ts = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : NaN;
+    if (Number.isFinite(ts)) return ts;
   }
-  // Paths inside the session's directory read better relative to it (macOS
-  // reports /tmp as /private/tmp).
-  if (cwd) for (const root of [cwd, `/private${cwd}`]) if (detail.startsWith(`${root}/`)) { detail = detail.slice(root.length + 1); break; }
-  detail = detail.replace(/\s+/g, ' ').trim();
-  const text = detail ? `${short}: ${detail}` : short;
-  return text.length > MAX_ACTIVITY_CHARS ? `${text.slice(0, MAX_ACTIVITY_CHARS - 1)}…` : text;
+  return null;
 }
 
-// The activity an SDK message leaves the session in: its last top-level tool
-// call. Null = this message says nothing about it.
-export function activityAfter(m: any, cwd = ''): string | null {
-  if (m?.type === 'result') return '';
-  if (m?.type !== 'assistant' || m.parent_tool_use_id) return null;
-  const blocks = Array.isArray(m.message?.content) ? m.message.content : [];
-  const tools = blocks.filter((b: any) => b?.type === 'tool_use');
-  if (tools.length === 0) return null;
-  const last = tools[tools.length - 1];
-  return toolActivity(last.name, last.input, cwd);
+function configDir(): string {
+  return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+}
+
+// Same encoding as subagents.encodeProjectDir.
+function encodeProjectDir(cwd: string): string {
+  return cwd.replace(/[^A-Za-z0-9]/g, '-');
+}
+
+type Cached = { mtimeMs: number; size: number; at: number | null };
+const cache = new Map<string, Cached>();
+const MAX_CACHE = 5000;
+
+const FIRST_CHUNK = 64 * 1024;
+
+// Read the file's tail, growing the window until a message turns up or the
+// whole file has been read (a huge last record, e.g. a pasted image).
+async function scanTail(file: string, size: number): Promise<number | null> {
+  const fh = await fs.open(file, 'r');
+  try {
+    let len = Math.min(size, FIRST_CHUNK);
+    for (;;) {
+      const buf = Buffer.alloc(len);
+      await fh.read(buf, 0, len, size - len);
+      let text = buf.toString('utf8');
+      // Drop the (probably partial) first line unless we read from the start.
+      if (len < size) text = text.slice(text.indexOf('\n') + 1);
+      const at = lastMessageAt(text);
+      if (at !== null || len === size) return at;
+      len = Math.min(size, len * 4);
+    }
+  } finally {
+    await fh.close();
+  }
+}
+
+// Last-message time of a Claude session, or `fallback` (the transcript's
+// mtime) when the transcript can't be read or holds no message yet.
+export async function claudeLastActivity(cwd: string, sessionId: string, fallback: number): Promise<number> {
+  const real = await fs.realpath(cwd).catch(() => cwd);
+  for (const c of new Set([real, cwd])) {
+    const file = path.join(configDir(), 'projects', encodeProjectDir(c), `${sessionId}.jsonl`);
+    const st = await fs.stat(file).catch(() => null);
+    if (!st?.isFile()) continue;
+    const hit = cache.get(file);
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.at ?? fallback;
+    const at = await scanTail(file, st.size).catch(() => null);
+    if (cache.size >= MAX_CACHE) cache.clear();
+    cache.set(file, { mtimeMs: st.mtimeMs, size: st.size, at });
+    return at ?? fallback;
+  }
+  return fallback;
 }

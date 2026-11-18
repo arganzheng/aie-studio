@@ -7,6 +7,7 @@ import { liveBridge, type LiveState } from './live-sessions.js';
 import { cliLiveState, stopCliSession } from './session.js';
 import { sdkLiveDetail, sdkLiveState, stopSdkSession, userRenamedSdkSession } from './sdk-session.js';
 import { countSubagents } from './subagents.js';
+import { claudeLastActivity } from './session-activity.js';
 import { devinLiveState, listDevinSessionsInDb, stopDevinSession } from './devin.js';
 
 // Model: server.ListAllSessions — one list of every AI session, Claude and
@@ -100,7 +101,8 @@ async function claudeRows(project: Project): Promise<Omit<SessionRow, 'archived'
       sessionId: s.sessionId,
       projectId: project.id,
       title: s.summary?.trim() || s.sessionId.slice(0, 8),
-      updatedAt: s.lastModified,
+      // The last message, not the file's mtime: resuming appends bookkeeping records.
+      updatedAt: await claudeLastActivity(s.cwd || project.path, s.sessionId, s.lastModified),
       live,
       state: live === 'sdk' ? sdkLiveState(s.sessionId) : live === 'cli' ? cliLiveState(s.sessionId) : null,
       subagents: await countSubagents(s.cwd || project.path, s.sessionId),
