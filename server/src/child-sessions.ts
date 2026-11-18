@@ -8,10 +8,26 @@
 // send_to_child_session, and gets each answer back as a message in its own
 // conversation — it never polls.
 
+// Defaults, and how far Settings may move them.
 // Nesting: a session → child → grandchild, no deeper.
 export const MAX_CHILD_DEPTH = 2;
 // Children of one parent working at the same time.
-export const MAX_RUNNING_CHILDREN = 6;
+export const MAX_RUNNING_CHILDREN = 10;
+export const CHILD_DEPTH_RANGE = [1, 4] as const;
+export const RUNNING_CHILDREN_RANGE = [1, 30] as const;
+
+export type ChildLimits = { maxDepth: number; maxRunning: number };
+
+// The limits in force: Settings.childMaxDepth / childMaxRunning when they are
+// whole numbers in range, the defaults otherwise.
+export function childLimits(settings: { childMaxDepth?: unknown; childMaxRunning?: unknown } | null | undefined): ChildLimits {
+  const pick = (raw: unknown, [lo, hi]: readonly [number, number], fallback: number) =>
+    typeof raw === 'number' && Number.isInteger(raw) && raw >= lo && raw <= hi ? raw : fallback;
+  return {
+    maxDepth: pick(settings?.childMaxDepth, CHILD_DEPTH_RANGE, MAX_CHILD_DEPTH),
+    maxRunning: pick(settings?.childMaxRunning, RUNNING_CHILDREN_RANGE, MAX_RUNNING_CHILDREN),
+  };
+}
 // A child's report is cut to this much of its final answer.
 export const MAX_REPORT_CHARS = 20_000;
 
@@ -48,9 +64,9 @@ export function childIdsOf(parents: Readonly<Record<string, string>>, sessionId:
 }
 
 // Why a spawn is refused, or null when it may go ahead.
-export function spawnRefusal(opts: { depth: number; runningChildren: number }): string | null {
-  if (opts.depth >= MAX_CHILD_DEPTH) return `Child sessions can be nested at most ${MAX_CHILD_DEPTH} levels deep; this session is already at level ${opts.depth}. Do the work here or use the Agent tool.`;
-  if (opts.runningChildren >= MAX_RUNNING_CHILDREN) return `${opts.runningChildren} child sessions of this session are still working (limit ${MAX_RUNNING_CHILDREN}). Wait for one to report back before opening another.`;
+export function spawnRefusal(opts: { depth: number; runningChildren: number }, limits: ChildLimits = childLimits(null)): string | null {
+  if (opts.depth >= limits.maxDepth) return `Child sessions can be nested at most ${limits.maxDepth} level${limits.maxDepth === 1 ? '' : 's'} deep; this session is already at level ${opts.depth}. Do the work here or use the Agent tool.`;
+  if (opts.runningChildren >= limits.maxRunning) return `${opts.runningChildren} child sessions of this session are still working (limit ${limits.maxRunning}). Wait for one to report back before opening another.`;
   return null;
 }
 

@@ -1,6 +1,6 @@
 import { normalizeChildTerms } from '../store.js';
 import { describe, it, expect } from 'vitest';
-import { lastModelOf, childIdsOf, childReport, cleanResultSchema, cleanChildTitle, cleanGroup, joinReports, splitReports, isTurnResult, MAX_CHILD_DEPTH, MAX_NOTE_CHARS, MAX_REPORT_CHARS, MAX_RUNNING_CHILDREN, parseChildReport, sessionDepth, spawnRefusal } from '../child-sessions.js';
+import { childLimits, lastModelOf, childIdsOf, childReport, cleanResultSchema, cleanChildTitle, cleanGroup, joinReports, splitReports, isTurnResult, MAX_CHILD_DEPTH, MAX_NOTE_CHARS, MAX_REPORT_CHARS, MAX_RUNNING_CHILDREN, parseChildReport, sessionDepth, spawnRefusal } from '../child-sessions.js';
 
 const parents = { 'claude:c1': 'p', 'claude:c2': 'p', 'claude:g1': 'c1', 'devin:d': 'p' };
 
@@ -155,5 +155,24 @@ describe('lastModelOf', () => {
   it('is null for a session that never answered', () => {
     expect(lastModelOf([])).toBeNull();
     expect(lastModelOf([{ type: 'user', message: {} }, null])).toBeNull();
+  });
+});
+
+describe('child limits from Settings', () => {
+  it('defaults to 10 at once, 2 levels deep', () => {
+    expect(childLimits(null)).toEqual({ maxDepth: 2, maxRunning: 10 });
+    expect(childLimits({})).toEqual({ maxDepth: 2, maxRunning: 10 });
+  });
+  it('takes whole numbers in range and ignores the rest', () => {
+    expect(childLimits({ childMaxDepth: 3, childMaxRunning: 20 })).toEqual({ maxDepth: 3, maxRunning: 20 });
+    expect(childLimits({ childMaxDepth: 0, childMaxRunning: 31 })).toEqual({ maxDepth: 2, maxRunning: 10 });
+    expect(childLimits({ childMaxDepth: 2.5, childMaxRunning: '8' })).toEqual({ maxDepth: 2, maxRunning: 10 });
+  });
+  it('decides a spawn by the limits given', () => {
+    expect(spawnRefusal({ depth: 0, runningChildren: 9 })).toBeNull();
+    expect(spawnRefusal({ depth: 0, runningChildren: 10 })).toMatch(/limit 10/);
+    expect(spawnRefusal({ depth: 0, runningChildren: 10 }, { maxDepth: 2, maxRunning: 20 })).toBeNull();
+    expect(spawnRefusal({ depth: 2, runningChildren: 0 }, { maxDepth: 3, maxRunning: 10 })).toBeNull();
+    expect(spawnRefusal({ depth: 1, runningChildren: 0 }, { maxDepth: 1, maxRunning: 10 })).toMatch(/at most 1 level/);
   });
 });

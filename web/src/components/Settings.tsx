@@ -466,13 +466,38 @@ export function Settings({
                 text="Show the Review panel (bookmark messages; comment on AI output and send in batches)"
                 hint="Select text in a session (or 💬 a message) to comment; comments collect in batches you send to the AI when ready. Right-hand column on desktop, right drawer on mobile. Existing batches are kept while off."
               />
-              <Toggle
-                label="Child sessions"
-                checked={settings.childSessionTools ?? true}
-                onChange={(v) => commit({ ...settings, childSessionTools: v })}
-                text="Let Claude open child sessions"
-                hint="Claude (Agent SDK) sessions get tools to open a child session for a larger piece of work, message it, and receive its answer. Children appear under their parent in Sessions and you can talk to them directly. Applies to sessions started after the change; each child is a full session and uses quota like one."
-              />
+              {/* One group: the switch, and the two limits that only mean
+                  something while it is on. */}
+              <div className="settings-section">
+                <div className="settings-label">Child sessions</div>
+                <label className="settings-option">
+                  <input type="checkbox" checked={settings.childSessionTools ?? true} onChange={(e) => commit({ ...settings, childSessionTools: e.target.checked })} />
+                  <div className="settings-option-text">
+                    <div>Let Claude open child sessions</div>
+                    <div className="settings-option-hint">Claude (Agent SDK) sessions get tools to open a child session for a larger piece of work, message it, and receive its answer. Children appear under their parent in Sessions and you can talk to them directly. Applies to sessions started after the change; each child is a full session and uses quota like one.</div>
+                  </div>
+                </label>
+                {(settings.childSessionTools ?? true) && (
+                  <div className="settings-sub">
+                    <label className="settings-sub-row">
+                      <span className="settings-sub-label">Working at once</span>
+                      <select className="settings-select" id="settings-child-max-running" value={String(settings.childMaxRunning ?? 10)} onChange={(e) => commit({ ...settings, childMaxRunning: Number(e.target.value) })}>
+                        {[2, 4, 6, 10, 15, 20, 30].map((n) => <option key={n} value={n}>{n === 10 ? '10 (default)' : n}</option>)}
+                      </select>
+                    </label>
+                    <label className="settings-sub-row">
+                      <span className="settings-sub-label">Nesting</span>
+                      <select className="settings-select" id="settings-child-max-depth" value={String(settings.childMaxDepth ?? 2)} onChange={(e) => commit({ ...settings, childMaxDepth: Number(e.target.value) })}>
+                        <option value="1">1 level</option>
+                        <option value="2">2 levels (default)</option>
+                        <option value="3">3 levels</option>
+                        <option value="4">4 levels</option>
+                      </select>
+                    </label>
+                    <div className="settings-option-hint">How many child sessions of one session may work at the same time, and how deep they may nest (1 level = children only; 2 = a child may open children of its own). Claude is told to wait, or to do the work itself, when it asks for more. Both take effect at once.</div>
+                  </div>
+                )}
+              </div>
               <Toggle
                 label="Rich copy"
                 checked={settings.richCopy ?? false}
