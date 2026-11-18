@@ -9,6 +9,7 @@ import type { WebSocket } from '@fastify/websocket';
 import { getProject, getSettings } from './store.js';
 import { getUserId } from './auth.js';
 import { publishSessionEvent, type SessionOwner } from './notify.js';
+import { askSummary, toSummary } from './inbox.js';
 import { registerWireSession, wireBaseUrl } from './observe/wire-proxy.js';
 import { isEffortLevel } from './models.js';
 import { markLive, unmarkLive, liveBridge, type LiveState } from './live-sessions.js';
@@ -345,7 +346,7 @@ function handleControlRequest(entry: SessionEntry, event: any) {
   entry.pendingToolRequests.set(rid, { event, timer: null });
   if (entry.clients.size === 0) armIdleToolRequests(entry);
   broadcast(entry, { type: 'event', data: event });
-  publishSessionEvent(entry.owner, 'awaiting', entry.resumeId, entry.title);
+  publishSessionEvent(entry.owner, 'awaiting', entry.resumeId, entry.title, askSummary(r.input));
 }
 
 // Replay still-pending requests to a client that just got `started`.
@@ -568,7 +569,7 @@ function wireProcess(entry: SessionEntry) {
       scheduleTitleRefresh(entry);
       // Task finished. If nobody's listening, start the kill timer now.
       if (entry.clients.size === 0) scheduleKillIfIdle(entry);
-      if (entry.pendingToolRequests.size === 0) publishSessionEvent(entry.owner, 'done', entry.resumeId, entry.title);
+      if (entry.pendingToolRequests.size === 0) publishSessionEvent(entry.owner, 'done', entry.resumeId, entry.title, toSummary(event.result));
     }
     // Any prompt claude has started on is in the JSONL by the time it emits
     // assistant output; `result` catches the tail end (rule-229).

@@ -11,6 +11,8 @@ import { alertHeadline, alertKey, alertSessionTitle, dropSeen, isViewing, titleW
 import { playChime, showSystemNotification } from './lib/sessionAlertEffects';
 import { useSessionEvents } from './useSessionEvents';
 import { SessionAlerts } from './components/SessionAlerts';
+import { InboxButton, InboxPanel } from './components/InboxPanel';
+import { EMPTY_INBOX, INBOX_PAGE, markLocallyRead, removeLocally, unreadForSessions, viewedUnread, type InboxItem, type InboxState } from './lib/inbox';
 import { SessionList } from './components/SessionList';
 import { sessionRowKey, type SessionRow } from './lib/sessionList';
 import { ProjectPicker } from './components/ProjectPicker';
@@ -44,6 +46,7 @@ import {
   createWorktree,
   forkChildSession,
 } from './api';
+import { deleteNotifications, listNotifications, markNotificationsRead } from './api';
 import { rewriteMovedPath } from './lib/movedPath';
 import type { Project, Tab, Batch, Comment, TabRef, Workspace, ProjectWorkspace, Settings, LocalPrefs, ClaudeBridge } from './types';
 import { tabRef, sameTabRef } from './types';
@@ -314,6 +317,61 @@ export default function App() {
   // Model: web.SessionList — bumped to make the Sessions view refetch now.
   const [sessionListSignal, setSessionListSignal] = useState(0);
   const unreadSessionKeys = useMemo(() => new Set(alerts.map(alertKey)), [alerts]);
+  // Model: web.Inbox — the notification history; the column is closed until
+  // the inbox button opens it.
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const closeInbox = useCallback(() => setInboxOpen(false), []);
+  const [inbox, setInbox] = useState<InboxState>(EMPTY_INBOX);
+  const [inboxLoading, setInboxLoading] = useState(false);
+  const inboxSeq = useRef(0);
+  const inboxCount = useRef(0);
+  inboxCount.current = inbox.items.length;
+  // Re-read the newest page (as many rows as are loaded, so "Load older"
+  // results don't vanish). A newer call wins over a slower older one.
+  const refreshInbox = useCallback(async () => {
+    const seq = ++inboxSeq.current;
+    const limit = Math.min(200, Math.max(INBOX_PAGE, inboxCount.current));
+    try {
+      const r = await listNotifications({ limit });
+      if (seq !== inboxSeq.current) return;
+      setInbox({ items: r.items, unread: r.unread, hasMore: r.items.length >= limit });
+    } catch {}
+  }, []);
+  const loadOlderInbox = useCallback(async () => {
+    const last = inbox.items[inbox.items.length - 1];
+    if (!last) return;
+    const seq = ++inboxSeq.current;
+    setInboxLoading(true);
+    try {
+      const r = await listNotifications({ before: last.at, limit: INBOX_PAGE });
+      if (seq !== inboxSeq.current) return;
+      setInbox((s) => ({ items: [...s.items, ...r.items.filter((i) => !s.items.some((x) => x.id === i.id))], unread: r.unread, hasMore: r.items.length >= INBOX_PAGE }));
+    } catch {} finally { setInboxLoading(false); }
+  }, [inbox.items]);
+  const markInboxRead = useCallback((ids: string[] | 'all') => {
+    if (ids !== 'all' && ids.length === 0) return;
+    setInbox((s) => markLocallyRead(s, ids === 'all' ? 'all' : new Set(ids), Date.now()));
+    void markNotificationsRead(ids === 'all' ? { all: true } : { ids }).catch(() => { void refreshInbox(); });
+  }, [refreshInbox]);
+  // Model: web.Inbox — dismissing a pop-up card (× or Clear all) counts as
+  // seeing it. Marked by session on the server too, in case the row isn't in
+  // the loaded page.
+  const markInboxSessionsRead = useCallback((events: readonly SessionEvent[]) => {
+    const withSession = events.filter((e) => e.sessionId);
+    if (withSession.length === 0) return;
+    const ids = new Set(unreadForSessions(inbox.items, withSession).map((i) => i.id));
+    if (ids.size > 0) setInbox((s) => markLocallyRead(s, ids, Date.now()));
+    void markNotificationsRead({ sessions: withSession.map((e) => ({ projectId: e.projectId, tabType: e.tabType, sessionId: e.sessionId! })) })
+      .catch(() => { void refreshInbox(); });
+  }, [inbox.items, refreshInbox]);
+  const removeInboxItem = useCallback((item: InboxItem) => {
+    setInbox((s) => removeLocally(s, item.id));
+    void deleteNotifications({ ids: [item.id] }).catch(() => { void refreshInbox(); });
+  }, [refreshInbox]);
+  const clearInbox = useCallback(() => {
+    setInbox(EMPTY_INBOX);
+    void deleteNotifications({ all: true }).catch(() => { void refreshInbox(); });
+  }, [refreshInbox]);
   const appToastTimer = useRef<number | null>(null);
   const showAppToast = useCallback((text: string) => {
     setAppToast(text);
@@ -788,6 +846,8 @@ export default function App() {
   const onSessionEvent = useCallback((e: SessionEvent) => {
     // Model: web.SessionList — any session event means the list is stale.
     setSessionListSignal((n) => n + 1);
+    // Model: web.Inbox — the server has stored it; fetch the new row.
+    void refreshInbox();
     const view = viewStateRef.current();
     if (isViewing(e, view)) return;
     setAlerts((prev) => upsertAlert(prev, e));
@@ -801,7 +861,21 @@ export default function App() {
       );
     }
   }, []);
-  useSessionEvents(!!authState && (!authState.required || authState.authenticated) && (settings.notify ?? true), onSessionEvent);
+  const signedIn = !!authState && (!authState.required || authState.authenticated);
+  useSessionEvents(signedIn && (settings.notify ?? true), onSessionEvent, refreshInbox);
+  useEffect(() => { if (signedIn) void refreshInbox(); }, [signedIn, refreshInbox]);
+  // Model: web.Inbox — looking at a session marks its notification read, the
+  // same moment its pop-up card goes away.
+  useEffect(() => {
+    const sweep = () => markInboxRead(viewedUnread(inbox.items, viewStateRef.current()).map((i) => i.id));
+    sweep();
+    window.addEventListener('focus', sweep);
+    document.addEventListener('visibilitychange', sweep);
+    return () => {
+      window.removeEventListener('focus', sweep);
+      document.removeEventListener('visibilitychange', sweep);
+    };
+  }, [activeProjectId, activeTab, inbox.items, markInboxRead]);
   // Going to a session on your own clears its alert; so does coming back to
   // the page while it is the one on screen.
   useEffect(() => {
@@ -1529,6 +1603,13 @@ export default function App() {
     if (ref) openTabRef(ref, title);
   }
   openSessionAlertRef.current = openSessionAlert;
+  // Model: web.Inbox — a clicked row: mark it read and go to its session. On
+  // a phone the column and the drawer close so the session is what you see.
+  function openInboxItem(item: InboxItem) {
+    markInboxRead([item.id]);
+    if (window.matchMedia('(max-width: 768px)').matches) { setInboxOpen(false); setDrawerOpen(false); }
+    openSessionAlert(item);
+  }
   useEffect(() => {
     const p = pendingAlertOpenRef.current;
     if (!p || p.projectId !== activeProjectId) return;
@@ -1762,6 +1843,7 @@ export default function App() {
                   {v === 'sessions' && alerts.length > 0 && <span className="sidebar-views-badge">{alerts.length}</span>}
                 </button>
               ))}
+              <InboxButton unread={inbox.unread} open={inboxOpen} onToggle={() => setInboxOpen((o) => !o)} />
             </div>
           )}
           <div className="panel-body">
@@ -2014,14 +2096,29 @@ export default function App() {
       </div>
       )}
 
+      {inboxOpen && (
+        <InboxPanel
+          rows={inbox.items.map((item) => { const d = describeAlert(item); return { item, title: d.title, project: d.project }; })}
+          unread={inbox.unread}
+          hasMore={inbox.hasMore}
+          loading={inboxLoading}
+          onOpen={openInboxItem}
+          onMarkRead={(item) => markInboxRead([item.id])}
+          onMarkAllRead={() => markInboxRead('all')}
+          onRemove={removeInboxItem}
+          onClearAll={clearInbox}
+          onLoadMore={() => void loadOlderInbox()}
+          onClose={closeInbox}
+        />
+      )}
       {appToast && <div className="app-toast">{appToast}</div>}
       {/* Hidden under the open phone drawer: the cards would cover the
           Sessions list, which shows the same states itself. */}
       <SessionAlerts
         alerts={drawerOpen ? [] : alerts.map(describeAlert)}
         onOpen={openSessionAlert}
-        onDismiss={(e) => setAlerts((prev) => prev.filter((a) => a.id !== e.id))}
-        onClear={() => setAlerts([])}
+        onDismiss={(e) => { setAlerts((prev) => prev.filter((a) => a.id !== e.id)); markInboxSessionsRead([e]); }}
+        onClear={() => { markInboxSessionsRead(alerts); setAlerts([]); }}
       />
 
       {settingsOpen && (

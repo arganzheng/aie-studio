@@ -38,6 +38,7 @@ import {
 import { getUserId } from './auth.js';
 import { runBang, bangContextBlocks, type BangResult, type RunningBang } from './shell-exec.js';
 import { publishSessionEvent, type SessionOwner } from './notify.js';
+import { askSummary, toSummary } from './inbox.js';
 import { isEffortLevel } from './models.js';
 import { markLive, unmarkLive, liveBridge, type LiveState } from './live-sessions.js';
 import { activityAfter } from './session-tool-activity.js';
@@ -307,7 +308,7 @@ function makeCanUseTool(entry: SdkEntry): CanUseTool {
         }
       });
       broadcast(entry, { type: 'ask', data: askEvent(id, ask) });
-      publishSessionEvent(entry.owner, 'awaiting', entry.sessionId, entry.title);
+      publishSessionEvent(entry.owner, 'awaiting', entry.sessionId, entry.title, askSummary(input));
     });
   };
 }
@@ -543,7 +544,7 @@ function onSdkMessage(entry: SdkEntry, m: any) {
     refreshContext(entry);
     scheduleTitleRefresh(entry);
     if (entry.clients.size === 0) scheduleKillIfIdle(entry);
-    if (entry.pendingAsks.size === 0) publishSessionEvent(entry.owner, 'done', entry.sessionId, entry.title);
+    if (entry.pendingAsks.size === 0) publishSessionEvent(entry.owner, 'done', entry.sessionId, entry.title, toSummary(m.result));
   }
   broadcast(entry, { type: 'message', data: m });
 }

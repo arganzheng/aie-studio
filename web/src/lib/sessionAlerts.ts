@@ -13,6 +13,8 @@ export type SessionEvent = {
   projectId: string;
   sessionId: string | null;
   title: string | null;
+  // One line: the start of the agent's last reply, or its question.
+  summary?: string | null;
   at: number;
 };
 

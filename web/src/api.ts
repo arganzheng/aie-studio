@@ -1,6 +1,7 @@
 import type { Project, Workspace, ProjectWorkspace, ResumableSession, ResumableSdkSession, ResumableDevinSession, Settings } from './types';
 import type { SessionRow } from './lib/sessionList';
 import type { ObservationResponse, WireRecord } from './lib/observe';
+import type { InboxItem } from './lib/inbox';
 
 export type AuthStatus = {
   required: boolean;
@@ -667,4 +668,19 @@ export async function forkChildSession(projectId: string, sessionId: string): Pr
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
   return j;
+}
+
+// Model: server.Inbox — the notification history.
+export async function listNotifications(opts: { unread?: boolean; before?: number; limit?: number } = {}): Promise<{ items: InboxItem[]; unread: number }> {
+  const q = new URLSearchParams();
+  if (opts.unread) q.set('unread', '1');
+  if (opts.before !== undefined) q.set('before', String(opts.before));
+  if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+  return jsonOrThrow(await fetch(`/api/notifications?${q}`, { credentials: 'include' }));
+}
+export async function markNotificationsRead(target: { ids?: string[]; sessions?: Array<{ projectId: string; tabType: string; sessionId: string }>; all?: boolean }): Promise<void> {
+  await jsonOrThrow(await fetch('/api/notifications/read', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(target) }));
+}
+export async function deleteNotifications(target: { ids?: string[]; all?: boolean }): Promise<void> {
+  await jsonOrThrow(await fetch('/api/notifications/delete', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(target) }));
 }

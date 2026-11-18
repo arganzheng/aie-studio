@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from '@fastify/websocket';
 import { randomUUID } from 'node:crypto';
 import { getUserId } from './auth.js';
+import { inbox, sessionKey } from './inbox.js';
 
 // Model: server.SessionEvents — tells a user's open pages that one of their
 // AI sessions finished a turn or is waiting on them, whichever project / tab
@@ -29,6 +30,9 @@ export type SessionEvent = {
   // Null only for a brand-new session that hasn't reported its id yet.
   sessionId: string | null;
   title: string | null;
+  // One line of what happened: the start of the agent's last reply, or the
+  // question it is waiting on. Null when there was nothing to quote.
+  summary?: string | null;
   at: number;
 };
 
@@ -62,6 +66,7 @@ export function publishSessionEvent(
   kind: SessionEventKind,
   sessionId: string | null,
   title: string | null,
+  summary: string | null = null,
 ): void {
   const now = Date.now();
   const event: SessionEvent = {
@@ -71,13 +76,70 @@ export function publishSessionEvent(
     projectId: owner.projectId,
     sessionId,
     title,
+    summary,
     at: now,
   };
   backlogs.set(owner.uid, pushBacklog(backlogs.get(owner.uid) ?? [], event, now));
+  try { inbox()?.add(owner.uid, event); } catch (e) { console.error('[inbox] add failed:', e); }
   for (const socket of subscribers.get(owner.uid) ?? []) send(socket, { type: 'session', event });
 }
 
+// Model: web.Inbox — another page changed read state; refetch.
+function publishInboxChanged(uid: string) {
+  for (const socket of subscribers.get(uid) ?? []) send(socket, { type: 'inbox' });
+}
+
+type MarkReadBody = { ids?: string[]; sessions?: Array<{ projectId: string; tabType: SessionTabType; sessionId: string }>; all?: boolean };
+
+function strings(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, 500) : [];
+}
+
 export function registerNotifyRoutes(app: FastifyInstance) {
+  // Model: server.Inbox — the notification history.
+  app.get<{ Querystring: { unread?: string; before?: string; limit?: string } }>('/api/notifications', async (req, reply) => {
+    const uid = getUserId(req);
+    if (!uid) return reply.code(401).send({ error: 'unauthorized' });
+    const store = inbox();
+    if (!store) return { items: [], unread: 0 };
+    const before = req.query.before ? Number(req.query.before) : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    return {
+      items: store.list(uid, {
+        unreadOnly: req.query.unread === '1',
+        before: Number.isFinite(before) ? before : undefined,
+        limit: Number.isFinite(limit) ? limit : undefined,
+      }),
+      unread: store.unreadCount(uid),
+    };
+  });
+
+  app.post<{ Body: MarkReadBody }>('/api/notifications/read', async (req, reply) => {
+    const uid = getUserId(req);
+    if (!uid) return reply.code(401).send({ error: 'unauthorized' });
+    const store = inbox();
+    if (!store) return { changed: 0 };
+    const body = req.body ?? {};
+    const sessions = (Array.isArray(body.sessions) ? body.sessions : [])
+      .filter((s) => s && typeof s.projectId === 'string' && typeof s.sessionId === 'string')
+      .slice(0, 500)
+      .map((s) => sessionKey({ projectId: s.projectId, tabType: s.tabType, sessionId: s.sessionId, id: '' }));
+    const changed = store.markRead(uid, { ids: strings(body.ids), sessions, all: body.all === true }, Date.now());
+    if (changed > 0) publishInboxChanged(uid);
+    return { changed };
+  });
+
+  app.post<{ Body: { ids?: string[]; all?: boolean } }>('/api/notifications/delete', async (req, reply) => {
+    const uid = getUserId(req);
+    if (!uid) return reply.code(401).send({ error: 'unauthorized' });
+    const store = inbox();
+    if (!store) return { changed: 0 };
+    const body = req.body ?? {};
+    const changed = body.all === true ? store.clear(uid) : store.remove(uid, strings(body.ids));
+    if (changed > 0) publishInboxChanged(uid);
+    return { changed };
+  });
+
   app.get<{ Querystring: { since?: string } }>('/ws/events', { websocket: true }, (socket, req) => {
     const uid = getUserId(req as any);
     if (!uid) {

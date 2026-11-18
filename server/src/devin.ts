@@ -10,6 +10,7 @@ import type { WebSocket } from '@fastify/websocket';
 import { getProject } from './store.js';
 import { getUserId } from './auth.js';
 import { publishSessionEvent, type SessionOwner } from './notify.js';
+import { toSummary } from './inbox.js';
 import type { LiveState } from './live-sessions.js';
 import { resolveDevinBinForUser } from './devin-versions.js';
 
@@ -64,6 +65,9 @@ type DevinSessionEntry = {
   // The one `_cognition.ai/revert/execute` RPC we're waiting on (rule-364),
   // with the edited prompt to write once the agent confirms.
   pendingRevert: { id: number; stepId: string; text: string; images: WireImage[] } | null;
+  // Model: server.Inbox — the agent's reply text since the last prompt, for
+  // the notification summary. Reset each time a prompt is written.
+  lastReply: string;
   killTimer?: NodeJS.Timeout;
 };
 
@@ -259,6 +263,7 @@ function writeUserPrompt(
   }
 
   entry.inflightPrompts++;
+  entry.lastReply = '';
   writeRpc(entry, {
     jsonrpc: '2.0',
     id: nextRpcId(entry),
@@ -469,8 +474,16 @@ function forwardAgentRequest(
   if (!idleOnly) armPendingAgentRpc(entry, rpcId, pending, PERMISSION_TIMEOUT_MS);
   else if (entry.clients.size === 0) armPendingAgentRpc(entry, rpcId, pending, ELICITATION_IDLE_TIMEOUT_MS);
   broadcast(entry, { type: 'acp', data: msg });
-  // Devin keeps no title here; the page falls back to the tab's.
-  publishSessionEvent(entry.owner, 'awaiting', entry.sessionId, null);
+  const p = msg?.params;
+  const summary = toSummary(p?.message ?? p?.toolCall?.title);
+  publishSessionEvent(entry.owner, 'awaiting', entry.sessionId, devinTitle(entry), summary);
+}
+
+// The session's title from Devin's own store, for notifications (the entry
+// keeps none). Null before Devin has named it.
+function devinTitle(entry: DevinSessionEntry): string | null {
+  if (!entry.sessionId) return null;
+  return readSessionFromDb(entry.sessionId, entry.cwd)?.title ?? null;
 }
 
 function attachClientHandlers(entry: DevinSessionEntry, socket: WebSocket) {
@@ -584,6 +597,11 @@ function wireProcess(entry: DevinSessionEntry, onInit: (sessionIdNow: string | n
     if (update?.sessionUpdate === 'config_option_update' && Array.isArray(update.configOptions)) {
       entry.configOptions = update.configOptions;
     }
+    if (update?.sessionUpdate === 'agent_message_chunk' && typeof update.content?.text === 'string') {
+      if (entry.lastReply.length < 4000) entry.lastReply += update.content.text;
+    }
+    // Text before a tool call is narration; the summary wants the final message.
+    if (update?.sessionUpdate === 'tool_call') entry.lastReply = '';
     if (update?.sessionUpdate === 'available_commands_update' && Array.isArray(update.availableCommands)) {
       entry.availableCommands = update.availableCommands;
     }
@@ -657,7 +675,7 @@ function wireProcess(entry: DevinSessionEntry, onInit: (sessionIdNow: string | n
       if (entry.inflightPrompts === 0 && entry.clients.size === 0) scheduleKillIfIdle(entry);
       // A turn the user cancelled is not news to them.
       if (entry.inflightPrompts === 0 && entry.pendingAgentRpcs.size === 0 && msg.result.stopReason !== 'cancelled') {
-        publishSessionEvent(entry.owner, 'done', entry.sessionId, null);
+        publishSessionEvent(entry.owner, 'done', entry.sessionId, devinTitle(entry), toSummary(entry.lastReply));
       }
       return;
     }
@@ -1208,6 +1226,7 @@ export function registerDevinRoutes(app: FastifyInstance) {
         pendingAgentRpcs: new Map(),
         revertSteps: null,
         pendingRevert: null,
+        lastReply: '',
       };
       // Pre-register so a near-simultaneous second ws with the same resumeId
       // attaches instead of spawning a duplicate.
