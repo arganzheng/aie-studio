@@ -1,5 +1,6 @@
+import { normalizeChildTerms } from '../store.js';
 import { describe, it, expect } from 'vitest';
-import { childIdsOf, childReport, cleanChildTitle, cleanGroup, joinReports, splitReports, isTurnResult, MAX_CHILD_DEPTH, MAX_NOTE_CHARS, MAX_REPORT_CHARS, MAX_RUNNING_CHILDREN, parseChildReport, sessionDepth, spawnRefusal } from '../child-sessions.js';
+import { childIdsOf, childReport, cleanBudget, cleanResultSchema, usd, cleanChildTitle, cleanGroup, joinReports, splitReports, isTurnResult, MAX_CHILD_DEPTH, MAX_NOTE_CHARS, MAX_REPORT_CHARS, MAX_RUNNING_CHILDREN, parseChildReport, sessionDepth, spawnRefusal } from '../child-sessions.js';
 
 const parents = { 'claude:c1': 'p', 'claude:c2': 'p', 'claude:g1': 'c1', 'devin:d': 'p' };
 
@@ -113,5 +114,45 @@ describe('child reports', () => {
     expect(cleanChildTitle('  Draft\n tests  ')).toBe('Draft tests');
     expect(cleanChildTitle('   ')).toBe('Child session');
     expect(cleanChildTitle('x'.repeat(200))).toHaveLength(80);
+  });
+});
+
+describe('budget and structured results', () => {
+  it('reports a child that used up its budget, with how to let it go on', () => {
+    const text = childReport({ title: 'T', sessionId: 's1', ok: false, result: '', errorKind: 'error_max_budget_usd', budgetUsd: 0.5 });
+    expect(text).toContain('stopped with an error (its budget of $0.5 is used up)]');
+    expect(text).toContain('add_budget_usd');
+    expect(parseChildReport(text)).toMatchObject({ ok: false, sessionId: 's1' });
+  });
+  it('carries a structured result as JSON in place of the prose', () => {
+    const text = childReport({ title: 'T', sessionId: 's1', ok: true, result: '{"verdict":"fail"}', structured: { verdict: 'fail', issues: ['a'] } });
+    expect(text).toContain('Structured result (matches the schema you gave):');
+    expect(text).toContain('```json\n{\n  "verdict": "fail",');
+    expect(parseChildReport(text)?.ok).toBe(true);
+  });
+  it('keeps the prose when there is no structured result, or the turn failed', () => {
+    expect(childReport({ title: 'T', sessionId: 's1', ok: true, result: 'done' })).not.toContain('Structured result');
+    expect(childReport({ title: 'T', sessionId: 's1', ok: false, result: '', errorKind: 'x', structured: { a: 1 } })).not.toContain('Structured result');
+  });
+  it('cleans a budget', () => {
+    expect(cleanBudget(2)).toBe(2);
+    expect(cleanBudget('0.25')).toBe(0.25);
+    expect(cleanBudget(0)).toBeNull();
+    expect(cleanBudget(-1)).toBeNull();
+    expect(cleanBudget('abc')).toBeNull();
+    expect(usd(2)).toBe('$2.00');
+    expect(usd(0.5)).toBe('$0.5');
+  });
+  it('accepts only an object schema of a sane size', () => {
+    expect(cleanResultSchema(undefined, 100)).toBeNull();
+    expect(cleanResultSchema({ type: 'object', properties: {} }, 100)).toEqual({ schema: { type: 'object', properties: {} } });
+    expect(cleanResultSchema('{"type":"object"}', 100)).toEqual({ schema: { type: 'object' } });
+    expect(cleanResultSchema({ type: 'array' }, 100)).toHaveProperty('error');
+    expect(cleanResultSchema('{nope', 100)).toHaveProperty('error');
+    expect(cleanResultSchema({ type: 'object', description: 'x'.repeat(200) }, 100)).toHaveProperty('error');
+  });
+  it('normalizes stored terms', () => {
+    expect(normalizeChildTerms({ a: { budgetUsd: 1 }, b: { budgetUsd: -1 }, c: { resultSchema: { type: 'object' } }, d: 3, e: {} }))
+      .toEqual({ a: { budgetUsd: 1 }, c: { resultSchema: { type: 'object' } } });
   });
 });
