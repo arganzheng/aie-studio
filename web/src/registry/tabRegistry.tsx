@@ -68,7 +68,7 @@ export type TabRenderContext = {
   revealInSession: (origin: TabRef, anchor: string) => void;
   // Model: web.TabActivityMarkers. Session panels report whether they are
   // generating / waiting on the user; null on unmount. App turns this into
-  // the TabBar / SessionList Group markers.
+  // the TabBar markers.
   reportActivity: (activity: TabActivity | null) => void;
   // Model: TabKindRegistry / web.CloseTab. Register on mount / null on
   // unmount; CloseTab asks the guard first and aborts when it returns false

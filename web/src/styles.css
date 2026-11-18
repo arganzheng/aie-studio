@@ -517,13 +517,9 @@ body {
 .overflow-action:hover:not(:disabled), .overflow-action:active:not(:disabled) { background: var(--bg-active); color: var(--fg-strong); }
 .overflow-action:disabled { opacity: 0.4; cursor: not-allowed; }
 .overflow-divider { height: 1px; background: var(--border-strong); margin: 4px 0; }
-.overflow-submenu { display: flex; align-items: center; justify-content: space-between; }
 /* New / Resume items: action glyph (+ / ↻ / ⚡) → provider favicon (same slot as the tab strip) → label. */
 .overflow-provider { display: flex; align-items: center; gap: 8px; }
 .overflow-glyph { display: inline-block; width: 1em; text-align: center; }
-.overflow-chevron { opacity: 0.6; margin-left: 12px; }
-.overflow-back { color: var(--fg-muted); }
-.overflow-heading { padding: 4px 14px 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.6; }
 .overflow-tab {
   display: flex;
   align-items: center;
@@ -662,21 +658,7 @@ body {
 .dirpicker-footer button:disabled { opacity: 0.4; cursor: not-allowed; }
 .tree-children { padding-left: 12px; }
 
-/* inline rename input for a tab Group (Sessions view section header) */
-.group-rename {
-  flex: 1;
-  min-width: 0;
-  font: inherit;
-  padding: 1px 4px;
-  border: 1px solid var(--border-strong);
-  border-radius: 3px;
-  background: var(--bg);
-  color: var(--fg-strong);
-}
-
 @media (max-width: 768px) {
-  .group-row { padding: 10px 8px; }
-  .group-menu-btn { opacity: 1; min-width: 36px; min-height: 36px; }
   .tree-menu-btn { opacity: 1; min-width: 36px; min-height: 36px; }
 }
 
@@ -2247,7 +2229,7 @@ pre {
 
 /* ===== Review (model: web.ReviewPanel / entity Batch, Comment) =====
    Desktop: third grid column, always visible. Mobile: right-side drawer that
-   mirrors the left Files/Groups drawer (fixed, slides in, backdrop). */
+   mirrors the left Files/Sessions drawer (fixed, slides in, backdrop). */
 .review-drawer { display: contents; }
 .review-drawer-backdrop { display: none; }
 .review-panel { border-right: none; position: relative; }
@@ -2678,7 +2660,7 @@ pre {
   pointer-events: none;
 }
 
-/* Model: web.TabActivityMarkers rule-312 / rule-313 — per-tab / per-group
+/* Model: web.TabActivityMarkers rule-312 — per-tab
    live markers. Amber pulsing "?" = waiting for the user; accent breathing
    dot = generating. */
 .tab-activity {
@@ -3073,7 +3055,7 @@ pre {
   .session-alert-close { padding: 4px 10px; font-size: 20px; }
 }
 
-/* Sidebar view switch (Files / Groups / Sessions). */
+/* Sidebar view switch (Files / Sessions). */
 .sidebar-views {
   flex: 0 0 auto;
   display: flex;
@@ -3264,38 +3246,11 @@ pre {
 }
 .session-row:hover .session-row-menu-btn, .session-row-menu-btn:focus { opacity: 1; }
 .session-row-menu-btn:hover { color: var(--fg-strong); }
-/* tab Group sections in the Sessions view */
-.sessions-section { border-top: 1px solid var(--border); }
-.sessions-section-head {
-  display: flex; align-items: center; gap: 6px;
-  padding: 6px 8px 6px 4px; cursor: pointer;
-  font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--fg-muted);
-}
-.sessions-section-head:hover { background: var(--bg-hover); color: var(--fg-strong); }
-.sessions-section.active > .sessions-section-head { color: var(--fg-strong); box-shadow: inset 2px 0 0 0 var(--accent); }
-.sessions-section-caret {
-  flex: 0 0 16px; border: none; background: transparent; color: inherit;
-  cursor: pointer; padding: 0; font-size: 10px; line-height: 1; text-align: center;
-}
-.sessions-section-icon { opacity: 0.7; }
-.sessions-section-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.sessions-section.history .sessions-section-name { text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
-.sessions-section-count { font-weight: 400; font-size: 11px; color: var(--fg-muted); }
-.sessions-section-menu-btn {
-  border: none; background: transparent; color: var(--fg-muted); cursor: pointer;
-  padding: 0 6px; font-size: 14px; line-height: 1; opacity: 0;
-}
-.sessions-section-head:hover .sessions-section-menu-btn, .sessions-section-menu-btn:focus { opacity: 1; }
-.sessions-section-menu-btn:hover { color: var(--fg-strong); }
-.sessions-section-note { padding: 3px 12px 7px 34px; font-size: 11px; color: var(--fg-muted); cursor: default; }
-.sessions-section-note:hover { color: var(--fg); }
-.sessions-section.dragging { opacity: 0.45; }
-.sessions-section.drop-before { box-shadow: inset 0 2px 0 0 var(--fg-strong); }
-.sessions-section.drop-after { box-shadow: inset 0 -2px 0 0 var(--fg-strong); }
-.sessions-section.drop-into { background: color-mix(in srgb, var(--accent) 12%, transparent); box-shadow: inset 0 0 0 1px var(--accent); }
-.session-row.dragging { opacity: 0.45; }
-@media (hover: none) {
-  .sessions-section-menu-btn { opacity: 1; }
+/* A session with an open tab: a bar on the left edge. Opening or closing the
+   tab only toggles this; the row never moves. */
+.session-row.open::before {
+  content: ''; position: absolute; left: 3px; top: 7px; bottom: 7px;
+  width: 3px; border-radius: 2px; background: var(--accent);
 }
 @media (hover: none) {
   .session-row { padding-top: 9px; padding-bottom: 9px; }

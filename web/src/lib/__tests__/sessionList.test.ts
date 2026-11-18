@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NO_FILTER, childSessions, groupChildren, filterSessions, isFiltering, sectionSessions, sessionRowKey, sessionStatus, timeAgo, type SessionRow } from '../sessionList';
+import { NO_FILTER, childSessions, groupChildren, filterSessions, isFiltering, openSessionTabs, sessionRowKey, sessionStatus, timeAgo, type SessionRow } from '../sessionList';
 import { alertKey } from '../sessionAlerts';
 
 function row(over: Partial<SessionRow> = {}): SessionRow {
@@ -75,50 +75,44 @@ describe('timeAgo', () => {
   });
 });
 
-describe('sectionSessions', () => {
+describe('openSessionTabs', () => {
   const rows = [
     row({ sessionId: 'a', title: 'Usage badge', state: 'running', live: 'sdk' }),
     row({ sessionId: 'b', title: 'PR review' }),
     row({ kind: 'devin', sessionId: 'd1', title: 'Docs' }),
     row({ sessionId: 'old', title: 'Dir picker' }),
   ];
-  const groups = [{ id: 'g1', name: 'Feature X' }, { id: 'g2', name: 'Bugfix' }];
   const tabs = [
-    { id: 't1', type: 'claude-sdk', resumeId: 'a', groupId: 'g1' },
-    { id: 't2', type: 'file', groupId: 'g1' },
-    { id: 't3', type: 'session', resumeId: 'b', groupId: 'g1' },
-    { id: 't4', type: 'devin', resumeId: 'd1' },               // no groupId → default
-    { id: 't5', type: 'claude-sdk', title: 'Fresh', groupId: 'gone' }, // dead Group → default
+    { id: 't1', type: 'claude-sdk', resumeId: 'a' },
+    { id: 't2', type: 'file' },
+    { id: 't3', type: 'session', resumeId: 'b' },
+    { id: 't4', type: 'devin', resumeId: 'd1' },
+    { id: 't5', type: 'claude-sdk', title: 'Fresh' },
+    { id: 't6', type: 'session', resumeId: 'not-listed-yet', title: 'Just started' },
+    { id: 't7', type: 'claude-sdk', resumeId: 'a' }, // a second tab on the same session
   ];
-  const base = { projectId: 'p1', rows, allRows: rows, tabs, groups, defaultName: 'Default', filtering: false };
 
-  it('puts open sessions under their Group in tab order and the rest in History', () => {
-    const { sections, history } = sectionSessions(base);
-    expect(sections.map((s) => [s.groupId, s.items.map((i) => i.tabId), s.tabCount, s.otherTabs])).toEqual([
-      ['g1', ['t1', 't3'], 3, 1],
-      ['g2', [], 0, 0],
-      ['default', ['t4', 't5'], 2, 0],
+  it('maps each listed session to its first open tab', () => {
+    const { tabOf } = openSessionTabs({ projectId: 'p1', allRows: rows, tabs });
+    expect([...tabOf]).toEqual([
+      [sessionRowKey(rows[0]), 't1'],
+      [sessionRowKey(rows[1]), 't3'],
+      [sessionRowKey(rows[2]), 't4'],
     ]);
-    expect(sections[2].isDefault).toBe(true);
-    expect(sections[2].items[1]).toEqual({ tabId: 't5', kind: 'claude', row: null, title: 'Fresh' });
-    expect(history.map((r) => r.sessionId)).toEqual(['old']);
   });
 
-  it('omits the default Group while it has no tabs', () => {
-    const { sections } = sectionSessions({ ...base, tabs: tabs.slice(0, 3) });
-    expect(sections.map((s) => s.groupId)).toEqual(['g1', 'g2']);
+  it('lists session tabs with no listed session as pending, in tab order', () => {
+    const { pending } = openSessionTabs({ projectId: 'p1', allRows: rows, tabs });
+    expect(pending).toEqual([
+      { tabId: 't5', kind: 'claude', title: 'Fresh' },
+      { tabId: 't6', kind: 'claude', title: 'Just started' },
+    ]);
   });
 
-  it('while filtering, hides filtered-out tabs, unlisted tabs and empty sections', () => {
-    const shown = filterSessions(rows, { ...NO_FILTER, query: 'review' }, none);
-    const { sections, history } = sectionSessions({ ...base, rows: shown, filtering: true });
-    expect(sections.map((s) => [s.groupId, s.items.map((i) => i.tabId)])).toEqual([['g1', ['t3']]]);
-    expect(history).toEqual([]);
-  });
-
-  it('does not list an open session in History even when another kind of tab shows it', () => {
-    const { history } = sectionSessions({ ...base, tabs: [{ id: 'x', type: 'session', resumeId: 'old' }] });
-    expect(history.map((r) => r.sessionId)).toEqual(['a', 'b', 'd1']);
+  it('does not confuse a Devin tab with a Claude session of the same id', () => {
+    const { tabOf, pending } = openSessionTabs({ projectId: 'p1', allRows: rows, tabs: [{ id: 'x', type: 'devin', resumeId: 'a' }] });
+    expect(tabOf.size).toBe(0);
+    expect(pending.map((p) => p.tabId)).toEqual(['x']);
   });
 });
 

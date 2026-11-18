@@ -7,7 +7,7 @@ import { flashMessage } from './CommentComposer';
 // right-side drawer on mobile. A collapsible "★ Bookmarks" group sits at the
 // very top when there are any (rule-444); then draft Batches, each with its Comments
 // (quote + text) and a Send button; sent Batches fold away underneath.
-// Comments drag (HTML5 DnD, same implementation as the SessionList Group headers) within a batch
+// Comments drag (HTML5 DnD) within a batch
 // to reorder and onto another draft batch to move; the ⋯ menu offers the same
 // for touch.
 
