@@ -21,6 +21,8 @@ export type SessionRow = {
   parentId?: string;
   // Claude: the git worktree it runs in (a name under .claude/worktrees).
   worktree?: string;
+  // The batch label its parent's agent gave it (children opened together).
+  group?: string;
 };
 
 // Same shape as lib/sessionAlerts.alertKey, so a pending alert marks its row.
@@ -186,4 +188,29 @@ export function childSessions(input: {
     childTabIds.add(t.id);
   }
   return { childrenOf, childRowKeys, childTabIds };
+}
+
+// ---- child groups (model: SessionMeta.groups) ----
+//
+// Children their parent's agent opened as one batch share a label; the tree
+// nests them under it with a done/total count. Order follows the children:
+// a group sits where its first member would.
+
+export type ChildGroupNode =
+  | { kind: 'child'; item: ChildItem }
+  | { kind: 'group'; label: string; items: ChildItem[]; total: number; running: number };
+
+export function groupChildren(children: readonly ChildItem[]): ChildGroupNode[] {
+  const out: ChildGroupNode[] = [];
+  const byLabel = new Map<string, Extract<ChildGroupNode, { kind: 'group' }>>();
+  for (const item of children) {
+    const label = item.row?.group?.trim();
+    if (!label) { out.push({ kind: 'child', item }); continue; }
+    let g = byLabel.get(label);
+    if (!g) { g = { kind: 'group', label, items: [], total: 0, running: 0 }; byLabel.set(label, g); out.push(g); }
+    g.items.push(item);
+    g.total++;
+    if (item.row?.state === 'running' || item.row?.state === 'awaiting') g.running++;
+  }
+  return out;
 }

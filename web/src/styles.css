@@ -3180,6 +3180,12 @@ pre {
   background: transparent; border: none; color: var(--fg-muted); font-size: 10px; cursor: pointer;
 }
 .session-row-caret:hover { color: var(--fg); }
+/* A batch of child sessions under their parent (model: SessionMeta.groups). */
+.session-group-row { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 12px; cursor: pointer; font-size: 12px; color: var(--fg-muted); }
+.session-group-row:hover { background: var(--bg-hover); color: var(--fg); }
+.session-group-caret { flex: 0 0 10px; font-size: 10px; }
+.session-group-icon { flex: none; opacity: 0.8; }
+.session-group-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-row-worktree { color: #b48ead; }
 .chat-status-worktree { color: #b48ead; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-row-subagents {

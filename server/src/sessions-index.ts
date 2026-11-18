@@ -32,6 +32,8 @@ export type SessionRow = {
   subagents?: { total: number; running: number };
   // The session this one was opened under as a child, if any.
   parentId?: string;
+  // The batch label its parent's agent gave it (children opened together).
+  group?: string;
   // Claude: the git worktree it runs in (a name under .claude/worktrees),
   // absent when it runs in the project directory.
   worktree?: string;
@@ -45,13 +47,14 @@ export function sessionKey(kind: SessionKind, sessionId: string): string {
 
 // Pure: lay the user's archive flags and title overrides over the raw rows,
 // newest first.
-export function applySessionMeta(rows: readonly Omit<SessionRow, 'archived' | 'parentId'>[], meta: SessionMeta): SessionRow[] {
+export function applySessionMeta(rows: readonly Omit<SessionRow, 'archived' | 'parentId' | 'group'>[], meta: SessionMeta): SessionRow[] {
   const archived = new Set(meta.archived);
   return rows
     .map((r) => {
       const key = sessionKey(r.kind, r.sessionId);
       const parentId = meta.parents[key];
-      return { ...r, title: meta.titles[key] ?? r.title, archived: archived.has(key), ...(parentId ? { parentId } : {}) };
+      const group = parentId ? meta.groups[key] : undefined;
+      return { ...r, title: meta.titles[key] ?? r.title, archived: archived.has(key), ...(parentId ? { parentId } : {}), ...(group ? { group } : {}) };
     })
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
@@ -69,7 +72,11 @@ export function forgetSession(meta: SessionMeta, key: string): SessionMeta {
   // top-level sessions.
   const id = key.slice(key.indexOf(':') + 1);
   const parents = Object.fromEntries(Object.entries(meta.parents).filter(([k, v]) => k !== key && v !== id));
-  return { archived: meta.archived.filter((k) => k !== key), titles, parents, agentSpawned: meta.agentSpawned.filter((k) => k in parents) };
+  return {
+    archived: meta.archived.filter((k) => k !== key), titles, parents,
+    agentSpawned: meta.agentSpawned.filter((k) => k in parents),
+    groups: Object.fromEntries(Object.entries(meta.groups).filter(([k]) => k in parents)),
+  };
 }
 
 export function cleanTitle(raw: unknown): string | null {

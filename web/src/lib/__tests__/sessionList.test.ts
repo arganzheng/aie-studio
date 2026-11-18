@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NO_FILTER, childSessions, filterSessions, isFiltering, openSessionTabs, sessionRowKey, sessionStatus, timeAgo, type SessionRow } from '../sessionList';
+import { NO_FILTER, childSessions, groupChildren, filterSessions, isFiltering, openSessionTabs, sessionRowKey, sessionStatus, timeAgo, type SessionRow } from '../sessionList';
 import { alertKey } from '../sessionAlerts';
 
 function row(over: Partial<SessionRow> = {}): SessionRow {
@@ -144,5 +144,23 @@ describe('childSessions', () => {
   it('takes children out of the top level; orphans and other projects stay', () => {
     expect([...idx.childRowKeys].sort()).toEqual(['p1:claude:c1', 'p1:claude:c2']);
     expect([...idx.childTabIds].sort()).toEqual(['t1', 't2']);
+  });
+});
+
+describe('groupChildren', () => {
+  const item = (sessionId: string, over: Partial<SessionRow> = {}) => ({ row: row({ sessionId, ...over }), tabId: null, title: sessionId });
+  it('nests a batch under its label where its first member stands, counting the running ones', () => {
+    const nodes = groupChildren([
+      item('a'),
+      item('b', { group: 'Series review', state: 'running', live: 'sdk' }),
+      item('c'),
+      item('d', { group: 'Series review' }),
+      { row: null, tabId: 't9', title: 'New child session' },
+    ]);
+    expect(nodes.map((n) => (n.kind === 'group' ? `${n.label}:${n.items.map((i) => i.row!.sessionId).join('+')}:${n.total - n.running}/${n.total}` : n.item.row?.sessionId ?? 'pending')))
+      .toEqual(['a', 'Series review:b+d:1/2', 'c', 'pending']);
+  });
+  it('leaves children without a label as they are', () => {
+    expect(groupChildren([item('a'), item('b')]).every((n) => n.kind === 'child')).toBe(true);
   });
 });
