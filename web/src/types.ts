@@ -219,6 +219,9 @@ export type Settings = {
   // Opt-in: 🍚 on assistant messages copies the reply as rich text in one
   // click (model: web.RichCopy). Off by default; works on any device.
   richCopy?: boolean;
+  // Model: Session.children — Claude (SDK) sessions get the tools to open
+  // and message child sessions. On unless set to false.
+  childSessionTools?: boolean;
   // Opt-in right-hand Review panel (comments → batches → send to AI; model:
   // web.ReviewPanel). Off by default: no third column / right drawer / 💬 on
   // messages. Batches data is kept while off.

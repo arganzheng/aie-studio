@@ -467,6 +467,13 @@ export function Settings({
                 hint="Select text in a session (or 💬 a message) to comment; comments collect in batches you send to the AI when ready. Right-hand column on desktop, right drawer on mobile. Existing batches are kept while off."
               />
               <Toggle
+                label="Child sessions"
+                checked={settings.childSessionTools ?? true}
+                onChange={(v) => commit({ ...settings, childSessionTools: v })}
+                text="Let Claude open child sessions"
+                hint="Claude (Agent SDK) sessions get tools to open a child session for a larger piece of work, message it, and receive its answer. Children appear under their parent in Sessions and you can talk to them directly. Applies to sessions started after the change; each child is a full session and uses quota like one."
+              />
+              <Toggle
                 label="Rich copy"
                 checked={settings.richCopy ?? false}
                 onChange={(v) => commit({ ...settings, richCopy: v })}
