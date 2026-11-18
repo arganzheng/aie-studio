@@ -4,7 +4,7 @@
 // none of ChatPanel's own code, so the `session` kind cannot regress from
 // anything done here. Wire protocol: server ClaudeSdkSessionBridge
 // (projects/claude-sdk-session/design.md).
-import { Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -26,7 +26,7 @@ import { ChatInput } from './ChatInput';
 import { bangCommand, isBangInput, splitBangTexts } from '../lib/bang';
 import { ClaudeUsageBadge, refreshClaudeUsage } from './ClaudeUsage';
 import { ContextBadge, type ContextSnapshot } from './ContextUsage';
-import { parseChildReport } from '../lib/childReport';
+import { parseChildReports } from '../lib/childReport';
 import { parseParentContext, withParentContext, type ParentContext } from '../lib/parentContext';
 import { summarizeSession } from '../api';
 import { ImageAttachmentStrip, useImageAttachments, type ImageAttachment } from './ImageAttachments';
@@ -1053,18 +1053,23 @@ export function SdkPanel({
           const bmCls = canComment && !!anchor && commentedAnchors.has(anchor) ? ' commented' : '';
           if (m.role === 'user') {
             // A child session's answer, delivered by the server — a report, not a prompt.
-            const report = m.images?.length ? null : parseChildReport(m.text);
-            if (report) {
+            const reports = m.images?.length ? null : parseChildReports(m.text);
+            if (reports) {
               return (
-                <div key={m.id} className={`msg msg-child-report${report.ok ? '' : ' failed'}`} data-anchor={anchor ?? undefined}>
-                  <div className="child-report-head">
-                    <span className="child-report-mark" aria-hidden="true">⑂</span>
-                    <span className="child-report-title">{report.title}</span>
-                    <span className="child-report-state">child session {report.state}</span>
-                    {report.intervened && <span className="child-report-flag" title="You typed into this child session during the turn; the parent is told what you said">you stepped in</span>}
-                  </div>
-                  <MarkdownText text={report.body} theme={theme} projectPath={projectPath} onOpenFile={openFile} />
-                </div>
+                <Fragment key={m.id}>
+                  {reports.length > 1 && <div className="msg msg-system" data-anchor={anchor ?? undefined}>{reports.length} child sessions reported together</div>}
+                  {reports.map((report, ri) => (
+                    <div key={ri} className={`msg msg-child-report${report.ok ? '' : ' failed'}`} data-anchor={reports.length === 1 ? anchor ?? undefined : undefined}>
+                      <div className="child-report-head">
+                        <span className="child-report-mark" aria-hidden="true">⑂</span>
+                        <span className="child-report-title">{report.title}</span>
+                        <span className="child-report-state">child session {report.state}</span>
+                        {report.intervened && <span className="child-report-flag" title="You typed into this child session during the turn; the parent is told what you said">you stepped in</span>}
+                      </div>
+                      <MarkdownText text={report.body} theme={theme} projectPath={projectPath} onOpenFile={openFile} />
+                    </div>
+                  ))}
+                </Fragment>
               );
             }
             const isEditing = !!m.uuid && editingUuid === m.uuid;

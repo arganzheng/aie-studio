@@ -27,13 +27,13 @@ import {
 import { z } from 'zod';
 import { mapContextUsage, type ContextSnapshot } from './context-usage.js';
 import {
-  CHILD_TOOLS_INSTRUCTIONS, MAX_NOTES_PER_TURN, childBrief, childIdsOf, childReport, cleanChildTitle, isTurnResult, sessionDepth, spawnRefusal,
+  CHILD_TOOLS_INSTRUCTIONS, MAX_NOTES_PER_TURN, childBrief, childIdsOf, childReport, cleanGroup, joinReports, cleanChildTitle, isTurnResult, sessionDepth, spawnRefusal,
   worktreePreface, type ChildStop,
 } from './child-sessions.js';
 import { createWorktree, isWorktreeName, listProjectSessions, realPath, sessionCwd, worktreeNameOf, worktreeNote, worktreePath, worktreeStatus } from './worktrees.js';
 import {
-  getOwedReports, getProject, getSessionMeta, getSettings, listUserIds, putOwedReports, putSessionMeta, setParent,
-  type OwedReports, type Settings,
+  getHeldReports, getOwedReports, getProject, getSessionMeta, getSettings, listUserIds, putHeldReports, putOwedReports, putSessionMeta, setParent,
+  type HeldReports, type OwedReports, type Settings,
 } from './store.js';
 import { getUserId } from './auth.js';
 import { runBang, bangContextBlocks, type BangResult, type RunningBang } from './shell-exec.js';
@@ -190,6 +190,11 @@ type SdkEntry = {
   userNotes: string[];
   // stop_child_session interrupted the running turn: its report says so.
   stoppedByParent: boolean;
+  // The batch label the parent's agent gave this child (SessionMeta.groups).
+  group: string;
+  // The title the parent's agent gave this child ('' = none, or the user
+  // has renamed it since).
+  givenTitle: string;
   commands: SlashCommand[];
   agents: string[];
   models: ModelInfo[];
@@ -423,6 +428,8 @@ async function linkToParent(entry: SdkEntry, oldId: string | null, newId: string
     // A re-id keeps the mark of who opened it.
     const byAgent = entry.spawnedByAgent || (oldId !== null && meta.agentSpawned.includes(`claude:${oldId}`));
     if (byAgent && !next.agentSpawned.includes(`claude:${newId}`)) next = { ...next, agentSpawned: [...next.agentSpawned, `claude:${newId}`] };
+    const group = entry.group || (oldId ? meta.groups[`claude:${oldId}`] : '') || '';
+    if (group && next.groups[`claude:${newId}`] !== group) next = { ...next, groups: { ...next.groups, [`claude:${newId}`]: group } };
     if (next !== meta) await putSessionMeta(entry.owner.uid, next);
     entry.parentSessionId = parent;
     if (byAgent) entry.spawnedByAgent = true;
@@ -540,7 +547,17 @@ async function refreshTitle(entry: SdkEntry) {
   if (!entry.sessionId) return;
   try {
     const info = await getSessionInfo(entry.sessionId, { dir: entry.cwd });
-    const t = info?.summary?.trim();
+    let t = info?.summary?.trim();
+    // The name its parent gave a child must survive claude's own AI title,
+    // which is written later and would win. A rename by the user (a custom
+    // title other than ours) ends that.
+    if (entry.givenTitle) {
+      const custom = info?.customTitle?.trim();
+      if (custom && custom !== entry.givenTitle) entry.givenTitle = '';
+      else if (t !== entry.givenTitle) {
+        try { await renameSession(entry.sessionId, entry.givenTitle, { dir: entry.cwd }); t = entry.givenTitle; } catch {}
+      }
+    }
     if (t && t !== entry.title) {
       entry.title = t;
       broadcast(entry, { type: 'title', title: t });
@@ -860,7 +877,7 @@ export function stopSdkSession(sessionId: string, uid: string, opts: { silent?: 
 // A bridge entry with no query yet (startQuery starts one).
 function newEntry(o: {
   uid: string; projectId: string; cwd: string; projectPath: string; settings: Settings;
-  resumeId?: string; parentSessionId?: string | null; observeWire?: boolean; model?: string; spawnedByAgent?: boolean;
+  resumeId?: string; parentSessionId?: string | null; observeWire?: boolean; model?: string; spawnedByAgent?: boolean; group?: string;
 }): SdkEntry {
   return {
     cwd: o.cwd,
@@ -885,6 +902,8 @@ function newEntry(o: {
     spawnedByAgent: o.spawnedByAgent === true,
     userNotes: [],
     stoppedByParent: false,
+    group: o.group ?? '',
+    givenTitle: '',
     commands: [],
     agents: [],
     models: [],
@@ -956,12 +975,10 @@ async function reportToParent(child: SdkEntry, result: any, why: { requested: bo
   // own agent opened this child.
   if (!why.requested && !child.spawnedByAgent) return;
   try {
-    const parent = await wakeSession(whoOf(child), parentId);
-    if (!parent) return;
     const ok = !why.stopped && result?.subtype === 'success' && result?.is_error !== true;
     const wtName = await worktreeOf(child);
     const wt = wtName ? await worktreeStatus(child.projectPath, wtName) : null;
-    injectUserText(parent, childReport({
+    await deliverReport(whoOf(child), parentId, childReport({
       worktreeNote: wt ? worktreeNote(wt) : undefined,
       title: child.title || child.sessionId.slice(0, 8),
       sessionId: child.sessionId,
@@ -970,8 +987,46 @@ async function reportToParent(child: SdkEntry, result: any, why: { requested: bo
       errorKind: ok ? undefined : String(result?.subtype ?? 'error'),
       userNotes: why.notes,
       stopped: why.stopped,
-    }));
+    }), child);
   } catch {}
+}
+
+// ----- "wait for all" (model: HeldReports) ---------------------------------
+
+const heldChains = new Map<string, Promise<unknown>>();
+function editHeld<T>(uid: string, edit: (h: HeldReports) => T): Promise<T> {
+  const next = (heldChains.get(uid) ?? Promise.resolve()).then(async () => {
+    const h = await getHeldReports(uid);
+    const before = JSON.stringify(h);
+    const out = edit(h);
+    if (JSON.stringify(h) !== before) await putHeldReports(uid, h);
+    return out;
+  });
+  heldChains.set(uid, next.catch(() => {}));
+  return next;
+}
+
+// Children of `parentId` whose running turn will end in a report.
+function workingChildren(parentId: string, except?: SdkEntry): number {
+  let n = 0;
+  for (const e of [...byId.values(), ...pending]) if (e !== except && e.parentSessionId === parentId && e.reportToParent) n++;
+  return n;
+}
+
+// Hand a report to the parent — at once, or, when the parent asked to wait
+// for all its children, once the last working one has reported.
+async function deliverReport(who: { uid: string; projectId: string; projectPath: string }, parentId: string, text: string, from?: SdkEntry) {
+  const out = await editHeld(who.uid, (h) => {
+    const hold = h[parentId];
+    if (!hold) return text;
+    hold.reports.push(text);
+    if (workingChildren(parentId, from) > 0) return null;
+    delete h[parentId];
+    return joinReports(hold.reports);
+  });
+  if (out === null) return;
+  const parent = await wakeSession(who, parentId);
+  if (parent) injectUserText(parent, out);
 }
 
 // Model: server start — a crash (or a kill) took child sessions down mid-turn.
@@ -984,16 +1039,43 @@ export async function recoverChildReports(): Promise<number> {
     for (const [childId, rec] of Object.entries(owed)) {
       if (byId.has(childId)) continue; // running again already: it will report itself
       try {
-        const parent = await wakeSession({ uid, projectId: rec.projectId, projectPath: rec.cwd }, rec.parentId);
-        if (parent) {
-          injectUserText(parent, childReport({ title: rec.title || childId.slice(0, 8), sessionId: childId, ok: false, result: '', userNotes: rec.notes, stopped: 'restart' }));
-          delivered++;
-        }
+        await deliverReport({ uid, projectId: rec.projectId, projectPath: rec.cwd }, rec.parentId,
+          childReport({ title: rec.title || childId.slice(0, 8), sessionId: childId, ok: false, result: '', userNotes: rec.notes, stopped: 'restart' }));
+        delivered++;
       } catch {}
       await editOwed(uid, (r) => { delete r[childId]; });
     }
+    // Reports collected for a "wait for all" whose children are all gone.
+    const flush = await editHeld(uid, (h) => {
+      const out: { parentId: string; projectId: string; cwd: string; text: string }[] = [];
+      for (const [parentId, hold] of Object.entries(h)) {
+        if (workingChildren(parentId) > 0) continue;
+        if (hold.reports.length > 0) out.push({ parentId, projectId: hold.projectId, cwd: hold.cwd, text: joinReports(hold.reports) });
+        delete h[parentId];
+      }
+      return out;
+    }).catch(() => []);
+    for (const f of flush) {
+      try {
+        const parent = await wakeSession({ uid, projectId: f.projectId, projectPath: f.cwd }, f.parentId);
+        if (parent) { injectUserText(parent, f.text); delivered++; }
+      } catch {}
+    }
   }
   return delivered;
+}
+
+// Give a new child its title. claude names the session before it has
+// written its transcript, and a rename needs the file: keep trying briefly.
+async function nameChildSession(child: SdkEntry, title: string) {
+  for (let i = 0; i < 12 && child.sessionId; i++) {
+    try {
+      await renameSession(child.sessionId, title, { dir: child.cwd });
+      child.title = title;
+      broadcast(child, { type: 'title', title });
+      return;
+    } catch { await new Promise((r) => setTimeout(r, 700)); }
+  }
 }
 
 const toolText = (text: string, isError = false) => ({ content: [{ type: 'text' as const, text }], ...(isError ? { isError: true } : {}) });
@@ -1018,6 +1100,7 @@ function childToolsServer(parent: SdkEntry) {
           background: z.string().describe('What the child must know about the wider work, since it sees none of this conversation: the overall goal, decisions already made and why, constraints and preferences the user stated, relevant files and branches. Write "none" only for a task that truly stands alone.'),
           prompt: z.string().describe('The task itself: what to do and what to report back'),
           model: z.string().optional().describe('Model for the child (an id or alias this session can use). Omit to use the default.'),
+          group: z.string().optional().describe('A short label shared by children you open as one batch (e.g. "Python series review"): the user sees them together under it, with a done/total count.'),
           isolation: z.enum(['shared', 'worktree']).optional().describe('"worktree": the child gets its own git worktree and branch (under .claude/worktrees/), branched from your current commit — use it when the child will edit files while you or other children are editing too. "shared" (default): it works in the same directory as you.'),
         },
         async (args) => {
@@ -1047,7 +1130,7 @@ function childToolsServer(parent: SdkEntry) {
               return toolText(`Could not create a worktree: ${String((e as Error).message)}. Open the child without isolation, or fix that first.`, true);
             }
           }
-          const child = newEntry({ uid: parent.owner.uid, projectId: parent.owner.projectId, cwd, projectPath: parent.projectPath, settings, parentSessionId: parentId, model, spawnedByAgent: true });
+          const child = newEntry({ uid: parent.owner.uid, projectId: parent.owner.projectId, cwd, projectPath: parent.projectPath, settings, parentSessionId: parentId, model, spawnedByAgent: true, group: cleanGroup(args.group) });
           child.title = title;
           child.reportToParent = true;
           pending.add(child);
@@ -1056,7 +1139,10 @@ function childToolsServer(parent: SdkEntry) {
           // claude names the session on the first turn's system.init.
           for (let i = 0; i < 300 && !child.sessionId && child.q; i++) await new Promise((r) => setTimeout(r, 100));
           if (!child.sessionId) return toolText(`Started child session "${title}", but it has not reported an id yet. Its answer will still arrive as a message when it finishes.`);
-          try { await renameSession(child.sessionId, title, { dir: child.cwd }); child.title = title; broadcast(child, { type: 'title', title }); } catch {}
+          child.title = title;
+          child.givenTitle = title;
+          broadcast(child, { type: 'title', title });
+          void nameChildSession(child, title);
           saveOwed(child);
           return toolText(`Started child session "${title}" (id ${child.sessionId}).${where} It is working in the background; its answer will arrive as a message starting with "[Child session" when it finishes. Do not wait or poll for it.`);
         },
@@ -1081,6 +1167,19 @@ function childToolsServer(parent: SdkEntry) {
           injectUserText(child, message);
           saveOwed(child);
           return toolText(`Delivered to "${child.title || childId}". Its answer will arrive as a message starting with "[Child session".`);
+        },
+      ),
+      tool(
+        'wait_for_child_sessions',
+        'Receive the reports of your working child sessions together, in one message, when the last of them has finished — instead of one message (and one turn of yours) per child. Call it after opening or messaging several children when you have nothing else to do until all are done, then end your turn. Returns at once.',
+        {},
+        async () => {
+          const parentId = parent.sessionId;
+          if (!parentId) return toolText('This session has no id yet; try again in a moment.', true);
+          const n = workingChildren(parentId);
+          if (n === 0) return toolText('None of your child sessions is working right now, so there is nothing to wait for. Any report already sent is above in this conversation.');
+          await editHeld(parent.owner.uid, (h) => { h[parentId] ??= { projectId: parent.owner.projectId, cwd: parent.projectPath, reports: [] }; });
+          return toolText(`Waiting for ${n} child session${n === 1 ? '' : 's'}: their reports will arrive together in one message when the last one finishes. End your turn now; do not poll.`);
         },
       ),
       tool(
@@ -1117,7 +1216,8 @@ function childToolsServer(parent: SdkEntry) {
             let title = live?.title ?? null;
             if (!title) { try { title = (await getSessionInfo(id, { dir: parent.projectPath }))?.summary?.trim() || null; } catch {} }
             const state = live ? (live.pendingAsks.size > 0 ? 'waiting for the user' : live.thinking ? 'working' : 'idle') : 'not running';
-            return `- ${id} "${title ?? id.slice(0, 8)}": ${state}`;
+            const group = meta.groups[`claude:${id}`];
+            return `- ${id} "${title ?? id.slice(0, 8)}"${group ? ` [${group}]` : ''}: ${state}`;
           }));
           return toolText(lines.join('\n'));
         },

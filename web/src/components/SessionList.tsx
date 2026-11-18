@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { archiveSession, deleteSessionForever, listAllSessions, renameAnySession, stopSession, type SubagentInfo } from '../api';
 import { useFitMenuTop } from '../lib/fitMenu';
 import {
-  NO_FILTER, childSessions, filterSessions, isFiltering, sectionSessions, sessionRowKey, sessionStatus,
+  NO_FILTER, childSessions, groupChildren, filterSessions, isFiltering, sectionSessions, sessionRowKey, sessionStatus,
   type SectionGroup, type SectionTab, type SessionFilter, type SessionKind, type SessionRow, type SessionSection,
 } from '../lib/sessionList';
 import { groupActivityMark, type TabActivity } from '../lib/tabActivity';
@@ -129,6 +129,8 @@ export function SessionList({
   // Session rows (sessionRowKey) whose subagents are shown.
   const [subagentsOpen, setSubagentsOpen] = useState<Set<string>>(() => loadStringSet(SUBAGENTS_OPEN_LS_KEY));
   const [tick, setTick] = useState(0);
+  // Child groups the user folded (`<session row key>:<label>`); open by default.
+  const [groupsClosed, setGroupsClosed] = useState<Set<string>>(new Set());
   const [drag, setDrag] = useState<Drag | null>(null);
   const [drop, setDrop] = useState<Drop | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -438,7 +440,30 @@ export function SessionList({
           onNotice={onNotice}
         />
       )}
-      {subsOpen && children.map((c) => renderRow(c.row, { tabId: c.tabId ?? undefined, title: c.title, kind: 'claude', depth: depth + 1 }))}
+      {subsOpen && groupChildren(children).map((node) => {
+        const childRow = (c: typeof children[number], d: number) => renderRow(c.row, { tabId: c.tabId ?? undefined, title: c.title, kind: 'claude', depth: d });
+        if (node.kind === 'child') return childRow(node.item, depth + 1);
+        // Children the parent's agent opened as one batch.
+        const gk = `${key}:${node.label}`;
+        const closed = groupsClosed.has(gk);
+        const toggle = () => setGroupsClosed((prev) => { const next = new Set(prev); if (next.has(gk)) next.delete(gk); else next.add(gk); return next; });
+        return (
+          <Fragment key={`g:${gk}`}>
+            <div
+              className="session-group-row"
+              style={{ paddingLeft: 12 + (depth + 1) * 18 }}
+              title={`${node.label} — ${node.total} child session${node.total === 1 ? '' : 's'}${node.running > 0 ? `, ${node.running} running` : ', none running'}`}
+              onClick={toggle}
+            >
+              <span className="session-group-caret" aria-hidden="true">{closed ? '▸' : '▾'}</span>
+              <span className="session-group-icon" aria-hidden="true">⚙</span>
+              <span className="session-group-label">{node.label}</span>
+              <span className={`session-row-subagents${node.running > 0 ? ' running' : ''}`}>{node.total - node.running}/{node.total}</span>
+            </div>
+            {!closed && node.items.map((c) => childRow(c, depth + 2))}
+          </Fragment>
+        );
+      })}
       </Fragment>
     );
   }

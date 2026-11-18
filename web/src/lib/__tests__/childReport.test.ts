@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseChildReport } from '../childReport';
+import { parseChildReport, parseChildReports } from '../childReport';
 
 describe('parseChildReport', () => {
   it('reads the server\'s report format', () => {
@@ -23,5 +23,17 @@ describe('parseChildReport', () => {
   it('leaves ordinary prompts alone', () => {
     expect(parseChildReport('Please add Apple Pay')).toBeNull();
     expect(parseChildReport('[Child session notes] todo')).toBeNull();
+  });
+});
+
+describe('parseChildReports', () => {
+  const a = '[Child session "A" (s1) finished]\n\nFirst.\n\nMore.\n\n(Sent automatically by aie-studio when the child session finished; not typed by the user.)';
+  const b = '[Child session "B" (s2) was stopped by the user]\n\n(no final answer)';
+  it('splits reports that were delivered together', () => {
+    expect(parseChildReports(`${a}\n\n${b}`)!.map((r) => [r.title, r.ok, r.body])).toEqual([['A', true, 'First.\n\nMore.'], ['B', false, '(no final answer)']]);
+  });
+  it('reads a single report, and ignores ordinary prompts', () => {
+    expect(parseChildReports(a)).toHaveLength(1);
+    expect(parseChildReports('Please add Apple Pay')).toBeNull();
   });
 });
