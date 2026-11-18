@@ -7,7 +7,7 @@ import nodeOs from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { devinDbPath, openDevinDb } from './devin-db.js';
 import type { WebSocket } from '@fastify/websocket';
-import { getProject } from './store.js';
+import { getProject, unarchiveOnUse } from './store.js';
 import { getUserId } from './auth.js';
 import { publishSessionEvent, type SessionOwner } from './notify.js';
 import { toSummary } from './inbox.js';
@@ -335,6 +335,7 @@ function handleClientMessage(entry: DevinSessionEntry, msg: any, sender?: WebSoc
   if (msg.type === 'user') {
     const text = typeof msg.text === 'string' ? msg.text : '';
     const images: WireImage[] = Array.isArray(msg.images) ? msg.images : [];
+    void unarchiveOnUse(entry.owner.uid, `devin:${entry.sessionId}`);
     writeUserPrompt(entry, text, images, { echoExcept: sender });
     return;
   }

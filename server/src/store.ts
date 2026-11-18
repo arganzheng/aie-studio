@@ -587,6 +587,18 @@ export async function getSessionMeta(uid: string): Promise<SessionMeta> {
   return normalizeSessionMeta(await readJson<unknown>(sessionMetaFile(uid), {}));
 }
 
+// Model: Session.archived — writing to an archived session brings it back:
+// the user is working in it again, so it belongs in the list. No-op (and no
+// write) when it isn't archived.
+export async function unarchiveOnUse(uid: string, key: string): Promise<boolean> {
+  try {
+    const meta = await getSessionMeta(uid);
+    if (!meta.archived.includes(key)) return false;
+    await putSessionMeta(uid, { ...meta, archived: meta.archived.filter((k) => k !== key) });
+    return true;
+  } catch { return false; }
+}
+
 export async function putSessionMeta(uid: string, meta: SessionMeta): Promise<SessionMeta> {
   const clean = normalizeSessionMeta(meta);
   await writeJson(sessionMetaFile(uid), clean);

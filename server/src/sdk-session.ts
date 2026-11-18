@@ -34,6 +34,7 @@ import { createWorktree, isWorktreeName, listProjectSessions, realPath, sessionC
 import {
   MAX_RESULT_SCHEMA_CHARS, getChildTerms, getHeldReports, getOwedReports, putChildTerms, getProject, getSessionMeta, getSettings, listUserIds, putHeldReports, putOwedReports, putSessionMeta, setParent,
   type HeldReports, type OwedReports, type Settings,
+  unarchiveOnUse,
 } from './store.js';
 import { getUserId } from './auth.js';
 import { runBang, bangContextBlocks, type BangResult, type RunningBang } from './shell-exec.js';
@@ -700,6 +701,7 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
     const text = String(msg.text ?? '');
     const images = Array.isArray(msg.images) ? msg.images : [];
     if (!text && images.length === 0) return;
+    if (entry.sessionId) void unarchiveOnUse(entry.owner.uid, `claude:${entry.sessionId}`);
     const uuid = randomUUID();
     const bang = entry.pendingBang.splice(0).map((b) => b.result);
     const um = userMessage(uuid, text, images, bang);
