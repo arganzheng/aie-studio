@@ -1,47 +1,30 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeProjectWorkspace, normalizeBatches, normalizeBookmarks, DEFAULT_GROUP_ID } from '../store.js';
+import { normalizeProjectWorkspace, normalizeBatches, normalizeBookmarks } from '../store.js';
 
 describe('normalizeProjectWorkspace', () => {
-  it('fills groups: [] for legacy slots that only have tabs', () => {
+  it('drops legacy activeTabId', () => {
     const pw = normalizeProjectWorkspace({ tabs: [{ id: 'a', type: 'file', path: 'x' }], activeTabId: 'a' });
-    expect(pw).toEqual({ tabs: [{ id: 'a', type: 'file', path: 'x' }], groups: [], batches: [], bookmarks: [] });
+    expect(pw).toEqual({ tabs: [{ id: 'a', type: 'file', path: 'x' }], batches: [], bookmarks: [] });
   });
 
-  it('keeps tab.groupId untouched (absent means default Group)', () => {
+  it('drops the removed tab Groups: groups[] and every tab.groupId, keeping the tabs', () => {
     const pw = normalizeProjectWorkspace({
       tabs: [
         { id: 'a', type: 'file', path: 'x' },
-        { id: 'b', type: 'session', groupId: 'g1' },
+        { id: 'b', type: 'session', resumeId: 's1', groupId: 'g1' },
       ],
       groups: [{ id: 'g1', name: 'Work' }],
     });
-    expect(pw.tabs[0]).not.toHaveProperty('groupId');
-    expect((pw.tabs[1] as any).groupId).toBe('g1');
-  });
-
-  it('drops malformed, duplicate and default-id groups', () => {
-    const pw = normalizeProjectWorkspace({
-      tabs: [],
-      groups: [
-        { id: 'g1', name: 'Work' },
-        { id: 'g1', name: 'Dup' },
-        { id: DEFAULT_GROUP_ID, name: 'Default' },
-        { id: '', name: 'empty id' },
-        { id: 'g2', name: '' },
-        { id: 'g3' },
-        'junk',
-        { id: 'g4', name: 'Ok', extra: true },
-      ],
-    });
-    expect(pw.groups).toEqual([
-      { id: 'g1', name: 'Work' },
-      { id: 'g4', name: 'Ok' },
+    expect(pw).not.toHaveProperty('groups');
+    expect(pw.tabs).toEqual([
+      { id: 'a', type: 'file', path: 'x' },
+      { id: 'b', type: 'session', resumeId: 's1' },
     ]);
   });
 
   it('tolerates garbage input', () => {
-    expect(normalizeProjectWorkspace(null)).toEqual({ tabs: [], groups: [], batches: [], bookmarks: [] });
-    expect(normalizeProjectWorkspace({ tabs: 'nope', groups: 'nope' })).toEqual({ tabs: [], groups: [], batches: [], bookmarks: [] });
+    expect(normalizeProjectWorkspace(null)).toEqual({ tabs: [], batches: [], bookmarks: [] });
+    expect(normalizeProjectWorkspace({ tabs: 'nope', groups: 'nope' })).toEqual({ tabs: [], batches: [], bookmarks: [] });
   });
 
   it('fills batches: [] for slots written before Review existed and drops legacy pins', () => {

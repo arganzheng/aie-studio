@@ -224,9 +224,6 @@ export function registerProjectRoutes(app: FastifyInstance) {
       if (!body || typeof body !== 'object' || !Array.isArray(body.tabs)) {
         return reply.code(400).send({ error: 'invalid body' });
       }
-      if (body.groups !== undefined && !Array.isArray(body.groups)) {
-        return reply.code(400).send({ error: 'invalid body' });
-      }
       return putProjectWorkspace(uid, req.params.pid, body);
     },
   );

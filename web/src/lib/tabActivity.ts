@@ -21,25 +21,6 @@ export function activityMark(a: TabActivity | null | undefined): ActivityMark | 
   return null;
 }
 
-// Roll a Group's tabs up into one marker (rule-313): any awaiting wins,
-// else any generating, else none.
-export function groupActivityMark(
-  tabs: ReadonlyArray<{ id: string; groupId?: string }>,
-  activity: Readonly<Record<string, TabActivity>>,
-  groupId: string,
-  tabGroupId: (tab: { groupId?: string }) => string,
-): ActivityMark | null {
-  let generating = false;
-  for (const t of tabs) {
-    if (tabGroupId(t) !== groupId) continue;
-    const a = activity[t.id];
-    if (!a) continue;
-    if (a.awaitingInput) return 'awaiting';
-    if (a.generating) generating = true;
-  }
-  return generating ? 'generating' : null;
-}
-
 export function sameActivity(a: TabActivity | undefined, b: TabActivity): boolean {
   return !!a && a.generating === b.generating && a.awaitingInput === b.awaitingInput;
 }

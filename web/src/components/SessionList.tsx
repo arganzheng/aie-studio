@@ -3,12 +3,9 @@ import { createPortal } from 'react-dom';
 import { archiveSession, deleteSessionForever, listAllSessions, renameAnySession, stopSession, type SubagentInfo } from '../api';
 import { useFitMenuTop } from '../lib/fitMenu';
 import {
-  NO_FILTER, childSessions, filterSessions, isFiltering, sectionSessions, sessionRowKey, sessionStatus,
-  type SectionGroup, type SectionTab, type SessionFilter, type SessionKind, type SessionRow, type SessionSection,
+  NO_FILTER, childSessions, filterSessions, isFiltering, openSessionTabs, sessionRowKey, sessionStatus,
+  type SessionFilter, type SessionKind, type SessionRow, type SessionTabLike,
 } from '../lib/sessionList';
-import { groupActivityMark, type TabActivity } from '../lib/tabActivity';
-import { TabActivityMark } from './TabActivityMark';
-import { tabGroupId } from '../types';
 import { providerIcon } from './TabBar';
 import { SessionSubagents } from './SessionSubagents';
 
@@ -19,18 +16,13 @@ import { SessionSubagents } from './SessionSubagents';
 // refreshed on a timer while visible and whenever `refreshSignal` changes
 // (a session event arrived).
 //
-// It also hosts the project's tab Groups (the former Groups view): in the
-// "This project" scope the list is split into one section per Group — its
-// open session tabs, in tab order — then a History section for sessions with
-// no open tab. A section header switches to that Group; its ⋯ menu renames
-// or deletes it; headers drag to reorder, and session rows drag onto a
-// section (or use "Move to …") to move their tab. "All projects" and the
-// Archived filter keep the flat list: Groups are per project.
+// The list is flat (model: web.SessionList rule "flat"): opening or closing a
+// session's tab never moves its row, it only toggles the row's "open" mark,
+// and clicking an open row goes to its tab. Session tabs that aren't listed
+// yet (a fresh session before its first reply) sit on top.
 
 const POLL_MS = 5000;
 const SCOPE_LS_KEY = 'remote-ide:sessionListScope';
-const COLLAPSED_LS_KEY = 'remote-ide:sessionSectionsCollapsed';
-const HISTORY_ID = '__history__';
 const SUBAGENTS_OPEN_LS_KEY = 'remote-ide:sessionSubagentsOpen';
 
 type Scope = 'project' | 'all';
@@ -44,35 +36,15 @@ function loadStringSet(key: string): Set<string> {
     return new Set(Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
   } catch { return new Set(); }
 }
-function loadCollapsed(): Set<string> {
-  try {
-    const v = JSON.parse(localStorage.getItem(COLLAPSED_LS_KEY) || '[]');
-    return new Set(Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
-  } catch { return new Set(); }
-}
 
-// The project's tab Groups, owned by App.
+// The active project's open tabs, owned by App.
 export type SessionListWorkspace = {
-  tabs: readonly SectionTab[];
-  groups: readonly SectionGroup[];
-  defaultGroupName: string;
-  activeGroupId: string;
+  tabs: readonly SessionTabLike[];
   activeTabId: string | null;
-  activity: Readonly<Record<string, TabActivity>>;
-  onSelectGroup: (groupId: string) => void;
   onActivateTab: (tabId: string) => void;
-  onCreateGroup: () => void;
-  onRenameGroup: (groupId: string, name: string) => void;
-  onDeleteGroup: (groupId: string) => void;
-  onReorderGroups: (next: SectionGroup[]) => void;
-  onMoveTab: (tabId: string, groupId: string) => void;
 };
 
-type Menu =
-  | { kind: 'row'; row: SessionRow | null; tabId: string | null; groupId: string | null; top: number; left: number }
-  | { kind: 'group'; groupId: string; top: number; left: number };
-type Drag = { kind: 'group'; id: string } | { kind: 'tab'; id: string; from: string };
-type Drop = { id: string; pos: 'before' | 'after' | 'into' };
+type Menu = { row: SessionRow | null; tabId: string | null; top: number; left: number };
 
 export function SessionList({
   projectId,
@@ -98,7 +70,7 @@ export function SessionList({
   // The session in the tab on screen, if any.
   activeKey: string | null;
   refreshSignal: number;
-  // Present → Group sections in the "This project" scope.
+  // Present → rows with an open tab are marked and go to it.
   workspace?: SessionListWorkspace;
   // The subagent in the tab on screen, if any: `<sessionId>:<agentId>`.
   activeSubagent?: string | null;
@@ -124,13 +96,9 @@ export function SessionList({
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [menu, setMenu] = useState<Menu | null>(null);
   const [renaming, setRenaming] = useState<{ key: string; text: string } | null>(null);
-  const [groupRenaming, setGroupRenaming] = useState<{ id: string; text: string } | null>(null);
-  const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed);
   // Session rows (sessionRowKey) whose subagents are shown.
   const [subagentsOpen, setSubagentsOpen] = useState<Set<string>>(() => loadStringSet(SUBAGENTS_OPEN_LS_KEY));
   const [tick, setTick] = useState(0);
-  const [drag, setDrag] = useState<Drag | null>(null);
-  const [drop, setDrop] = useState<Drop | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const menuRef = useRef<HTMLDivElement>(null);
   const menuTop = useFitMenuTop(menuRef, menu, menu?.top ?? 0);
@@ -139,9 +107,6 @@ export function SessionList({
   useEffect(() => {
     try { localStorage.setItem(SCOPE_LS_KEY, scope); } catch {}
   }, [scope]);
-  useEffect(() => {
-    try { localStorage.setItem(COLLAPSED_LS_KEY, JSON.stringify([...collapsed])); } catch {}
-  }, [collapsed]);
   useEffect(() => {
     try { localStorage.setItem(SUBAGENTS_OPEN_LS_KEY, JSON.stringify([...subagentsOpen].slice(-200))); } catch {}
   }, [subagentsOpen]);
@@ -196,19 +161,11 @@ export function SessionList({
   const archivedCount = useMemo(() => (rows ?? []).filter((r) => r.archived).length, [rows]);
   const filtering = filter.query.trim() !== '' || isFiltering(filter);
 
-  // Sections only where Groups mean something: this project, current sessions.
-  const sectioned = useMemo(() => {
-    if (!workspace || scope !== 'project' || filter.archived || rows === null) return null;
-    return sectionSessions({
-      projectId,
-      rows: shown,
-      allRows: rows.filter((r) => !r.archived),
-      tabs: workspace.tabs,
-      groups: workspace.groups,
-      defaultName: workspace.defaultGroupName,
-      filtering,
-    });
-  }, [workspace, scope, filter.archived, rows, shown, projectId, filtering]);
+  // Which rows have an open tab in this project, and the session tabs not listed yet.
+  const openTabs = useMemo(
+    () => (workspace && rows !== null ? openSessionTabs({ projectId, allRows: rows, tabs: workspace.tabs }) : null),
+    [workspace, rows, projectId],
+  );
 
   // Child sessions sit under their parent rather than at the top level —
   // except while searching / filtering, where every match is listed flat.
@@ -237,12 +194,6 @@ export function SessionList({
     });
   }
 
-  function commitGroupRename() {
-    if (!groupRenaming || !workspace) return;
-    workspace.onRenameGroup(groupRenaming.id, groupRenaming.text);
-    setGroupRenaming(null);
-  }
-
   function confirmDelete(row: SessionRow) {
     setMenu(null);
     const running = row.live ? '\n\nIt is running now and will be stopped first.' : '';
@@ -260,60 +211,10 @@ export function SessionList({
   }
   const newKinds: SessionKind[] = [...(onNewClaude ? ['claude' as const] : []), ...(onNewDevin ? ['devin' as const] : [])];
 
-  function toggleCollapsed(id: string) {
-    const key = `${projectId}:${id}`;
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
-  }
-  const isCollapsed = (id: string) => collapsed.has(`${projectId}:${id}`) && !filtering;
-
   function menuAt(e: React.MouseEvent, width: number) {
     e.stopPropagation();
     const r = e.currentTarget.getBoundingClientRect();
     return { top: r.bottom + 2, left: Math.max(4, Math.min(r.right - width, window.innerWidth - width - 14)) };
-  }
-
-  // ---- drag and drop (HTML5; mouse only — touch uses the menus) ----
-  function endDrag() { setDrag(null); setDrop(null); }
-
-  function onSectionDragOver(e: React.DragEvent, s: SessionSection) {
-    if (!drag) return;
-    if (drag.kind === 'tab') {
-      if (drag.from === s.groupId) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      if (drop?.id !== s.groupId || drop.pos !== 'into') setDrop({ id: s.groupId, pos: 'into' });
-      return;
-    }
-    // Reordering: user Groups only, onto another user Group's header.
-    if (s.isDefault || drag.id === s.groupId) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const pos = e.clientY < r.top + r.height / 2 ? 'before' : 'after';
-    if (drop?.id !== s.groupId || drop.pos !== pos) setDrop({ id: s.groupId, pos });
-  }
-
-  function onSectionDrop(e: React.DragEvent, s: SessionSection) {
-    e.preventDefault();
-    const d = drag;
-    const target = drop?.id === s.groupId ? drop : null;
-    endDrag();
-    if (!d || !target || !workspace) return;
-    if (d.kind === 'tab') { workspace.onMoveTab(d.id, s.groupId); return; }
-    const groups = workspace.groups;
-    const moved = groups.find((g) => g.id === d.id);
-    if (!moved) return;
-    const without = groups.filter((g) => g.id !== d.id);
-    let idx = without.findIndex((g) => g.id === s.groupId);
-    if (idx < 0) return;
-    if (target.pos === 'after') idx += 1;
-    const next = [...without.slice(0, idx), moved, ...without.slice(idx)];
-    if (next.every((g, i) => g.id === groups[i]?.id)) return;
-    workspace.onReorderGroups(next);
   }
 
   const seg = <T extends string>(value: T, options: ReadonlyArray<readonly [T, string]>, onPick: (v: T) => void) => (
@@ -324,17 +225,17 @@ export function SessionList({
     </div>
   );
 
-  // One session line. `tabId`/`groupId` are set for rows inside a Group
-  // section (an open tab); `row` is null for a tab not listed yet.
-  function renderRow(row: SessionRow | null, opts: { tabId?: string; groupId?: string; title?: string; kind?: SessionKind; depth?: number } = {}): ReactNode {
+  // One session line. `tabId` is the open tab showing it, if any; `row` is
+  // null for a tab not listed yet.
+  function renderRow(row: SessionRow | null, opts: { tabId?: string; title?: string; kind?: SessionKind; depth?: number } = {}): ReactNode {
     const key = row ? sessionRowKey(row) : `tab:${opts.tabId}`;
+    const tabId = opts.tabId ?? (row ? openTabs?.tabOf.get(key) : undefined);
     const isUnread = row ? unread.has(key) : false;
     const status = row ? sessionStatus(row, isUnread, now) : { tone: 'idle' as const, label: 'Not started' };
     const project = row && scope === 'all' ? projectNames.get(row.projectId) : undefined;
     const editing = row !== null && renaming?.key === key;
     const kind = row?.kind ?? opts.kind ?? 'claude';
-    const isActive = opts.tabId ? opts.tabId === workspace?.activeTabId : key === activeKey;
-    const draggable = !!(opts.tabId && opts.groupId && workspace && !editing);
+    const isActive = tabId ? tabId === workspace?.activeTabId : key === activeKey;
     const depth = opts.depth ?? 0;
     const subs = row?.kind === 'claude' && row.subagents && row.subagents.total > 0 ? row.subagents : null;
     // Child sessions of this one (capped depth: a link cycle can't recurse forever).
@@ -351,20 +252,12 @@ export function SessionList({
     return (
       <Fragment key={key}>
       <div
-        className={`session-row tone-${status.tone}${isActive ? ' active' : ''}${row?.archived ? ' archived' : ''}${drag?.kind === 'tab' && drag.id === opts.tabId ? ' dragging' : ''}${depth > 0 ? ' child' : ''}`}
+        className={`session-row tone-${status.tone}${isActive ? ' active' : ''}${tabId ? ' open' : ''}${row?.archived ? ' archived' : ''}${depth > 0 ? ' child' : ''}`}
         style={depth > 0 ? { paddingLeft: 12 + depth * 18 } : undefined}
-        title={row?.title ?? opts.title}
-        draggable={draggable}
-        onDragStart={draggable ? (e) => {
-          e.stopPropagation();
-          e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData('text/plain', opts.tabId!);
-          setDrag({ kind: 'tab', id: opts.tabId!, from: opts.groupId! });
-        } : undefined}
-        onDragEnd={endDrag}
+        title={`${row?.title ?? opts.title}${tabId ? ' — open in a tab' : ''}`}
         onClick={() => {
           if (editing) return;
-          if (opts.tabId && workspace) workspace.onActivateTab(opts.tabId);
+          if (tabId && workspace) workspace.onActivateTab(tabId);
           else if (row) onOpen(row);
         }}
       >
@@ -422,7 +315,7 @@ export function SessionList({
           className="session-row-menu-btn"
           title="More"
           aria-label="More"
-          onClick={(e) => setMenu({ kind: 'row', row, tabId: opts.tabId ?? null, groupId: opts.groupId ?? null, ...menuAt(e, 200) })}
+          onClick={(e) => setMenu({ row, tabId: tabId ?? null, ...menuAt(e, 200) })}
         >⋯</button>
       </div>
       {subsOpen && row && subs && (
@@ -445,122 +338,12 @@ export function SessionList({
 
   const topLevel = (list: readonly SessionRow[]) => (kids ? list.filter((r) => !kids.childRowKeys.has(sessionRowKey(r))) : list);
 
-  function renderSection(s: SessionSection): ReactNode {
-    const ws = workspace!;
-    const closed = isCollapsed(s.groupId);
-    const isActive = s.groupId === ws.activeGroupId;
-    const renamingThis = groupRenaming?.id === s.groupId;
-    const dropCls = drop?.id === s.groupId ? ` drop-${drop.pos}` : '';
-    const dragCls = drag?.kind === 'group' && drag.id === s.groupId ? ' dragging' : '';
-    return (
-      <div
-        key={s.groupId}
-        className={`sessions-section${isActive ? ' active' : ''}${dropCls}${dragCls}`}
-        onDragOver={(e) => onSectionDragOver(e, s)}
-        onDragLeave={(e) => { if (drop?.id === s.groupId && !e.currentTarget.contains(e.relatedTarget as Node)) setDrop(null); }}
-        onDrop={(e) => onSectionDrop(e, s)}
-      >
-        <div
-          className="sessions-section-head"
-          draggable={!s.isDefault && !renamingThis}
-          onDragStart={(e) => {
-            if (s.isDefault) { e.preventDefault(); return; }
-            e.dataTransfer.effectAllowed = 'move';
-            e.dataTransfer.setData('text/plain', s.groupId);
-            setDrag({ kind: 'group', id: s.groupId });
-          }}
-          onDragEnd={endDrag}
-          onClick={() => { if (!renamingThis) ws.onSelectGroup(s.groupId); }}
-          onDoubleClick={() => { if (!s.isDefault) setGroupRenaming({ id: s.groupId, text: s.name }); }}
-          title={s.isDefault ? 'Default group (cannot be deleted) — click to switch to it' : `${s.name} — click to switch to this group`}
-        >
-          <button
-            type="button"
-            className="sessions-section-caret"
-            aria-label={closed ? 'Expand' : 'Collapse'}
-            aria-expanded={!closed}
-            onClick={(e) => { e.stopPropagation(); toggleCollapsed(s.groupId); }}
-          >{closed ? '▸' : '▾'}</button>
-          <span className="sessions-section-icon">{s.isDefault ? '▣' : '▢'}</span>
-          {renamingThis ? (
-            <input
-              autoFocus
-              className="group-rename"
-              value={groupRenaming!.text}
-              onFocus={(e) => e.currentTarget.select()}
-              onChange={(e) => setGroupRenaming({ id: s.groupId, text: e.target.value })}
-              onBlur={commitGroupRename}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitGroupRename();
-                if (e.key === 'Escape') setGroupRenaming(null);
-              }}
-              onClick={(e) => e.stopPropagation()}
-            />
-          ) : (
-            <span className="sessions-section-name">{s.name}</span>
-          )}
-          <TabActivityMark mark={groupActivityMark(ws.tabs, ws.activity, s.groupId, tabGroupId)} />
-          <span className="sessions-section-count" title={`${s.tabCount} tab${s.tabCount === 1 ? '' : 's'}`}>{s.tabCount}</span>
-          {!s.isDefault && !renamingThis && (
-            <button
-              type="button"
-              className="sessions-section-menu-btn"
-              title="Group menu"
-              aria-label="Group menu"
-              onClick={(e) => setMenu({ kind: 'group', groupId: s.groupId, ...menuAt(e, 200) })}
-            >⋯</button>
-          )}
-        </div>
-        {!closed && (
-          <>
-            {s.items.filter((it) => !kids?.childTabIds.has(it.tabId)).map((it) => renderRow(it.row, { tabId: it.tabId, groupId: s.groupId, title: it.title, kind: it.kind }))}
-            {s.otherTabs > 0 && (
-              <div className="sessions-section-note" onClick={() => ws.onSelectGroup(s.groupId)}>
-                + {s.otherTabs} other tab{s.otherTabs === 1 ? '' : 's'}
-              </div>
-            )}
-            {s.tabCount === 0 && <div className="sessions-section-note">Empty — new tabs open in the selected group</div>}
-            {s.tabCount > 0 && s.items.length === 0 && s.otherTabs === 0 && (
-              <div className="sessions-section-note">No sessions</div>
-            )}
-            {(() => {
-              const nested = s.items.filter((it) => kids?.childTabIds.has(it.tabId)).length;
-              return nested > 0 && nested === s.items.length
-                ? <div className="sessions-section-note">{nested} child session tab{nested === 1 ? '' : 's'} — listed under {nested === 1 ? 'its' : 'their'} parent</div>
-                : null;
-            })()}
-          </>
-        )}
-      </div>
-    );
-  }
-
   function renderBody(): ReactNode {
     if (error) return <div className="sessions-empty error">{error}</div>;
     if (rows === null) return <div className="sessions-empty">Loading…</div>;
-    if (sectioned) {
-      const { sections, history } = sectioned;
-      const historyClosed = isCollapsed(HISTORY_ID);
-      if (sections.length === 0 && history.length === 0) {
-        return <div className="sessions-empty">{rows.length === 0 ? 'No sessions yet — start one with ＋' : 'No sessions match'}</div>;
-      }
-      return (
-        <>
-          {sections.map(renderSection)}
-          {history.length > 0 && (
-            <div className="sessions-section history">
-              <div className="sessions-section-head" onClick={() => toggleCollapsed(HISTORY_ID)} title="Sessions with no open tab">
-                <span className="sessions-section-caret" aria-hidden="true">{historyClosed ? '▸' : '▾'}</span>
-                <span className="sessions-section-name">History</span>
-                <span className="sessions-section-count">{topLevel(history).length}</span>
-              </div>
-              {!historyClosed && topLevel(history).map((r) => renderRow(r))}
-            </div>
-          )}
-        </>
-      );
-    }
-    if (shown.length === 0) {
+    // Fresh tabs not listed yet (children sit under their parent instead).
+    const pending = !filtering && openTabs ? openTabs.pending.filter((p) => !kids?.childTabIds.has(p.tabId)) : [];
+    if (shown.length === 0 && pending.length === 0) {
       return (
         <div className="sessions-empty">
           {rows.length === 0 ? 'No sessions yet — start one with ＋'
@@ -569,30 +352,18 @@ export function SessionList({
         </div>
       );
     }
-    return topLevel(shown).map((r) => renderRow(r));
+    return (
+      <>
+        {pending.map((p) => renderRow(null, { tabId: p.tabId, title: p.title, kind: p.kind }))}
+        {topLevel(shown).map((r) => renderRow(r))}
+      </>
+    );
   }
-
-  const menuGroup = menu?.kind === 'group' ? workspace?.groups.find((g) => g.id === menu.groupId) : undefined;
-  const moveTargets = menu?.kind === 'row' && menu.tabId && workspace
-    ? [
-        ...workspace.groups.map((g) => ({ id: g.id, name: g.name })),
-        { id: 'default', name: workspace.defaultGroupName },
-      ].filter((g) => g.id !== menu.groupId)
-    : [];
 
   return (
     <div className="sessions-view">
       <div className="sessions-head">
         <span className="sessions-title">Sessions</span>
-        {workspace && scope === 'project' && (
-          <button
-            type="button"
-            className="sessions-icon-btn"
-            title="New group"
-            aria-label="New group"
-            onClick={workspace.onCreateGroup}
-          >⊞</button>
-        )}
         {newKinds.length > 0 && (
           <div className="sessions-new">
             <button
@@ -639,7 +410,7 @@ export function SessionList({
         </div>
       )}
       <div className="sessions-list">{renderBody()}</div>
-      {menu?.kind === 'row' && createPortal(
+      {menu && createPortal(
         <div ref={menuRef} className="tab-overflow-menu" style={{ top: menuTop, left: menu.left }}>
           <button
             className="overflow-action"
@@ -679,13 +450,6 @@ export function SessionList({
               }}
             >⎇ New child session in a worktree</button>
           )}
-          {moveTargets.map((g) => (
-            <button
-              key={g.id}
-              className="overflow-action"
-              onClick={() => { const tabId = menu.tabId!; setMenu(null); workspace!.onMoveTab(tabId, g.id); }}
-            >⇢ Move to {g.name}</button>
-          ))}
           {menu.row && (
             <button
               className="overflow-action"
@@ -723,14 +487,6 @@ export function SessionList({
           {menu.row?.kind === 'claude' && (
             <button className="overflow-action danger" onClick={() => confirmDelete(menu.row!)}>🗑 Delete…</button>
           )}
-        </div>,
-        document.body,
-      )}
-      {menu?.kind === 'group' && menuGroup && workspace && createPortal(
-        <div ref={menuRef} className="tab-overflow-menu" style={{ top: menuTop, left: menu.left }}>
-          <button className="overflow-action" onClick={() => { setMenu(null); workspace.onSelectGroup(menuGroup.id); }}>↗ Switch to group</button>
-          <button className="overflow-action" onClick={() => { setMenu(null); setGroupRenaming({ id: menuGroup.id, text: menuGroup.name }); }}>✎ Rename group</button>
-          <button className="overflow-action danger" onClick={() => { setMenu(null); workspace.onDeleteGroup(menuGroup.id); }}>🗑 Delete group…</button>
         </div>,
         document.body,
       )}

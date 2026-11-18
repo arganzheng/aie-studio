@@ -14,18 +14,11 @@ export type Project = {
   createdAt: number;
 };
 
-// groupId: owning Group within the project. Absent on legacy tabs, which
-// means "the project's implicit default Group" — no migration needed.
 export type Tab =
-  | { id: string; type: 'file'; path: string; groupId?: string }
-  | { id: string; type: 'session'; resumeId?: string; title?: string; groupId?: string }
-  | { id: string; type: 'claude-sdk'; resumeId?: string; title?: string; groupId?: string }
-  | { id: string; type: 'devin'; resumeId?: string; title?: string; groupId?: string };
-
-// User-created tab group (cmux-style workspace inside a project). The default
-// Group (id DEFAULT_GROUP_ID) is implicit — never stored in groups[].
-export type Group = { id: string; name: string };
-export const DEFAULT_GROUP_ID = 'default';
+  | { id: string; type: 'file'; path: string }
+  | { id: string; type: 'session'; resumeId?: string; title?: string }
+  | { id: string; type: 'claude-sdk'; resumeId?: string; title?: string }
+  | { id: string; type: 'devin'; resumeId?: string; title?: string };
 
 // Review (model: entity Batch / Comment). A Batch collects Comments until the
 // user sends the whole batch to a session as one prompt. A Comment may quote
@@ -63,7 +56,6 @@ export const MAX_BOOKMARK_LABEL_LENGTH = 80;
 
 export type ProjectWorkspace = {
   tabs: Tab[];
-  groups: Group[];
   batches: Batch[];
   bookmarks: Bookmark[];
 };
@@ -240,9 +232,10 @@ export async function getProject(uid: string, id: string): Promise<Project | nul
   return projects.find((p) => p.id === id) ?? null;
 }
 
-// Canonical per-project slot shape. Only `tabs` and `groups` survive; legacy
-// activeTabId is dropped (per-browser in localStorage now). groups[] keeps
-// only well-formed { id, name } entries and never the implicit default Group.
+// Canonical per-project slot shape: tabs, batches, bookmarks. Legacy fields
+// are dropped: activeTabId (per-browser in localStorage now) and the removed
+// tab Groups (`groups`, and `groupId` on each tab) — every tab of an old
+// Group simply shows in the project's one tab bar.
 function nonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.length > 0;
 }
@@ -313,19 +306,13 @@ export function normalizeBookmarks(raw: unknown): Bookmark[] {
 }
 
 export function normalizeProjectWorkspace(pw: unknown): ProjectWorkspace {
-  const raw = (pw ?? {}) as { tabs?: unknown; groups?: unknown; batches?: unknown; bookmarks?: unknown };
-  const tabs = Array.isArray(raw.tabs) ? (raw.tabs as Tab[]) : [];
-  const seen = new Set<string>();
-  const groups: Group[] = [];
-  for (const g of Array.isArray(raw.groups) ? raw.groups : []) {
-    const id = (g as any)?.id;
-    const name = (g as any)?.name;
-    if (typeof id !== 'string' || !id || typeof name !== 'string' || !name) continue;
-    if (id === DEFAULT_GROUP_ID || seen.has(id)) continue;
-    seen.add(id);
-    groups.push({ id, name });
-  }
-  return { tabs, groups, batches: normalizeBatches(raw.batches), bookmarks: normalizeBookmarks(raw.bookmarks) };
+  const raw = (pw ?? {}) as { tabs?: unknown; batches?: unknown; bookmarks?: unknown };
+  const tabs = (Array.isArray(raw.tabs) ? raw.tabs : []).map((t) => {
+    if (!t || typeof t !== 'object' || !('groupId' in t)) return t as Tab;
+    const { groupId: _gone, ...rest } = t as Record<string, unknown>;
+    return rest as Tab;
+  });
+  return { tabs, batches: normalizeBatches(raw.batches), bookmarks: normalizeBookmarks(raw.bookmarks) };
 }
 
 export async function getWorkspace(uid: string): Promise<Workspace> {

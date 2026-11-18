@@ -84,12 +84,8 @@ export function TabBar({
   onExport,
   canExport,
   activeProjectName,
-  activeGroupName,
-  moveTargets,
-  onMoveTab,
   activity,
 }: {
-  // Only the active Group's tabs — App filters before passing them in.
   tabs: Tab[];
   // Model: web.TabActivityMarkers — per-tab live state reported by mounted panels.
   activity?: Record<string, TabActivity>;
@@ -124,19 +120,12 @@ export function TabBar({
   onExport?: () => void;
   canExport?: boolean;
   activeProjectName?: string | null;
-  activeGroupName?: string;
-  // Other Groups the active tab can be moved to ("Move to …" overflow entries).
-  moveTargets?: { id: string; name: string }[];
-  onMoveTab?: (tabId: string, groupId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const activeForMenu = tabs.find((t) => t.id === activeTabId);
   const observableKind = (t: Tab) => t.type === 'session' || t.type === 'claude-sdk' || t.type === 'devin';
   const observable = !!onObserve && !!activeForMenu && observableKind(activeForMenu);
   const observeEnabled = !!activeForMenu && observableKind(activeForMenu) && !!activeForMenu.resumeId;
-  // Drill-down level of the overflow menu; 'move' shows the Group list for
-  // "Move tab to …" (model: web.MoveTabToGroup). Reset whenever the menu closes.
-  const [submenu, setSubmenu] = useState<'move' | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -150,7 +139,7 @@ export function TabBar({
   }
 
   useEffect(() => {
-    if (!open) { setSubmenu(null); return; }
+    if (!open) return;
     function onDown(e: MouseEvent | TouchEvent) {
       const t = e.target as Node;
       if (menuRef.current?.contains(t) || btnRef.current?.contains(t)) return;
@@ -170,7 +159,7 @@ export function TabBar({
         <button
           className="tab-menu"
           onClick={onMenuClick}
-          title={activeGroupName ? `${activeProjectName ?? ''} · ${activeGroupName}` : activeProjectName ?? 'Menu'}
+          title={activeProjectName ?? 'Menu'}
         >☰</button>
       )}
       {(() => {
@@ -216,28 +205,7 @@ export function TabBar({
       </div>
       <div className="tab-overflow">
         <button ref={btnRef} className="tab-overflow-btn" onClick={toggleMenu} aria-label="Tab menu">⋮</button>
-        {open && submenu === 'move' && activeTabId && onMoveTab && (
-          <div
-            ref={menuRef}
-            className="tab-overflow-menu"
-            style={{ top: menuPos.top, right: menuPos.right }}
-          >
-            <button
-              className="overflow-action overflow-back"
-              onClick={() => setSubmenu(null)}
-            >‹ Back</button>
-            <div className="overflow-heading">Move tab to</div>
-            <div className="overflow-divider" />
-            {(moveTargets ?? []).map((g) => (
-              <button
-                key={g.id}
-                className="overflow-action"
-                onClick={() => { setOpen(false); onMoveTab(activeTabId, g.id); }}
-              >{g.name}</button>
-            ))}
-          </div>
-        )}
-        {open && submenu === null && (
+        {open && (
           <div
             ref={menuRef}
             className="tab-overflow-menu"
@@ -276,13 +244,7 @@ export function TabBar({
                 onClick={() => { setOpen(false); onRenameSdkSession(activeForMenu); }}
               >✎ Rename session</button>
             )}
-            {onMoveTab && activeTabId && (moveTargets ?? []).length > 0 && (
-              <button
-                className="overflow-action overflow-submenu"
-                onClick={() => setSubmenu('move')}
-              >→ Move tab to …<span className="overflow-chevron">›</span></button>
-            )}
-            {activeTabId && ((onRefresh || onExport || observable || (onRenameSdkSession && activeForMenu?.type === 'claude-sdk')) || (onMoveTab && (moveTargets ?? []).length > 0)) && (
+            {activeTabId && (onRefresh || onExport || observable || (onRenameSdkSession && activeForMenu?.type === 'claude-sdk')) && (
               <div className="overflow-divider" />
             )}
             {onNewSession && (

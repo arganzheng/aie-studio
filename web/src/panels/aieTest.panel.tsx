@@ -26,10 +26,10 @@ import {
 
 // Model: web.AieTestPanel / page web/AieTestView. Single-column, three views
 // (overview / case editor / report detail) held in component state; the Tab
-// itself only carries { id, type, groupId }.
+// itself only carries { id, type }.
 declare module '../types' {
   interface TabKindMap {
-    'aie-test': { id: string; type: 'aie-test'; groupId?: string };
+    'aie-test': { id: string; type: 'aie-test' };
   }
 }
 

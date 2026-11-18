@@ -8,19 +8,10 @@ export type Project = {
   createdAt: number;
 };
 
-// A user-created tab Group inside a project (cmux-style workspace). Every
-// project also has an implicit default Group (DEFAULT_GROUP_ID) that is never
-// stored in groups[], cannot be deleted/renamed, and is hidden while empty.
-export type Group = { id: string; name: string };
-export const DEFAULT_GROUP_ID = 'default';
-export const DEFAULT_GROUP_NAME = 'Default';
-
-// groupId: owning Group. Absent on legacy tabs = the default Group, so old
-// workspace files need no migration.
-export type FileTab = { id: string; type: 'file'; path: string; groupId?: string };
+export type FileTab = { id: string; type: 'file'; path: string };
 // Model: entity Tab (type=editor) / web.EditorPanel. Writable text editor over
 // a project file; deduped per project by path, independently of file tabs.
-export type EditorTab = { id: string; type: 'editor'; path: string; groupId?: string };
+export type EditorTab = { id: string; type: 'editor'; path: string };
 // initialPrompt: one-shot first message for a *new* session (used by other
 // tab kinds' ▶ buttons). ChatPanel sends it once the session is ready and
 // immediately strips it from the workspace, so a refresh never re-sends.
@@ -28,8 +19,8 @@ export type EditorTab = { id: string; type: 'editor'; path: string; groupId?: st
 // tab starts goes through the server's built-in wire proxy, which records
 // every API request/response under <project>/.aie/observations/wire/. Sticks
 // to the tab, so a resume keeps capturing.
-export type SessionTab = { id: string; type: 'session'; resumeId?: string; title?: string; initialPrompt?: string; wire?: boolean; groupId?: string };
-export type DevinTab = { id: string; type: 'devin'; resumeId?: string; title?: string; groupId?: string };
+export type SessionTab = { id: string; type: 'session'; resumeId?: string; title?: string; initialPrompt?: string; wire?: boolean };
+export type DevinTab = { id: string; type: 'devin'; resumeId?: string; title?: string };
 // Model: entity Tab (type=claude-sdk) / web.SdkChatPanel. A Claude session
 // driven through the Agent SDK bridge (server ClaudeSdkSessionBridge) instead
 // of the hand-rolled stream-json one. Same jsonl sessions as `session` tabs;
@@ -41,18 +32,18 @@ export type DevinTab = { id: string; type: 'devin'; resumeId?: string; title?: s
 // parentSessionId (model: Session.parent): this tab was opened with "New child
 // session" under that Claude session; the server records the link once the
 // child has a session id, and the Sessions tree shows it under its parent.
-export type ClaudeSdkTab = { id: string; type: 'claude-sdk'; resumeId?: string; title?: string; initialPrompt?: string; wire?: boolean; parentSessionId?: string; worktree?: string; groupId?: string };
+export type ClaudeSdkTab = { id: string; type: 'claude-sdk'; resumeId?: string; title?: string; initialPrompt?: string; wire?: boolean; parentSessionId?: string; worktree?: string };
 // Model: entity Tab (type=observe) / web.ObserveTab. A read-only observation
 // view of one AI session: origin points at the source session (type session
 // or devin, key = resumeId). No process, no WS — closing it never touches the
 // source session. Deduped per project by origin.
-export type ObserveTab = { id: string; type: 'observe'; origin: TabRef; title?: string; groupId?: string };
+export type ObserveTab = { id: string; type: 'observe'; origin: TabRef; title?: string };
 
 // Model: entity Tab (type=subagent) / web.SubagentPanel. A read-only view of
 // one subagent of a Claude session (its own conversation, live while it
 // runs). No process of its own: closing it never touches the subagent.
 // Deduped per project by sessionId + agentId.
-export type SubagentTab = { id: string; type: 'subagent'; sessionId: string; agentId: string; title?: string; groupId?: string };
+export type SubagentTab = { id: string; type: 'subagent'; sessionId: string; agentId: string; title?: string };
 
 // Extension point: panel modules can add entries to TabKindMap via TS
 // declaration merging (`declare module '../types' { interface TabKindMap { ... } }`)
@@ -130,14 +121,9 @@ export type Bookmark = {
 
 export type ProjectWorkspace = {
   tabs: Tab[];
-  groups: Group[];
   batches: Batch[];
   bookmarks: Bookmark[];
 };
-
-export function tabGroupId(tab: { groupId?: string }): string {
-  return tab.groupId ?? DEFAULT_GROUP_ID;
-}
 
 export type Workspace = {
   projects: Record<string, ProjectWorkspace>;

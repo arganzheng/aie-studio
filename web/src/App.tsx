@@ -44,8 +44,8 @@ import {
   createWorktree,
 } from './api';
 import { rewriteMovedPath } from './lib/movedPath';
-import type { Project, Tab, Group, Batch, Comment, TabRef, Workspace, ProjectWorkspace, Settings, LocalPrefs, ClaudeBridge } from './types';
-import { DEFAULT_GROUP_ID, DEFAULT_GROUP_NAME, tabGroupId, tabRef, sameTabRef } from './types';
+import type { Project, Tab, Batch, Comment, TabRef, Workspace, ProjectWorkspace, Settings, LocalPrefs, ClaudeBridge } from './types';
+import { tabRef, sameTabRef } from './types';
 import { isStandalone } from './usePwaInstall';
 
 const DEFAULT_SETTINGS: Settings = { sendKey: 'cmd-enter', theme: 'dark', fontScale: 'normal', model: '', devinModel: '', devinMode: '', devinVersion: '', showStderr: false, richCopy: false, review: false };
@@ -79,7 +79,7 @@ const SHOW_WIRE_MENU_LS_KEY = `${LS_PREFIX}showWireMenu`;
 const ENABLE_CLAUDE_LS_KEY = `${LS_PREFIX}enableClaude`;
 const ENABLE_DEVIN_LS_KEY = `${LS_PREFIX}enableDevin`;
 // Which list the left sidebar shows: the file tree or the Sessions view
-// (which also holds the tab Groups; a saved "groups" maps to it).
+// (a saved "groups", from when tab Groups existed, maps to Sessions).
 const SIDEBAR_VIEW_LS_KEY = `${LS_PREFIX}sidebarView`;
 // Desktop sidebar width (model: web.ResizeSidebar). null = CSS default (260px).
 const SIDEBAR_WIDTH_LS_KEY = `${LS_PREFIX}sidebarWidth`;
@@ -94,7 +94,6 @@ const REVIEW_COLLAPSED_WIDTH = 32;
 // Which draft Batch new comments go to, per project (model:
 // web.SetCurrentBatch). Per-device, like the active tab.
 const REVIEW_CURRENT_BATCH_LS_KEY = `${LS_PREFIX}reviewCurrentBatch`;
-// 'groups' is gone: the tab Groups now live in the Sessions view.
 type SidebarView = 'files' | 'sessions';
 // Active project id. In browser mode the URL hash is authoritative and this
 // is only written (never read on init). In PWA mode the URL hash is ignored
@@ -102,13 +101,11 @@ type SidebarView = 'files' | 'sessions';
 // the launcher, which would otherwise pin every cold-start to that project —
 // and this key is the sole source of truth for resuming.
 const LAST_PROJECT_LS_KEY = `${LS_PREFIX}lastProjectId`;
-// tabs / groups: per-project active tab id and active Group id. Both are
-// per-device (localStorage) — the tab + group lists themselves live on the
-// server. A missing group entry means the project's default Group.
+// tabs: per-project active tab id. Per-device (localStorage) — the tab lists
+// themselves live on the server.
 type ActiveState = {
   projectId: string | null;
   tabs: Record<string, string | null>;
-  groups: Record<string, string | null>;
 };
 
 function loadLocalPrefs(): LocalPrefs {
@@ -170,16 +167,12 @@ function projectIdFromHash(): string | null {
 function loadActive(): { state: ActiveState; events: string[] } {
   const events: string[] = [];
   let tabs: Record<string, string | null> = {};
-  let groups: Record<string, string | null> = {};
   try {
     const raw = localStorage.getItem(ACTIVE_LS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed?.tabs && typeof parsed.tabs === 'object' && !Array.isArray(parsed.tabs)) {
         tabs = parsed.tabs;
-        if (parsed.groups && typeof parsed.groups === 'object' && !Array.isArray(parsed.groups)) {
-          groups = parsed.groups;
-        }
         const detail = Object.entries(tabs)
           .map(([pid, tid]) => `${pid}:${tid ?? 'null'}`)
           .join(', ');
@@ -225,22 +218,13 @@ function loadActive(): { state: ActiveState; events: string[] } {
       events.push(`no stored active tab for project ${projectId} (not in map)`);
     }
   }
-  return { state: { projectId, tabs, groups }, events };
+  return { state: { projectId, tabs }, events };
 }
 
 function saveActive(s: ActiveState) {
   // Persist only the per-browser bit. projectId is reflected to the hash by a
   // separate effect so we don't fight ourselves on hashchange.
-  try { localStorage.setItem(ACTIVE_LS_KEY, JSON.stringify({ tabs: s.tabs, groups: s.groups })); } catch {}
-}
-
-function groupExists(pw: ProjectWorkspace | undefined, gid: string): boolean {
-  return gid === DEFAULT_GROUP_ID || (pw?.groups ?? []).some((g) => g.id === gid);
-}
-
-function groupName(groups: Group[], gid: string): string {
-  if (gid === DEFAULT_GROUP_ID) return DEFAULT_GROUP_NAME;
-  return groups.find((g) => g.id === gid)?.name ?? gid;
+  try { localStorage.setItem(ACTIVE_LS_KEY, JSON.stringify({ tabs: s.tabs })); } catch {}
 }
 
 function reconcileActive(
@@ -264,14 +248,10 @@ function reconcileActive(
     projectId = fallback;
   }
   const tabs: Record<string, string | null> = {};
-  const groups: Record<string, string | null> = {};
   const droppedProjects: string[] = [];
   for (const pid of Object.keys(prev.tabs)) {
     if (projects.some((p) => p.id === pid)) tabs[pid] = prev.tabs[pid];
     else droppedProjects.push(pid);
-  }
-  for (const pid of Object.keys(prev.groups)) {
-    if (projects.some((p) => p.id === pid)) groups[pid] = prev.groups[pid];
   }
   if (droppedProjects.length) {
     events.push(
@@ -284,48 +264,28 @@ function reconcileActive(
     const stored = tabs[projectId] ?? null;
     const hadEntry = projectId in tabs;
     const storedTab = stored ? list.find((t) => t.id === stored) ?? null : null;
-    const storedGid = groups[projectId] ?? null;
-    const gidValid = storedGid !== null && groupExists(pw, storedGid);
     let nextTabId: string | null;
-    let nextGid: string;
     if (storedTab) {
-      // The tab the user was looking at wins; its Group follows it.
       nextTabId = storedTab.id;
-      nextGid = tabGroupId(storedTab);
-      events.push(
-        `project ${projectId} stored active tab ${stored} ✓ present in tabs list (${list.length} open) → keep` +
-          (storedGid !== nextGid ? ` (active group ${storedGid ?? 'null'} → ${nextGid}, follows tab)` : ''),
-      );
-    } else if (gidValid) {
-      // Tab gone (closed elsewhere) or none selected: stay in the stored
-      // Group and pick its first tab, if any.
-      nextGid = storedGid;
-      nextTabId = list.find((t) => tabGroupId(t) === nextGid)?.id ?? null;
-      events.push(
-        `project ${projectId} stored active tab ${stored ?? 'null'} ${hadEntry ? '✗ not in tabs list' : '(none stored)'} → group ${nextGid} first tab = ${nextTabId ?? 'null'}`,
-      );
+      events.push(`project ${projectId} stored active tab ${stored} ✓ present in tabs list (${list.length} open) → keep`);
     } else {
-      const first = list[0] ?? null;
-      nextTabId = first?.id ?? null;
-      nextGid = first ? tabGroupId(first) : DEFAULT_GROUP_ID;
+      nextTabId = list[0]?.id ?? null;
       if (list.length === 0) {
-        events.push(`project ${projectId} has 0 open tabs → active tab = null, group = ${nextGid}`);
+        events.push(`project ${projectId} has 0 open tabs → active tab = null`);
       } else {
         events.push(
-          `project ${projectId} no valid stored tab/group (${storedGid ?? 'null'}) → default to tabs[0] = ${nextTabId ?? 'null'} in group ${nextGid} (${list.length} open)`,
+          `project ${projectId} stored active tab ${stored ?? 'null'} ${hadEntry ? '✗ not in tabs list' : '(none stored)'} → default to tabs[0] = ${nextTabId ?? 'null'} (${list.length} open)`,
         );
       }
     }
     tabs[projectId] = nextTabId;
-    groups[projectId] = nextGid;
   } else {
     events.push('no active project → active tab lookup skipped');
   }
   const changed =
     projectId !== prev.projectId ||
-    JSON.stringify(tabs) !== JSON.stringify(prev.tabs) ||
-    JSON.stringify(groups) !== JSON.stringify(prev.groups);
-  return { next: { projectId, tabs, groups }, events, changed };
+    JSON.stringify(tabs) !== JSON.stringify(prev.tabs);
+  return { next: { projectId, tabs }, events, changed };
 }
 
 function setProjectHash(id: string | null) {
@@ -433,7 +393,7 @@ export default function App() {
     reviewDragRef.current = null;
     e.currentTarget.releasePointerCapture(e.pointerId);
   };
-  // Latest workspace for event handlers that need the current groups list
+  // Latest workspace for event handlers that need the current tab lists
   // without threading it through every call site.
   const workspaceRef = useRef<Workspace>(workspace);
   workspaceRef.current = workspace;
@@ -501,7 +461,7 @@ export default function App() {
     }
   }, [fireReveal, fireInsert]);
   // Model: web.TabActivityMarkers rule-311. Mounted session panels report
-  // generating / awaitingInput; TabBar and the Sessions view's Group sections render the markers.
+  // generating / awaitingInput; TabBar renders the markers.
   const [tabActivity, setTabActivity] = useState<Record<string, TabActivity>>({});
   const reportActivity = useCallback((tabId: string, activity: TabActivity | null) => {
     setTabActivity((cur) => {
@@ -690,10 +650,10 @@ export default function App() {
     }
     saveActive(active);
     const summary = Object.entries(active.tabs)
-      .map(([pid, tid]) => `${pid}:${tid ?? 'null'}@${active.groups[pid] ?? DEFAULT_GROUP_ID}`)
+      .map(([pid, tid]) => `${pid}:${tid ?? 'null'}`)
       .join(', ');
     logDebug('persist', `wrote active-tab map to localStorage (${Object.keys(active.tabs).length} project(s)${summary ? ` — ${summary}` : ''})`);
-  }, [active.tabs, active.groups]);
+  }, [active.tabs]);
 
   // Reflect active project to the URL hash so it's shareable / survives copy.
   // lastProjectId is PWA-only: browser mode never reads it back (URL hash is
@@ -746,17 +706,9 @@ export default function App() {
   );
   const projectWs = activeProjectId ? workspace.projects[activeProjectId] : undefined;
   const tabs: Tab[] = projectWs?.tabs ?? [];
-  const groups: Group[] = projectWs?.groups ?? [];
   const batches: Batch[] = projectWs?.batches ?? [];
   const bookmarks: Bookmark[] = projectWs?.bookmarks ?? [];
   const activeTabId = activeProjectId ? (active.tabs[activeProjectId] ?? null) : null;
-  const activeGroupId = (activeProjectId ? active.groups[activeProjectId] : null) ?? DEFAULT_GROUP_ID;
-  // Only the active Group's tabs show in the TabBar; the others stay mounted
-  // (hidden) so switching Groups never drops a live session WS.
-  const visibleTabs = useMemo(
-    () => tabs.filter((t) => tabGroupId(t) === activeGroupId),
-    [tabs, activeGroupId],
-  );
 
   // Narrow signatures for the reconcile effect. Depending on the full
   // `workspace` / `active` objects makes reconcile fire on every onTitle /
@@ -771,10 +723,7 @@ export default function App() {
   );
   const activeTabsSig = useMemo(() => {
     if (!activeProjectId) return '';
-    const pw = workspace.projects[activeProjectId];
-    const tabsSig = (pw?.tabs ?? []).map((t) => `${t.id}@${tabGroupId(t)}`).join('\0');
-    const groupsSig = (pw?.groups ?? []).map((g) => g.id).join('\0');
-    return `${tabsSig}|${groupsSig}`;
+    return (workspace.projects[activeProjectId]?.tabs ?? []).map((t) => t.id).join('\0');
   }, [workspace, activeProjectId]);
   const activeTabsMapKeysSig = useMemo(
     () => Object.keys(active.tabs).sort().join('\0'),
@@ -802,7 +751,7 @@ export default function App() {
       setActive(next);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, projectIdsSig, activeProjectId, activeTabId, activeGroupId, activeTabsSig, activeTabsMapKeysSig]);
+  }, [loaded, projectIdsSig, activeProjectId, activeTabId, activeTabsSig, activeTabsMapKeysSig]);
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const activeExport = useMemo(
     () => (activeTabId ? exportApiRef.current.get(activeTabId) ?? null : null),
@@ -905,66 +854,37 @@ export default function App() {
     });
   }
 
-  // Remember the last active tab per Group so switching back to a Group
-  // restores where the user was, not just its first tab. Keyed "pid:gid".
-  const lastTabByGroup = useRef<Map<string, string>>(new Map());
-
-  function setActiveSelection(projectId: string, groupId: string, tabId: string | null) {
-    if (tabId) lastTabByGroup.current.set(`${projectId}:${groupId}`, tabId);
+  function setActiveSelection(projectId: string, tabId: string | null) {
     setActive((a) => {
       const prevTab = a.tabs[projectId] ?? null;
-      const prevGid = a.groups[projectId] ?? DEFAULT_GROUP_ID;
-      if (prevTab === tabId && prevGid === groupId) {
-        logDebug('nav', `setActiveSelection(${projectId}, ${groupId}, ${tabId ?? 'null'}) — already active, no-op`);
+      if (prevTab === tabId) {
+        logDebug('nav', `setActiveSelection(${projectId}, ${tabId ?? 'null'}) — already active, no-op`);
         return a;
       }
-      logDebug('nav', `setActiveSelection: project ${projectId} tab ${prevTab ?? 'null'} → ${tabId ?? 'null'}, group ${prevGid} → ${groupId}`);
-      return {
-        ...a,
-        tabs: { ...a.tabs, [projectId]: tabId },
-        groups: { ...a.groups, [projectId]: groupId },
-      };
+      logDebug('nav', `setActiveSelection: project ${projectId} tab ${prevTab ?? 'null'} → ${tabId ?? 'null'}`);
+      return { ...a, tabs: { ...a.tabs, [projectId]: tabId } };
     });
   }
 
-  // Activate a tab; the active Group follows the tab (it may live in another
-  // Group, e.g. when a file already open elsewhere is re-opened).
   function setActiveTab(projectId: string, tabId: string | null, tabList?: Tab[]) {
     const list = tabList ?? workspaceRef.current.projects[projectId]?.tabs ?? [];
     const tab = tabId ? list.find((t) => t.id === tabId) : undefined;
-    const gid = tab ? tabGroupId(tab) : (active.groups[projectId] ?? DEFAULT_GROUP_ID);
-    setActiveSelection(projectId, gid, tab ? tab.id : null);
-  }
-
-  // Switch Group: restore its last active tab if still there, else its first
-  // tab, else nothing (empty Group → empty TabBar).
-  function setActiveGroup(projectId: string, groupId: string, tabList?: Tab[]) {
-    const list = (tabList ?? workspaceRef.current.projects[projectId]?.tabs ?? []).filter(
-      (t) => tabGroupId(t) === groupId,
-    );
-    const remembered = lastTabByGroup.current.get(`${projectId}:${groupId}`);
-    const tab = (remembered && list.find((t) => t.id === remembered)) || list[0] || null;
-    setActiveSelection(projectId, groupId, tab ? tab.id : null);
+    setActiveSelection(projectId, tab ? tab.id : null);
   }
 
   function updateProjectTabs(projectId: string, nextTabs: Tab[]) {
     const current = workspaceRef.current.projects[projectId];
-    saveProjectWorkspace(projectId, { tabs: nextTabs, groups: current?.groups ?? [], batches: current?.batches ?? [], bookmarks: current?.bookmarks ?? [] });
-  }
-
-  function updateProjectGroups(projectId: string, nextGroups: Group[]) {
-    const current = workspaceRef.current.projects[projectId];
-    saveProjectWorkspace(projectId, { tabs: current?.tabs ?? [], groups: nextGroups, batches: current?.batches ?? [], bookmarks: current?.bookmarks ?? [] });
+    saveProjectWorkspace(projectId, { tabs: nextTabs, batches: current?.batches ?? [], bookmarks: current?.bookmarks ?? [] });
   }
 
   function updateProjectBatches(projectId: string, nextBatches: Batch[]) {
     const current = workspaceRef.current.projects[projectId];
-    saveProjectWorkspace(projectId, { tabs: current?.tabs ?? [], groups: current?.groups ?? [], batches: nextBatches, bookmarks: current?.bookmarks ?? [] });
+    saveProjectWorkspace(projectId, { tabs: current?.tabs ?? [], batches: nextBatches, bookmarks: current?.bookmarks ?? [] });
   }
 
   function updateProjectBookmarks(projectId: string, nextBookmarks: Bookmark[]) {
     const current = workspaceRef.current.projects[projectId];
-    saveProjectWorkspace(projectId, { tabs: current?.tabs ?? [], groups: current?.groups ?? [], batches: current?.batches ?? [], bookmarks: nextBookmarks });
+    saveProjectWorkspace(projectId, { tabs: current?.tabs ?? [], batches: current?.batches ?? [], bookmarks: nextBookmarks });
   }
 
   function openFileTab(filePath: string) {
@@ -978,10 +898,10 @@ export default function App() {
       setActiveTab(activeProjectId, existing.id);
       return;
     }
-    const tab: Tab = { id: randomId(), type: 'file', path: filePath, groupId: activeGroupId };
-    logDebug('tab', `openFileTab: new file tab ${tab.id} for ${filePath} in project ${activeProjectId} group ${activeGroupId}`);
+    const tab: Tab = { id: randomId(), type: 'file', path: filePath };
+    logDebug('tab', `openFileTab: new file tab ${tab.id} for ${filePath} in project ${activeProjectId}`);
     updateProjectTabs(activeProjectId, [...tabs, tab]);
-    setActiveSelection(activeProjectId, activeGroupId, tab.id);
+    setActiveSelection(activeProjectId, tab.id);
   }
 
   // Returns the (existing or new) tab id so callers like JumpToComment can
@@ -1012,10 +932,10 @@ export default function App() {
     }
     const d = new Date();
     const defaultTitle = `Chat ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    const tab: Tab = { id: randomId(), type: 'session', resumeId, title: title || defaultTitle, groupId: activeGroupId, ...(opts.wire ? { wire: true } : {}) };
-    logDebug('tab', `openSessionTab: new session tab ${tab.id}${resumeId ? ` (resume ${resumeId})` : ' (fresh)'} in project ${activeProjectId} group ${activeGroupId}`);
+    const tab: Tab = { id: randomId(), type: 'session', resumeId, title: title || defaultTitle, ...(opts.wire ? { wire: true } : {}) };
+    logDebug('tab', `openSessionTab: new session tab ${tab.id}${resumeId ? ` (resume ${resumeId})` : ' (fresh)'} in project ${activeProjectId}`);
     updateProjectTabs(activeProjectId, [...tabs, tab]);
-    setActiveSelection(activeProjectId, activeGroupId, tab.id);
+    setActiveSelection(activeProjectId, tab.id);
     return tab.id;
   }
 
@@ -1045,10 +965,10 @@ export default function App() {
     }
     const d = new Date();
     const defaultTitle = `SDK ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    const tab: Tab = { id: randomId(), type: 'claude-sdk', resumeId, title: title || defaultTitle, groupId: activeGroupId, ...(opts.wire ? { wire: true } : {}), ...(opts.parentSessionId && !resumeId ? { parentSessionId: opts.parentSessionId } : {}), ...(opts.worktree && !resumeId ? { worktree: opts.worktree } : {}) };
-    logDebug('tab', `openSdkTab: new claude-sdk tab ${tab.id}${resumeId ? ` (resume ${resumeId})` : ' (fresh)'} in project ${activeProjectId} group ${activeGroupId}`);
+    const tab: Tab = { id: randomId(), type: 'claude-sdk', resumeId, title: title || defaultTitle, ...(opts.wire ? { wire: true } : {}), ...(opts.parentSessionId && !resumeId ? { parentSessionId: opts.parentSessionId } : {}), ...(opts.worktree && !resumeId ? { worktree: opts.worktree } : {}) };
+    logDebug('tab', `openSdkTab: new claude-sdk tab ${tab.id}${resumeId ? ` (resume ${resumeId})` : ' (fresh)'} in project ${activeProjectId}`);
     updateProjectTabs(activeProjectId, [...tabs, tab]);
-    setActiveSelection(activeProjectId, activeGroupId, tab.id);
+    setActiveSelection(activeProjectId, tab.id);
     return tab.id;
   }
 
@@ -1151,10 +1071,10 @@ export default function App() {
     }
     const d = new Date();
     const defaultTitle = `Devin ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    const tab: Tab = { id: randomId(), type: 'devin', resumeId, title: title || defaultTitle, groupId: activeGroupId };
-    logDebug('tab', `openDevinTab: new devin tab ${tab.id}${resumeId ? ` (resume ${resumeId})` : ' (fresh)'} in project ${activeProjectId} group ${activeGroupId}`);
+    const tab: Tab = { id: randomId(), type: 'devin', resumeId, title: title || defaultTitle };
+    logDebug('tab', `openDevinTab: new devin tab ${tab.id}${resumeId ? ` (resume ${resumeId})` : ' (fresh)'} in project ${activeProjectId}`);
     updateProjectTabs(activeProjectId, [...tabs, tab]);
-    setActiveSelection(activeProjectId, activeGroupId, tab.id);
+    setActiveSelection(activeProjectId, tab.id);
     return tab.id;
   }
 
@@ -1186,10 +1106,10 @@ export default function App() {
     const requested: Tab = newTab.type === 'session' && !newTab.resumeId && localPrefs.claudeBridge === 'sdk'
       ? { id: newTab.id, type: 'claude-sdk', title: newTab.title, initialPrompt: newTab.initialPrompt, wire: newTab.wire }
       : newTab;
-    const tab: Tab = { ...requested, groupId: activeGroupId };
-    logDebug('tab', `openTab: new ${tab.type} tab ${tab.id} in project ${activeProjectId} group ${activeGroupId}`);
+    const tab: Tab = { ...requested };
+    logDebug('tab', `openTab: new ${tab.type} tab ${tab.id} in project ${activeProjectId}`);
     updateProjectTabs(activeProjectId, [...tabs, tab]);
-    setActiveSelection(activeProjectId, activeGroupId, tab.id);
+    setActiveSelection(activeProjectId, tab.id);
   }
 
   function openTabOfKind(kindId: string) {
@@ -1211,10 +1131,10 @@ export default function App() {
       }
     }
     const created = kind.createAction.create({ project: { id: activeProject.id, path: activeProject.path } });
-    const tab: Tab = { ...created, groupId: activeGroupId };
-    logDebug('tab', `openTabOfKind: new ${kindId} tab ${tab.id} in project ${activeProjectId} group ${activeGroupId}`);
+    const tab: Tab = { ...created };
+    logDebug('tab', `openTabOfKind: new ${kindId} tab ${tab.id} in project ${activeProjectId}`);
     updateProjectTabs(activeProjectId, [...tabs, tab]);
-    setActiveSelection(activeProjectId, activeGroupId, tab.id);
+    setActiveSelection(activeProjectId, tab.id);
   }
 
   // Model: web.ObserveTab. Open (or re-activate) the observation of a session
@@ -1306,79 +1226,11 @@ export default function App() {
       return next;
     });
     if (activeTabId === id) {
-      // Fall back to a neighbour inside the same Group so closing never
-      // silently jumps the user to another Group.
-      const gid = tabGroupId(tabs[idx]);
-      const siblings = tabs.filter((t) => tabGroupId(t) === gid);
-      const sIdx = siblings.findIndex((t) => t.id === id);
-      const nextSiblings = siblings.filter((t) => t.id !== id);
-      const fallback = nextSiblings[Math.min(sIdx, nextSiblings.length - 1)]?.id ?? null;
-      logDebug('tab', `closed tab was active → fallback to ${fallback ?? 'null'} (group ${gid})`);
-      setActiveSelection(activeProjectId, gid, fallback);
+      // Fall back to the neighbour that slides into the closed tab's place.
+      const fallback = nextTabs[Math.min(idx, nextTabs.length - 1)]?.id ?? null;
+      logDebug('tab', `closed tab was active → fallback to ${fallback ?? 'null'}`);
+      setActiveSelection(activeProjectId, fallback);
     }
-  }
-
-  function createGroup() {
-    if (!activeProjectId) return;
-    const name = prompt('New group name')?.trim();
-    if (!name) return;
-    const group: Group = { id: randomId(), name };
-    logDebug('group', `createGroup: ${group.id} "${name}" in project ${activeProjectId}`);
-    // New Groups go to the top of the list (groups[] order = display order).
-    updateProjectGroups(activeProjectId, [group, ...groups]);
-    setActiveSelection(activeProjectId, group.id, null);
-  }
-
-  // Drag-to-reorder from the Sessions view's Group headers: same id set, new order. Persisted via the
-  // usual whole-project PUT; groups[] order is the display order.
-  function reorderGroups(next: Group[]) {
-    if (!activeProjectId) return;
-    const same = next.length === groups.length && next.every((g) => groups.some((x) => x.id === g.id));
-    if (!same) return;
-    logDebug('group', `reorderGroups: ${next.map((g) => g.id).join(',')}`);
-    updateProjectGroups(activeProjectId, next);
-  }
-
-  function renameGroup(id: string, name: string) {
-    if (!activeProjectId || id === DEFAULT_GROUP_ID) return;
-    const trimmed = name.trim();
-    if (!trimmed || !groups.some((g) => g.id === id)) return;
-    logDebug('group', `renameGroup: ${id} → "${trimmed}"`);
-    updateProjectGroups(activeProjectId, groups.map((g) => (g.id === id ? { ...g, name: trimmed } : g)));
-  }
-
-  function deleteGroup(id: string) {
-    if (!activeProjectId || id === DEFAULT_GROUP_ID) return;
-    const group = groups.find((g) => g.id === id);
-    if (!group) return;
-    const victims = tabs.filter((t) => tabGroupId(t) === id);
-    const msg = victims.length
-      ? `Delete group "${group.name}" and close its ${victims.length} tab(s)?`
-      : `Delete group "${group.name}"?`;
-    if (!confirm(msg)) return;
-    const nextTabs = tabs.filter((t) => tabGroupId(t) !== id);
-    logDebug('group', `deleteGroup: ${id} "${group.name}" closed ${victims.length} tab(s)`);
-    saveProjectWorkspace(activeProjectId, { tabs: nextTabs, groups: groups.filter((g) => g.id !== id), batches, bookmarks });
-    if (victims.length) {
-      setVisitedTabs((prev) => {
-        const next = new Set(prev);
-        for (const t of victims) next.delete(t.id);
-        return next;
-      });
-    }
-    if (activeGroupId === id) setActiveGroup(activeProjectId, DEFAULT_GROUP_ID, nextTabs);
-  }
-
-  function moveTabToGroup(tabId: string, groupId: string) {
-    if (!activeProjectId) return;
-    if (!groupExists(projectWs, groupId)) return;
-    const tab = tabs.find((t) => t.id === tabId);
-    if (!tab || tabGroupId(tab) === groupId) return;
-    logDebug('group', `moveTabToGroup: tab ${tabId} ${tabGroupId(tab)} → ${groupId}`);
-    const nextTabs = tabs.map((t) => (t.id === tabId ? { ...t, groupId } : t));
-    updateProjectTabs(activeProjectId, nextTabs);
-    // Keep looking at the moved tab: the active Group follows it.
-    if (activeTabId === tabId) setActiveSelection(activeProjectId, groupId, tabId);
   }
 
   // ---- Review (model: entity Batch / Comment; package Review) ----
@@ -1763,7 +1615,7 @@ export default function App() {
       // empty slot up-front.
       setWorkspace((ws) => {
         if (ws.projects[p.id]) return ws;
-        return { ...ws, projects: { ...ws.projects, [p.id]: { tabs: [], groups: [], batches: [], bookmarks: [] } } };
+        return { ...ws, projects: { ...ws.projects, [p.id]: { tabs: [], batches: [], bookmarks: [] } } };
       });
       setActive((a) => {
         logDebug('nav', `new project auto-active: ${a.projectId ?? 'null'} → ${p.id}`);
@@ -1823,13 +1675,11 @@ export default function App() {
     setActive((a) => {
       const nextTabs = { ...a.tabs };
       delete nextTabs[id];
-      const nextGroups = { ...a.groups };
-      delete nextGroups[id];
       const nextProject = a.projectId === id ? (ps[0]?.id ?? null) : a.projectId;
       if (a.projectId === id) {
         logDebug('nav', `deleted project was active → fallback to ${nextProject ?? 'null'}`);
       }
-      return { projectId: nextProject, tabs: nextTabs, groups: nextGroups };
+      return { projectId: nextProject, tabs: nextTabs };
     });
   }
 
@@ -1908,18 +1758,8 @@ export default function App() {
                 refreshSignal={sessionListSignal}
                 workspace={{
                   tabs,
-                  groups,
-                  defaultGroupName: DEFAULT_GROUP_NAME,
-                  activeGroupId,
                   activeTabId,
-                  activity: tabActivity,
-                  onSelectGroup: (gid) => { setDrawerOpen(false); setActiveGroup(activeProject.id, gid); },
                   onActivateTab: (id) => { setDrawerOpen(false); activateTab(id); },
-                  onCreateGroup: createGroup,
-                  onRenameGroup: renameGroup,
-                  onDeleteGroup: deleteGroup,
-                  onReorderGroups: reorderGroups,
-                  onMoveTab: moveTabToGroup,
                 }}
                 activeSubagent={activeTab?.type === 'subagent' ? `${activeTab.sessionId}:${activeTab.agentId}` : null}
                 onOpen={(row) => { setDrawerOpen(false); openSessionRow(row); }}
@@ -1978,9 +1818,7 @@ export default function App() {
                     return n;
                   });
                   if (activeTabId && goneIds.has(activeTabId)) {
-                    const gid = tabGroupId(gone.find((t) => t.id === activeTabId)!);
-                    const fallback = next.find((t) => tabGroupId(t) === gid)?.id ?? null;
-                    setActiveSelection(pid, gid, fallback);
+                    setActiveSelection(pid, next[0]?.id ?? null);
                   }
                 }}
                 onNotice={showAppToast}
@@ -2003,17 +1841,11 @@ export default function App() {
           }
           onExport={activeExport?.open}
           canExport={activeExport?.canExport ?? false}
-          tabs={visibleTabs}
+          tabs={tabs}
           activity={tabActivity}
           activeTabId={activeTabId}
           onActivate={activateTab}
           onClose={closeTab}
-          activeGroupName={groupName(groups, activeGroupId)}
-          moveTargets={[
-            ...(activeGroupId !== DEFAULT_GROUP_ID ? [{ id: DEFAULT_GROUP_ID, name: DEFAULT_GROUP_NAME }] : []),
-            ...groups.filter((g) => g.id !== activeGroupId),
-          ]}
-          onMoveTab={moveTabToGroup}
           claudeBridge={localPrefs.claudeBridge}
           // Model: web entity Settings.enableClaude — provider entry points
           // only; everything else keeps working.
@@ -2100,9 +1932,7 @@ export default function App() {
               })}
               {!activeTab && (
                 <div className="empty">
-                  {visibleTabs.length === 0 && (activeGroupId !== DEFAULT_GROUP_ID || tabs.length > 0)
-                    ? `Group "${groupName(groups, activeGroupId)}" is empty — open a file or start an AI session`
-                    : 'Open a file or start an AI session'}
+                  Open a file or start an AI session
                 </div>
               )}
             </>
