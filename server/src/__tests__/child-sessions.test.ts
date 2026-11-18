@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { childIdsOf, childReport, cleanChildTitle, MAX_CHILD_DEPTH, MAX_REPORT_CHARS, MAX_RUNNING_CHILDREN, parseChildReport, sessionDepth, spawnRefusal } from '../child-sessions.js';
+import { childIdsOf, childReport, cleanChildTitle, MAX_CHILD_DEPTH, MAX_NOTE_CHARS, MAX_REPORT_CHARS, MAX_RUNNING_CHILDREN, parseChildReport, sessionDepth, spawnRefusal } from '../child-sessions.js';
 
 const parents = { 'claude:c1': 'p', 'claude:c2': 'p', 'claude:g1': 'c1', 'devin:d': 'p' };
 
@@ -42,6 +42,22 @@ describe('child reports', () => {
     const text = childReport({ title: 'T', sessionId: 's1', ok: true, result: 'x'.repeat(MAX_REPORT_CHARS + 500) });
     expect(text).toContain('report cut at');
     expect(text.length).toBeLessThan(MAX_REPORT_CHARS + 400);
+  });
+  it('quotes what the user told the child ahead of its answer', () => {
+    const text = childReport({ title: 'Draft tests', sessionId: 'abc-123', ok: true, result: 'Dropped the UI tests.', userNotes: ['Skip the UI tests.\nUnit tests only.', '  ', 'Use vitest.'] });
+    expect(text.startsWith('[Child session "Draft tests" (abc-123) finished after the user stepped in]')).toBe(true);
+    expect(text).toContain('The user spoke to this child session directly:\n\n> Skip the UI tests.\n> Unit tests only.\n>\n> Use vitest.');
+    expect(text).toContain('The child session then answered:\n\nDropped the UI tests.');
+    expect(text).toContain('If this changes your plan');
+    const parsed = parseChildReport(text)!;
+    expect(parsed).toMatchObject({ title: 'Draft tests', sessionId: 'abc-123', ok: true });
+    expect(parsed.body).toContain('> Use vitest.');
+    expect(parsed.body).not.toContain('Sent automatically');
+  });
+  it('cuts a very long intervention', () => {
+    const text = childReport({ title: 'T', sessionId: 's1', ok: true, result: 'ok', userNotes: ['y'.repeat(MAX_NOTE_CHARS + 100)] });
+    expect(text).toContain('… [cut]');
+    expect(text.length).toBeLessThan(MAX_NOTE_CHARS + 600);
   });
   it('ignores ordinary messages', () => {
     expect(parseChildReport('hello')).toBeNull();

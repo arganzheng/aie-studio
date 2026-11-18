@@ -56,18 +56,44 @@ export function cleanChildTitle(raw: string): string {
 
 // The message the parent receives when a child finishes a turn the parent
 // asked for. `result` is the child's final answer (SDK result.result).
-export function childReport(opts: { title: string; sessionId: string; ok: boolean; result: string; errorKind?: string }): string {
-  const head = `${CHILD_REPORT_PREFIX}"${opts.title}" (${opts.sessionId}) ${opts.ok ? 'finished' : `stopped with an error${opts.errorKind ? ` (${opts.errorKind})` : ''}`}]`;
+// `userNotes`: what the user typed into the child directly during the turn
+// (an intervention the parent did not see) — quoted ahead of the answer so
+// the parent can adjust its plan.
+export function childReport(opts: { title: string; sessionId: string; ok: boolean; result: string; errorKind?: string; userNotes?: readonly string[] }): string {
+  const notes = (opts.userNotes ?? []).map((n) => n.trim()).filter(Boolean);
+  const state = opts.ok
+    ? (notes.length > 0 ? 'finished after the user stepped in' : 'finished')
+    : `stopped with an error${opts.errorKind ? ` (${opts.errorKind})` : ''}`;
+  const head = `${CHILD_REPORT_PREFIX}"${opts.title}" (${opts.sessionId}) ${state}]`;
   let body = opts.result.trim();
   if (body.length > MAX_REPORT_CHARS) body = `${body.slice(0, MAX_REPORT_CHARS)}\n… [report cut at ${MAX_REPORT_CHARS} characters; ask the child for the rest with send_to_child_session]`;
   const tail = '(Sent automatically by aie-studio when the child session finished; not typed by the user.)';
-  return [head, body || '(the child session gave no final answer)', tail].join('\n\n');
+  const answer = body || '(the child session gave no final answer)';
+  if (notes.length === 0) return [head, answer, tail].join('\n\n');
+  const quoted = notes.map((n) => clipNote(n).split('\n').map((l) => `> ${l}`).join('\n')).join('\n>\n');
+  return [
+    head,
+    `${USER_NOTES_HEADING}\n\n${quoted}`,
+    `${CHILD_ANSWER_HEADING}\n\n${answer}`,
+    'If this changes your plan, adjust it; otherwise no reply is needed.',
+    tail,
+  ].join('\n\n');
+}
+
+export const USER_NOTES_HEADING = 'The user spoke to this child session directly:';
+export const CHILD_ANSWER_HEADING = 'The child session then answered:';
+// One intervention is quoted up to this length; a turn keeps this many.
+export const MAX_NOTE_CHARS = 2000;
+export const MAX_NOTES_PER_TURN = 20;
+export function clipNote(text: string): string {
+  const t = text.trim();
+  return t.length > MAX_NOTE_CHARS ? `${t.slice(0, MAX_NOTE_CHARS)} … [cut]` : t;
 }
 
 // Parse the header of a report (for display). Null when `text` isn't one.
 export function parseChildReport(text: string): { title: string; sessionId: string; ok: boolean; body: string } | null {
-  const m = /^\[Child session "(.*?)" \(([A-Za-z0-9-]+)\) (finished|stopped with an error[^\]]*)\]\n\n([\s\S]*)$/.exec(text);
+  const m = /^\[Child session "(.*?)" \(([A-Za-z0-9-]+)\) (finished after the user stepped in|finished|stopped with an error[^\]]*)\]\n\n([\s\S]*)$/.exec(text);
   if (!m) return null;
   const body = m[4].replace(/\n\n\(Sent automatically by aie-studio[^)]*\)\s*$/, '');
-  return { title: m[1], sessionId: m[2], ok: m[3] === 'finished', body };
+  return { title: m[1], sessionId: m[2], ok: m[3].startsWith('finished'), body };
 }
