@@ -549,10 +549,10 @@ export async function putHeldReports(uid: string, held: HeldReports): Promise<vo
 }
 
 // Model: Session.children — what a parent's agent set for a child when it
-// opened it: a spending cap and/or the shape its answers must have. Keyed by
-// the child's session id; on disk because both must hold again whenever the
+// opened it: the shape its answers must have. Keyed by
+// the child's session id; on disk because it must hold again whenever the
 // child's process is started anew.
-export type ChildTerms = { budgetUsd?: number; resultSchema?: Record<string, unknown> };
+export type ChildTerms = { resultSchema?: Record<string, unknown> };
 export type ChildTermsMap = Record<string, ChildTerms>;
 export const MAX_RESULT_SCHEMA_CHARS = 20_000;
 export function normalizeChildTerms(raw: unknown): ChildTermsMap {
@@ -561,10 +561,9 @@ export function normalizeChildTerms(raw: unknown): ChildTermsMap {
   for (const [id, v] of Object.entries(raw as Record<string, any>)) {
     if (!v || typeof v !== 'object') continue;
     const t: ChildTerms = {};
-    if (typeof v.budgetUsd === 'number' && Number.isFinite(v.budgetUsd) && v.budgetUsd > 0) t.budgetUsd = v.budgetUsd;
     if (v.resultSchema && typeof v.resultSchema === 'object' && !Array.isArray(v.resultSchema)
       && JSON.stringify(v.resultSchema).length <= MAX_RESULT_SCHEMA_CHARS) t.resultSchema = v.resultSchema;
-    if (t.budgetUsd !== undefined || t.resultSchema) out[id] = t;
+    if (t.resultSchema) out[id] = t;
   }
   return out;
 }

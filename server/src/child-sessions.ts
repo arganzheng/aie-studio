@@ -25,7 +25,7 @@ export const CHILD_TOOLS_INSTRUCTIONS = [
   'When a child will edit files while you or other children are editing too, open it with isolation "worktree": it then works on its own branch in its own checkout, and its report says which branch to merge. For read-only work (investigation, review) leave isolation out.',
   'If a child goes the wrong way or is no longer needed, stop_child_session interrupts it.',
   'When you open several children and have nothing to do until they are all done, call wait_for_child_sessions and end your turn: their reports then arrive together in one message. Give children opened as one batch the same `group` so the user sees them as one batch.',
-  'To cap what a child may spend, give it `budget_usd`; it is stopped when it gets there, and you can let it go on with send_to_child_session `add_budget_usd`. When you will process the answer mechanically (merging findings, counting, deciding by a field), give `result_schema` (a JSON Schema): the report then carries JSON that matches it.',
+  'When you will process the answer mechanically (merging findings, counting, deciding by a field), give `result_schema` (a JSON Schema): the report then carries JSON that matches it.',
   'spawn_child_session returns at once. When the child finishes, its answer arrives as a message in this conversation starting with "[Child session". Do not wait, sleep or poll for it; carry on with other work or end your turn.',
 ].join(' ');
 
@@ -117,17 +117,9 @@ const STOP_STATE: Record<ChildStop, string> = {
 // own git worktree (worktrees.ts worktreeNote).
 // `structured`: the answer as data, when the parent set a result schema
 // (SDK result.structured_output) — it replaces the prose answer.
-// `budgetUsd`: the cap the turn ran into (errorKind error_max_budget_usd).
-export function childReport(opts: { title: string; sessionId: string; ok: boolean; result: string; errorKind?: string; userNotes?: readonly string[]; stopped?: ChildStop; worktreeNote?: string; structured?: unknown; budgetUsd?: number }): string {
+export function childReport(opts: { title: string; sessionId: string; ok: boolean; result: string; errorKind?: string; userNotes?: readonly string[]; stopped?: ChildStop; worktreeNote?: string; structured?: unknown }): string {
   const notes = (opts.userNotes ?? []).map((n) => n.trim()).filter(Boolean);
-  const overBudget = !opts.stopped && !opts.ok && opts.errorKind === BUDGET_ERROR;
-  if (overBudget) {
-    opts = {
-      ...opts,
-      errorKind: `its budget${opts.budgetUsd ? ` of ${usd(opts.budgetUsd)}` : ''} is used up`,
-      result: opts.result.trim() || '(no final answer: the child session reached its spending limit before it finished. What it did so far is in its conversation and working directory. To let it continue, use send_to_child_session with add_budget_usd.)',
-    };
-  } else if (opts.ok && opts.structured !== undefined && opts.structured !== null) {
+  if (opts.ok && opts.structured !== undefined && opts.structured !== null) {
     opts = { ...opts, result: `${STRUCTURED_HEADING}\n\n\`\`\`json\n${JSON.stringify(opts.structured, null, 2)}\n\`\`\`` };
   }
   const state = opts.stopped
@@ -155,16 +147,7 @@ export function childReport(opts: { title: string; sessionId: string; ok: boolea
   ].join('\n\n');
 }
 
-export const BUDGET_ERROR = 'error_max_budget_usd';
 export const STRUCTURED_HEADING = 'Structured result (matches the schema you gave):';
-export function usd(n: number): string {
-  return `$${n >= 1 ? n.toFixed(2) : String(Number(n.toFixed(4)))}`;
-}
-// A spending cap as given to a tool: a positive number of dollars, or null.
-export function cleanBudget(raw: unknown): number | null {
-  const n = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : NaN;
-  return Number.isFinite(n) && n > 0 ? Math.round(n * 10000) / 10000 : null;
-}
 // A result schema as given to a tool: a JSON Schema for an object, or why not.
 export function cleanResultSchema(raw: unknown, maxChars: number): { schema: Record<string, unknown> } | { error: string } | null {
   if (raw === undefined || raw === null || raw === '') return null;

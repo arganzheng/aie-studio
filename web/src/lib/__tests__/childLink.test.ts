@@ -5,7 +5,7 @@ import { sessionStatus, type SessionRow } from '../sessionList';
 describe('childLinkOfTool', () => {
   const id = 'c09e1285-e04e-44e5-9e6c-1ad40fa3258c';
   it('finds the child a spawn opened, once the tool has answered', () => {
-    expect(childLinkOfTool('mcp__aie__spawn_child_session', { title: 'Essay' }, `Started child session "Essay" (id ${id}). Budget: $2.00.`)).toEqual({ sessionId: id, title: 'Essay' });
+    expect(childLinkOfTool('mcp__aie__spawn_child_session', { title: 'Essay' }, `Started child session "Essay" (id ${id}).`)).toEqual({ sessionId: id, title: 'Essay' });
     expect(childLinkOfTool('mcp__aie__spawn_child_session', { title: 'Essay' }, undefined)).toBeNull();
     expect(childLinkOfTool('mcp__aie__spawn_child_session', { title: 'Essay' }, 'prompt is required.')).toBeNull();
   });
