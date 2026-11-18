@@ -27,6 +27,8 @@ import { bangCommand, isBangInput, splitBangTexts } from '../lib/bang';
 import { ClaudeUsageBadge, refreshClaudeUsage } from './ClaudeUsage';
 import { ContextBadge, type ContextSnapshot } from './ContextUsage';
 import { parseChildReport } from '../lib/childReport';
+import { parseParentContext, withParentContext, type ParentContext } from '../lib/parentContext';
+import { summarizeSession } from '../api';
 import { ImageAttachmentStrip, useImageAttachments, type ImageAttachment } from './ImageAttachments';
 import { useElicitationHost } from './ElicitationHost';
 import { MarkdownLink } from './MarkdownLink';
@@ -376,6 +378,25 @@ export function SdkPanel({
   const wireRef = useRef(!!wire); wireRef.current = !!wire;
   const parentRef = useRef(parentSessionId); parentRef.current = parentSessionId;
   const worktreeRef = useRef(worktree); worktreeRef.current = worktree;
+  // Model: web.NewChildSession "Includes context from parent". A fresh child
+  // the user opened gets a summary of its parent, attached ahead of the
+  // first message unless dismissed.
+  type ParentCtx = { status: 'loading' } | { status: 'ready'; ctx: ParentContext } | { status: 'error'; message: string } | { status: 'off' };
+  const [parentCtx, setParentCtx] = useState<ParentCtx>(() => (parentSessionId && !resumeId ? { status: 'loading' } : { status: 'off' }));
+  const parentCtxRef = useRef(parentCtx); parentCtxRef.current = parentCtx;
+  const parentCtxPromise = useRef<Promise<void> | null>(null);
+  const [parentCtxOpen, setParentCtxOpen] = useState(false);
+  useEffect(() => {
+    if (!parentSessionId || resumeId) return;
+    let gone = false;
+    parentCtxPromise.current = summarizeSession(projectId, parentSessionId).then(
+      (r) => { if (!gone && parentCtxRef.current.status === 'loading') setParentCtx({ status: 'ready', ctx: { title: r.title, summary: r.summary } }); },
+      (e) => { if (!gone && parentCtxRef.current.status === 'loading') setParentCtx({ status: 'error', message: (e as Error).message }); },
+    );
+    return () => { gone = true; };
+    // Once per mount: a tab is one child of one parent.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // The worktree the session actually runs in, as the server reports it.
   const [worktreeName, setWorktreeName] = useState<string | null>(null);
   const [editingUuid, setEditingUuid] = useState<string | null>(null);
@@ -930,8 +951,18 @@ export function SdkPanel({
     }
     const text = raw.trim();
     if (!text && pendingImages.length === 0) return;
-    sendPrompt(text, pendingImages);
+    const images = pendingImages;
     attachments.clear();
+    // The first message of a hand-opened child carries the parent's summary.
+    const go = () => {
+      const pc = parentCtxRef.current;
+      setParentCtx({ status: 'off' });
+      sendPrompt(pc.status === 'ready' ? withParentContext(pc.ctx, text) : text, images);
+    };
+    if (parentCtxRef.current.status === 'loading' && parentCtxPromise.current) {
+      showToast('Waiting for the parent summary…');
+      void Promise.race([parentCtxPromise.current, new Promise((r) => setTimeout(r, 45_000))]).then(() => setTimeout(go, 0));
+    } else go();
   }
 
   function stop() { wsSend({ type: 'stop' }); }
@@ -1068,7 +1099,20 @@ export function SdkPanel({
                   </div>
                 ) : (
                   <>
-                    {m.text && <div>{m.text}</div>}
+                    {(() => {
+                      // A hand-opened child's first message: fold the parent's summary away.
+                      const pc = m.text ? parseParentContext(m.text) : null;
+                      if (!pc) return m.text ? <div>{m.text}</div> : null;
+                      return (
+                        <>
+                          <details className="msg-parent-ctx">
+                            <summary>→ Context from parent: {pc.title}</summary>
+                            <div className="msg-parent-ctx-body"><MarkdownText text={pc.summary} theme={theme} projectPath={projectPath} onOpenFile={openFile} /></div>
+                          </details>
+                          {pc.text && <div>{pc.text}</div>}
+                        </>
+                      );
+                    })()}
                     {anchor && canBookmark && <BookmarkButton active={!!bookmarkedAnchors?.has(anchor)} className="msg-bookmark-btn-2nd" onClick={() => bookmark(anchor, m.text)} />}
                     {m.uuid && (
                       <button
@@ -1228,6 +1272,25 @@ export function SdkPanel({
           </div>
         );
       })()}
+      {parentCtx.status !== 'off' && (
+        <div className={`parent-ctx parent-ctx-${parentCtx.status}`}>
+          <div className="parent-ctx-bar">
+            {parentCtx.status === 'loading' && <><span className="parent-ctx-spin" aria-hidden="true" /><span>Summarizing parent session…</span></>}
+            {parentCtx.status === 'ready' && (
+              <>
+                <span className="parent-ctx-mark" aria-hidden="true">→</span>
+                <span>Includes context from parent:</span>
+                <button type="button" className="parent-ctx-title" title="Show the summary that will be sent with your first message" aria-expanded={parentCtxOpen} onClick={() => setParentCtxOpen((v) => !v)}>{parentCtx.ctx.title}</button>
+              </>
+            )}
+            {parentCtx.status === 'error' && <span title={parentCtx.message}>No parent summary ({parentCtx.message}) — your message is sent without it</span>}
+            <button type="button" className="parent-ctx-close" title="Don't include the parent's context" aria-label="Don't include the parent's context" onClick={() => setParentCtx({ status: 'off' })}>×</button>
+          </div>
+          {parentCtx.status === 'ready' && parentCtxOpen && (
+            <div className="parent-ctx-body"><MarkdownText text={parentCtx.ctx.summary} theme={theme} projectPath={projectPath} onOpenFile={openFile} /></div>
+          )}
+        </div>
+      )}
       <ImageAttachmentStrip images={pendingImages} onRemove={attachments.remove} onOpen={setLightbox} />
       <ChatInput
         status={status}
