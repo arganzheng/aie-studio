@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { childIdsOf, childReport, cleanChildTitle, isTurnResult, MAX_CHILD_DEPTH, MAX_NOTE_CHARS, MAX_REPORT_CHARS, MAX_RUNNING_CHILDREN, parseChildReport, sessionDepth, spawnRefusal } from '../child-sessions.js';
+import { childIdsOf, childReport, cleanChildTitle, cleanGroup, joinReports, splitReports, isTurnResult, MAX_CHILD_DEPTH, MAX_NOTE_CHARS, MAX_REPORT_CHARS, MAX_RUNNING_CHILDREN, parseChildReport, sessionDepth, spawnRefusal } from '../child-sessions.js';
 
 const parents = { 'claude:c1': 'p', 'claude:c2': 'p', 'claude:g1': 'c1', 'devin:d': 'p' };
 
@@ -26,6 +26,27 @@ describe('isTurnResult', () => {
     expect(isTurnResult({ subtype: 'error_during_execution', num_turns: 2 })).toBe(true);
     expect(isTurnResult({ subtype: 'success', num_turns: 0, result: 'text' })).toBe(true);
     expect(isTurnResult({ subtype: 'success' })).toBe(true);
+  });
+});
+
+describe('reports delivered together', () => {
+  it('joins reports so each can be told apart again', () => {
+    const a = childReport({ title: 'A', sessionId: 's1', ok: true, result: 'First.\n\nTwo paragraphs.' });
+    const b = childReport({ title: 'B', sessionId: 's2', ok: false, result: '', stopped: 'user' });
+    const c = childReport({ title: 'C', sessionId: 's3', ok: true, result: 'Third.', userNotes: ['Skip X.'] });
+    const joined = joinReports([a, b, c]);
+    const parts = splitReports(joined);
+    expect(parts).toEqual([a, b, c]);
+    expect(parts.map((p) => parseChildReport(p)!.title)).toEqual(['A', 'B', 'C']);
+  });
+  it('leaves a single report whole', () => {
+    const a = childReport({ title: 'A', sessionId: 's1', ok: true, result: 'Only one.' });
+    expect(splitReports(a)).toEqual([a]);
+  });
+  it('tidies group labels', () => {
+    expect(cleanGroup('  Python   series\nreview ')).toBe('Python series review');
+    expect(cleanGroup(undefined)).toBe('');
+    expect(cleanGroup('x'.repeat(200))).toHaveLength(60);
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applySessionMeta, cleanTitle, descendantIds, forgetSession, MAX_TITLE_LENGTH, sessionKey, setArchived, type SessionRow } from '../sessions-index.js';
-import { normalizeOwedReports, normalizeSessionMeta, setParent } from '../store.js';
+import { normalizeHeldReports, normalizeOwedReports, normalizeSessionMeta, setParent } from '../store.js';
 
 function row(over: Partial<SessionRow> = {}): Omit<SessionRow, 'archived'> {
   return { kind: 'claude', sessionId: 's1', projectId: 'p1', title: 'First', updatedAt: 100, live: null, state: null, ...over };
@@ -9,13 +9,13 @@ function row(over: Partial<SessionRow> = {}): Omit<SessionRow, 'archived'> {
 describe('applySessionMeta', () => {
   it('sorts newest first and marks archived rows', () => {
     const rows = [row(), row({ sessionId: 's2', updatedAt: 300 }), row({ kind: 'devin', sessionId: 'd1', updatedAt: 200 })];
-    const out = applySessionMeta(rows, { archived: ['devin:d1'], titles: {}, parents: {}, agentSpawned: [] });
+    const out = applySessionMeta(rows, { archived: ['devin:d1'], titles: {}, parents: {}, agentSpawned: [], groups: {} });
     expect(out.map((r) => r.sessionId)).toEqual(['s2', 'd1', 's1']);
     expect(out.map((r) => r.archived)).toEqual([false, true, false]);
   });
   it('lets a stored title override the session\'s own, per kind', () => {
     const rows = [row({ kind: 'devin', sessionId: 'x', title: 'purrfect-opinion' }), row({ sessionId: 'x', title: 'Claude one' })];
-    const out = applySessionMeta(rows, { archived: [], titles: { 'devin:x': 'Fix the build' }, parents: {}, agentSpawned: [] });
+    const out = applySessionMeta(rows, { archived: [], titles: { 'devin:x': 'Fix the build' }, parents: {}, agentSpawned: [], groups: {} });
     expect(out.find((r) => r.kind === 'devin')!.title).toBe('Fix the build');
     expect(out.find((r) => r.kind === 'claude')!.title).toBe('Claude one');
   });
@@ -24,24 +24,24 @@ describe('applySessionMeta', () => {
 describe('session meta edits', () => {
   it('archives and unarchives without duplicates', () => {
     const key = sessionKey('claude', 's1');
-    const a = setArchived({ archived: [], titles: {}, parents: {}, agentSpawned: [] }, key, true);
+    const a = setArchived({ archived: [], titles: {}, parents: {}, agentSpawned: [], groups: {} }, key, true);
     expect(setArchived(a, key, true).archived).toEqual([key]);
     expect(setArchived(a, key, false).archived).toEqual([]);
   });
   it('forgets a deleted session', () => {
-    const meta = { archived: ['claude:s1', 'devin:d1'], titles: { 'claude:s1': 'x', 'devin:d1': 'y' }, parents: {}, agentSpawned: [] };
-    expect(forgetSession(meta, 'claude:s1')).toEqual({ archived: ['devin:d1'], titles: { 'devin:d1': 'y' }, parents: {}, agentSpawned: [] });
+    const meta = { archived: ['claude:s1', 'devin:d1'], titles: { 'claude:s1': 'x', 'devin:d1': 'y' }, parents: {}, agentSpawned: [], groups: {} };
+    expect(forgetSession(meta, 'claude:s1')).toEqual({ archived: ['devin:d1'], titles: { 'devin:d1': 'y' }, parents: {}, agentSpawned: [], groups: {} });
   });
   it('normalizes whatever is on disk', () => {
-    expect(normalizeSessionMeta(null)).toEqual({ archived: [], titles: {}, parents: {}, agentSpawned: [] });
-    expect(normalizeSessionMeta({ archived: ['a', 'a', 3], titles: { a: ' T ', b: '', c: 5 } })).toEqual({ archived: ['a'], titles: { a: 'T' }, parents: {}, agentSpawned: [] });
+    expect(normalizeSessionMeta(null)).toEqual({ archived: [], titles: {}, parents: {}, agentSpawned: [], groups: {} });
+    expect(normalizeSessionMeta({ archived: ['a', 'a', 3], titles: { a: ' T ', b: '', c: 5 } })).toEqual({ archived: ['a'], titles: { a: 'T' }, parents: {}, agentSpawned: [], groups: {} });
     // parents: strings only, and never a session under itself
     expect(normalizeSessionMeta({ parents: { 'claude:c1': 'p1', 'claude:x': 'x', 'claude:n': 7 } }).parents).toEqual({ 'claude:c1': 'p1' });
   });
 });
 
 describe('child sessions', () => {
-  const empty = { archived: [], titles: {}, parents: {}, agentSpawned: [] };
+  const empty = { archived: [], titles: {}, parents: {}, agentSpawned: [], groups: {} };
   it('links a child to its parent and shows it on the row', () => {
     const meta = setParent(empty, 'claude:c1', 'p1');
     expect(meta.parents).toEqual({ 'claude:c1': 'p1' });
@@ -75,6 +75,25 @@ describe('stopping a session with its children', () => {
     expect(descendantIds(parents, 'claude', 'p')).toEqual(['c1', 'c2', 'g1']);
     expect(descendantIds(parents, 'claude', 'c2')).toEqual([]);
     expect(descendantIds({ 'claude:a': 'b', 'claude:b': 'a' }, 'claude', 'a')).toEqual(['b']);
+  });
+});
+
+describe('child groups', () => {
+  const empty = { archived: [], titles: {}, parents: {}, agentSpawned: [], groups: {} };
+  it('shows the batch label on a child row, and only while it is linked', () => {
+    const meta = { ...setParent(empty, 'claude:c1', 'p1'), groups: { 'claude:c1': 'Series review', 'claude:lost': 'x' } };
+    expect(normalizeSessionMeta(meta).groups).toEqual({ 'claude:c1': 'Series review' });
+    const out = applySessionMeta([row({ sessionId: 'p1' }), row({ sessionId: 'c1' })], normalizeSessionMeta(meta));
+    expect(out.find((r) => r.sessionId === 'c1')!.group).toBe('Series review');
+    expect(out.find((r) => r.sessionId === 'p1')!.group).toBeUndefined();
+    expect(forgetSession(normalizeSessionMeta(meta), 'claude:p1').groups).toEqual({});
+  });
+});
+
+describe('held reports', () => {
+  it('keeps well-formed holds', () => {
+    expect(normalizeHeldReports({ p1: { projectId: 'proj', cwd: '/w', reports: ['a', 2, 'b'] }, bad: { reports: [] }, n: null }))
+      .toEqual({ p1: { projectId: 'proj', cwd: '/w', reports: ['a', 'b'] } });
   });
 });
 

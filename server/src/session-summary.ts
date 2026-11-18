@@ -15,6 +15,11 @@ export const SUMMARY_MODEL = 'haiku';
 export const DIGEST_HEAD_CHARS = 6_000;
 export const DIGEST_TAIL_CHARS = 90_000;
 const MESSAGE_CAP = 4_000;
+// A session that was compacted opens with claude's own summary of everything
+// before: the best account there is of the earlier work, so it is read whole
+// (up to this) rather than cut like an ordinary first message.
+export const COMPACT_SUMMARY_CHARS = 60_000;
+const COMPACT_SUMMARY_RE = /^This session is being continued from a previous conversation/;
 
 export const SUMMARY_INSTRUCTIONS = [
   'Below is a conversation between a user and a coding assistant. Write a brief for a new assistant session that has not seen it and will help with follow-up work.',
@@ -33,7 +38,8 @@ export function messageText(m: { type?: string; message?: any }): Line | null {
   const c = m.message?.content;
   const text = (typeof c === 'string' ? c : Array.isArray(c) ? c.filter((b: any) => b?.type === 'text' && typeof b.text === 'string').map((b: any) => b.text).join('\n') : '').trim();
   if (!text) return null;
-  return { role: m.type === 'user' ? 'USER' : 'ASSISTANT', text: text.length > MESSAGE_CAP ? `${text.slice(0, MESSAGE_CAP)} … [cut]` : text };
+  const cap = m.type === 'user' && COMPACT_SUMMARY_RE.test(text) ? COMPACT_SUMMARY_CHARS : MESSAGE_CAP;
+  return { role: m.type === 'user' ? 'USER' : 'ASSISTANT', text: text.length > cap ? `${text.slice(0, cap)} … [cut]` : text };
 }
 
 // Pure: the conversation as text within a budget — the first request, a note
@@ -42,7 +48,8 @@ export function transcriptDigest(msgs: readonly { type?: string; message?: any }
   const lines = msgs.map(messageText).filter((l): l is Line => l !== null);
   const fmt = (l: Line) => `${l.role}: ${l.text}`;
   if (lines.length === 0) return '';
-  const first = fmt(lines[0]).slice(0, head);
+  const compacted = lines[0].role === 'USER' && COMPACT_SUMMARY_RE.test(lines[0].text);
+  const first = compacted ? `SUMMARY OF THE EARLIER CONVERSATION (written when it was compacted):\n${lines[0].text}` : fmt(lines[0]).slice(0, head);
   const rest = lines.slice(1);
   const kept: string[] = [];
   let used = 0;

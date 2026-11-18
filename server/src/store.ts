@@ -121,6 +121,7 @@ function workspaceFile(uid: string): string { return path.join(userDir(uid), 'wo
 function settingsFile(uid: string): string { return path.join(userDir(uid), 'settings.json'); }
 function sessionMetaFile(uid: string): string { return path.join(userDir(uid), 'session-meta.json'); }
 function owedReportsFile(uid: string): string { return path.join(userDir(uid), 'child-reports.json'); }
+function heldReportsFile(uid: string): string { return path.join(userDir(uid), 'child-reports-held.json'); }
 
 // Legacy single-user file locations — used only for the one-shot migration
 // into the per-user tree on first start after the multi-user upgrade.
@@ -456,10 +457,12 @@ export async function migrateLegacyIfNeeded(): Promise<void> {
 // agentSpawned: child keys the parent's agent opened itself (spawn tool).
 // Only those report the user's interventions back to the parent — a child
 // the user opened by hand is unknown to the parent agent.
-export type SessionMeta = { archived: string[]; titles: Record<string, string>; parents: Record<string, string>; agentSpawned: string[] };
+// groups: child key → the label its parent's agent filed it under when it
+// opened several children as one batch (the Sessions tree nests them).
+export type SessionMeta = { archived: string[]; titles: Record<string, string>; parents: Record<string, string>; agentSpawned: string[]; groups: Record<string, string> };
 
 export function normalizeSessionMeta(raw: unknown): SessionMeta {
-  const r = (raw && typeof raw === 'object' ? raw : {}) as { archived?: unknown; titles?: unknown; parents?: unknown; agentSpawned?: unknown };
+  const r = (raw && typeof raw === 'object' ? raw : {}) as { archived?: unknown; titles?: unknown; parents?: unknown; agentSpawned?: unknown; groups?: unknown };
   const archived = Array.isArray(r.archived) ? [...new Set(r.archived.filter((k): k is string => typeof k === 'string'))] : [];
   const titles: Record<string, string> = {};
   if (r.titles && typeof r.titles === 'object') {
@@ -476,7 +479,13 @@ export function normalizeSessionMeta(raw: unknown): SessionMeta {
   }
   // Only linked children can be agent-spawned.
   const agentSpawned = Array.isArray(r.agentSpawned) ? [...new Set(r.agentSpawned.filter((k): k is string => typeof k === 'string' && k in parents))] : [];
-  return { archived, titles, parents, agentSpawned };
+  const groups: Record<string, string> = {};
+  if (r.groups && typeof r.groups === 'object') {
+    for (const [k, v] of Object.entries(r.groups as Record<string, unknown>)) {
+      if (typeof v === 'string' && v.trim() && k in parents) groups[k] = v.trim().slice(0, 60);
+    }
+  }
+  return { archived, titles, parents, agentSpawned, groups };
 }
 
 // Pure: the meta after `childKey` was opened as a child of session `parentId`.
@@ -531,6 +540,26 @@ export async function getOwedReports(uid: string): Promise<OwedReports> {
 export async function putOwedReports(uid: string, reports: OwedReports): Promise<void> {
   await writeJson(owedReportsFile(uid), normalizeOwedReports(reports));
 }
+// Model: Session.children "wait for all" — reports a parent asked to receive
+// together, kept until its last working child has finished. Keyed by the
+// parent's session id; on disk so a restart delivers what was collected.
+export type HeldReports = Record<string, { projectId: string; cwd: string; reports: string[] }>;
+export function normalizeHeldReports(raw: unknown): HeldReports {
+  const out: HeldReports = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [id, v] of Object.entries(raw as Record<string, any>)) {
+    if (!v || typeof v !== 'object' || typeof v.projectId !== 'string' || typeof v.cwd !== 'string') continue;
+    out[id] = { projectId: v.projectId, cwd: v.cwd, reports: Array.isArray(v.reports) ? v.reports.filter((x: unknown): x is string => typeof x === 'string') : [] };
+  }
+  return out;
+}
+export async function getHeldReports(uid: string): Promise<HeldReports> {
+  return normalizeHeldReports(await readJson<unknown>(heldReportsFile(uid), {}));
+}
+export async function putHeldReports(uid: string, held: HeldReports): Promise<void> {
+  await writeJson(heldReportsFile(uid), normalizeHeldReports(held));
+}
+
 export async function listUserIds(): Promise<string[]> {
   try { return (await fs.readdir(USERS_DIR, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name); }
   catch { return []; }

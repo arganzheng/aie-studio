@@ -24,3 +24,11 @@ export function parseChildReport(text: string): ChildReport | null {
     .replace(/\n\nIf this changes your plan, adjust it; otherwise no reply is needed\.\s*$/, '');
   return { title: m[1], sessionId: m[2], ok: m[3].startsWith('finished'), intervened: m[3] === 'finished after the user stepped in' || /The user spoke to this child session directly:/.test(body), state: m[3] === 'finished after the user stepped in' ? 'finished' : m[3], body };
 }
+
+// One message may carry several reports (the parent asked to wait for all
+// its children): each keeps its own header. Null unless every part is one.
+export function parseChildReports(text: string): ChildReport[] | null {
+  if (!text.startsWith('[Child session "')) return null;
+  const parts = text.split(/\n\n(?=\[Child session ")/).map(parseChildReport);
+  return parts.every((p): p is ChildReport => p !== null) ? parts : null;
+}

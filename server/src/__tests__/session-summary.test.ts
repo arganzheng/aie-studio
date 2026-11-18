@@ -34,6 +34,13 @@ describe('transcriptDigest', () => {
     expect(d).not.toContain('step 0 ');
     expect(d.length).toBeLessThan(900);
   });
+  it('reads a compacted session\'s own summary whole instead of cutting it like a first message', () => {
+    const summary = 'This session is being continued from a previous conversation that ran out of context.\n' + 'decision '.repeat(2000);
+    const d = transcriptDigest([u(summary), a('Continuing.'), u('next')], 100, 500);
+    expect(d.startsWith('SUMMARY OF THE EARLIER CONVERSATION')).toBe(true);
+    expect(d.length).toBeGreaterThan(15_000);
+    expect(d).toContain('ASSISTANT: Continuing.');
+  });
   it('is empty when nothing was said', () => {
     expect(transcriptDigest([tool, toolResult])).toBe('');
   });

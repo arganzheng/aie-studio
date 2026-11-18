@@ -24,6 +24,7 @@ export const CHILD_TOOLS_INSTRUCTIONS = [
   'A child starts with none of your context. Put what it must know about the wider work in `background` (the goal, decisions already made and why, constraints and preferences the user stated, relevant files) and the job itself in `prompt` (what to do and what to report back).',
   'When a child will edit files while you or other children are editing too, open it with isolation "worktree": it then works on its own branch in its own checkout, and its report says which branch to merge. For read-only work (investigation, review) leave isolation out.',
   'If a child goes the wrong way or is no longer needed, stop_child_session interrupts it.',
+  'When you open several children and have nothing to do until they are all done, call wait_for_child_sessions and end your turn: their reports then arrive together in one message. Give children opened as one batch the same `group` so the user sees them as one batch.',
   'spawn_child_session returns at once. When the child finishes, its answer arrives as a message in this conversation starting with "[Child session". Do not wait, sleep or poll for it; carry on with other work or end your turn.',
 ].join(' ');
 
@@ -136,6 +137,19 @@ export const MAX_NOTES_PER_TURN = 20;
 export function clipNote(text: string): string {
   const t = text.trim();
   return t.length > MAX_NOTE_CHARS ? `${t.slice(0, MAX_NOTE_CHARS)} … [cut]` : t;
+}
+
+// Several reports as one message (wait_for_child_sessions): each keeps its
+// own header, so they can be told apart again.
+export function joinReports(reports: readonly string[]): string {
+  return reports.map((r) => r.trim()).filter(Boolean).join('\n\n');
+}
+export function splitReports(text: string): string[] {
+  return text.split(/\n\n(?=\[Child session ")/);
+}
+
+export function cleanGroup(raw: unknown): string {
+  return typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim().slice(0, 60) : '';
 }
 
 // Parse the header of a report (for display). Null when `text` isn't one.
