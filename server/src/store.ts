@@ -446,10 +446,13 @@ export async function migrateLegacyIfNeeded(): Promise<void> {
 // on top of the agents' own stores: which ones the user archived (hidden from
 // the list, nothing deleted) and display titles for sessions whose own store
 // we don't write to (Devin). Keys are "<kind>:<sessionId>".
-export type SessionMeta = { archived: string[]; titles: Record<string, string> };
+// parents (model: Session.parent): child session key → the session id of the
+// session it was opened under ("New child session"). A child is a full
+// session of its own; the link only places it in the Sessions tree.
+export type SessionMeta = { archived: string[]; titles: Record<string, string>; parents: Record<string, string> };
 
 export function normalizeSessionMeta(raw: unknown): SessionMeta {
-  const r = (raw && typeof raw === 'object' ? raw : {}) as { archived?: unknown; titles?: unknown };
+  const r = (raw && typeof raw === 'object' ? raw : {}) as { archived?: unknown; titles?: unknown; parents?: unknown };
   const archived = Array.isArray(r.archived) ? [...new Set(r.archived.filter((k): k is string => typeof k === 'string'))] : [];
   const titles: Record<string, string> = {};
   if (r.titles && typeof r.titles === 'object') {
@@ -457,7 +460,28 @@ export function normalizeSessionMeta(raw: unknown): SessionMeta {
       if (typeof v === 'string' && v.trim()) titles[k] = v.trim();
     }
   }
-  return { archived, titles };
+  const parents: Record<string, string> = {};
+  if (r.parents && typeof r.parents === 'object') {
+    for (const [k, v] of Object.entries(r.parents as Record<string, unknown>)) {
+      // A session is never its own parent.
+      if (typeof v === 'string' && v && !k.endsWith(`:${v}`)) parents[k] = v;
+    }
+  }
+  return { archived, titles, parents };
+}
+
+// Pure: the meta after `childKey` was opened as a child of session `parentId`.
+// Refused (meta returned as is) when it would make a session its own
+// ancestor.
+export function setParent(meta: SessionMeta, childKey: string, parentId: string): SessionMeta {
+  const kind = childKey.slice(0, childKey.indexOf(':'));
+  const childId = childKey.slice(childKey.indexOf(':') + 1);
+  const seen = new Set<string>([childId]);
+  for (let p: string | undefined = parentId; p; p = meta.parents[`${kind}:${p}`]) {
+    if (seen.has(p)) return meta;
+    seen.add(p);
+  }
+  return { ...meta, parents: { ...meta.parents, [childKey]: parentId } };
 }
 
 export async function getSessionMeta(uid: string): Promise<SessionMeta> {

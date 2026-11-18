@@ -295,6 +295,7 @@ export function SdkPanel({
   projectPath,
   resumeId,
   wire,
+  parentSessionId,
   initialPrompt,
   sendKey,
   theme,
@@ -320,6 +321,9 @@ export function SdkPanel({
   // Model: Tab.wire / web.WireCaptureSession — sent as wire=1 on every
   // handshake so the server routes this session through its wire proxy.
   wire?: boolean;
+  // Model: Session.parent — sent as parent=<id> on a fresh session's handshake
+  // so the server files it under that session in the Sessions tree.
+  parentSessionId?: string;
   // One-shot first message for a fresh session (Tab.initialPrompt); never on resume.
   initialPrompt?: string;
   sendKey: SendKey;
@@ -365,6 +369,7 @@ export function SdkPanel({
   const oldestIdxRef = useRef(0);
   const statusRef = useRef<Status>('connecting');
   const wireRef = useRef(!!wire); wireRef.current = !!wire;
+  const parentRef = useRef(parentSessionId); parentRef.current = parentSessionId;
   const [editingUuid, setEditingUuid] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [rewinding, setRewinding] = useState(false);
@@ -592,6 +597,7 @@ export function SdkPanel({
       const params = new URLSearchParams({ project: projectId });
       const sid = activeSessionIdRef.current;
       if (sid) params.set('resume', sid);
+      else if (parentRef.current) params.set('parent', parentRef.current);
       if (wireRef.current) params.set('wire', '1');
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       const ws = new WebSocket(`${proto}://${location.host}/ws/sdk-session?${params.toString()}`);
