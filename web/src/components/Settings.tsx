@@ -473,6 +473,33 @@ export function Settings({
                 text="Let Claude open child sessions"
                 hint="Claude (Agent SDK) sessions get tools to open a child session for a larger piece of work, message it, and receive its answer. Children appear under their parent in Sessions and you can talk to them directly. Applies to sessions started after the change; each child is a full session and uses quota like one."
               />
+              {(settings.childSessionTools ?? true) && (
+                <>
+                  <SettingsSelect
+                    label="Children at once"
+                    name="child-max-running"
+                    value={String(settings.childMaxRunning ?? 10)}
+                    options={[2, 4, 6, 10, 15, 20, 30].map((n) => ({
+                      value: String(n),
+                      label: n === 10 ? '10 (default)' : String(n),
+                      hint: `One session may have up to ${n} child sessions working at the same time. Claude is told to wait when it asks for more. Takes effect at once.`,
+                    }))}
+                    onChange={(v) => commit({ ...settings, childMaxRunning: Number(v) })}
+                  />
+                  <SettingsSelect
+                    label="Child nesting"
+                    name="child-max-depth"
+                    value={String(settings.childMaxDepth ?? 2)}
+                    options={[
+                      { value: '1', label: '1 level', hint: 'Children only: a child session cannot open children of its own. Takes effect at once.' },
+                      { value: '2', label: '2 levels (default)', hint: 'A child session may open children of its own; those cannot. Takes effect at once.' },
+                      { value: '3', label: '3 levels', hint: 'Children, grandchildren and great-grandchildren. Takes effect at once.' },
+                      { value: '4', label: '4 levels', hint: 'Four generations below the session you started. Takes effect at once.' },
+                    ]}
+                    onChange={(v) => commit({ ...settings, childMaxDepth: Number(v) })}
+                  />
+                </>
+              )}
               <Toggle
                 label="Rich copy"
                 checked={settings.richCopy ?? false}

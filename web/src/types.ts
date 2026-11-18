@@ -211,6 +211,10 @@ export type Settings = {
   // Model: Session.children — Claude (SDK) sessions get the tools to open
   // and message child sessions. On unless set to false.
   childSessionTools?: boolean;
+  // Limits on the children Claude opens: how many of one session may work at
+  // once (default 10) and how deep they may nest (default 2).
+  childMaxRunning?: number;
+  childMaxDepth?: number;
   // Opt-in right-hand Review panel (comments → batches → send to AI; model:
   // web.ReviewPanel). Off by default: no third column / right drawer / 💬 on
   // messages. Batches data is kept while off.

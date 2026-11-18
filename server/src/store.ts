@@ -90,6 +90,10 @@ export type Settings = {
   // Model: Session.children — give Claude (SDK) sessions the tools to open
   // and message child sessions. Default on (absent = on).
   childSessionTools?: boolean;
+  // How many children of one session may work at once, and how deep child
+  // sessions may nest (child-sessions.ts childLimits: defaults 10 and 2).
+  childMaxRunning?: number;
+  childMaxDepth?: number;
 };
 
 const DEFAULT_SETTINGS: Settings = {

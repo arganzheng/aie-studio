@@ -27,7 +27,7 @@ import {
 import { z } from 'zod';
 import { mapContextUsage, type ContextSnapshot } from './context-usage.js';
 import {
-  CHILD_TOOLS_INSTRUCTIONS, MAX_NOTES_PER_TURN, cleanResultSchema, childBrief, childIdsOf, childReport, cleanGroup, joinReports, cleanChildTitle, isTurnResult, lastModelOf, sessionDepth, spawnRefusal,
+  CHILD_TOOLS_INSTRUCTIONS, MAX_NOTES_PER_TURN, childLimits, cleanResultSchema, childBrief, childIdsOf, childReport, cleanGroup, joinReports, cleanChildTitle, isTurnResult, lastModelOf, sessionDepth, spawnRefusal,
   worktreePreface, type ChildStop,
 } from './child-sessions.js';
 import { createWorktree, isWorktreeName, listProjectSessions, realPath, sessionCwd, worktreeNameOf, worktreeNote, worktreePath, worktreeStatus } from './worktrees.js';
@@ -1167,7 +1167,9 @@ function childToolsServer(parent: SdkEntry) {
           const prompt = String(args.prompt ?? '').trim();
           if (!prompt) return toolText('prompt is required.', true);
           const meta = await getSessionMeta(parent.owner.uid);
-          const refusal = spawnRefusal({ depth: sessionDepth(meta.parents, parentId), runningChildren: runningChildren(parentId, childIdsOf(meta.parents, parentId)) });
+          // Read now, not when the session started: a change in Settings applies at once.
+          const settings = await getSettings(parent.owner.uid);
+          const refusal = spawnRefusal({ depth: sessionDepth(meta.parents, parentId), runningChildren: runningChildren(parentId, childIdsOf(meta.parents, parentId)) }, childLimits(settings));
           if (refusal) return toolText(refusal, true);
           const model = String(args.model ?? '').trim();
           if (model && parent.models.length > 0 && !parent.models.some((m) => m.value === model)) {
@@ -1176,7 +1178,6 @@ function childToolsServer(parent: SdkEntry) {
           const title = cleanChildTitle(String(args.title ?? ''));
           const schema = cleanResultSchema(args.result_schema, MAX_RESULT_SCHEMA_CHARS);
           if (schema && 'error' in schema) return toolText(schema.error, true);
-          const settings = await getSettings(parent.owner.uid);
           let cwd = parent.cwd;
           let wtBrief: string | undefined;
           let where = '';
