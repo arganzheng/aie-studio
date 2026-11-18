@@ -27,6 +27,7 @@ import { bangCommand, isBangInput, splitBangTexts } from '../lib/bang';
 import { ClaudeUsageBadge, refreshClaudeUsage } from './ClaudeUsage';
 import { ContextBadge, type ContextSnapshot } from './ContextUsage';
 import { resultNote } from '../lib/resultNote';
+import { parseCompactNote } from '../lib/compactNote';
 import { parseChildReports } from '../lib/childReport';
 import { parseParentContext, withParentContext, type ParentContext } from '../lib/parentContext';
 import { summarizeSession } from '../api';
@@ -362,6 +363,9 @@ export function SdkPanel({
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [toolPopout, setToolPopout] = useState<Msg | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  // The session is compacting its conversation (SDK status event).
+  const [compacting, setCompacting] = useState(false);
+  const compactedRef = useRef(false);
   const [oldestIdx, setOldestIdx] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [model, setModel] = useState<string | null>(null);
@@ -726,6 +730,7 @@ export function SdkPanel({
       failedConnectsRef.current = 0;
       if (m.resumed) pendingInitialPromptRef.current = null;
       setStatus(m.thinking ? 'thinking' : 'ready');
+      setCompacting(m.compacting === true);
       if (typeof m.sessionId === 'string' && m.sessionId) {
         activeSessionIdRef.current = m.sessionId;
         onSessionIdRef.current?.(m.sessionId);
@@ -825,8 +830,20 @@ export function SdkPanel({
       }
       return;
     }
+    if (ev?.type === 'system' && ev.subtype === 'status') {
+      setCompacting(ev.status === 'compacting');
+      if (ev.compact_result === 'success') compactedRef.current = true;
+      return;
+    }
     if (ev?.type === 'result') {
+      setCompacting(false);
       setStatus('ready');
+      // A compaction rewrote the conversation: show what it is now (its
+      // records are all written by the time its result arrives).
+      if (compactedRef.current) {
+        compactedRef.current = false;
+        if (activeSessionIdRef.current) void refetchTranscript(activeSessionIdRef.current);
+      }
       refreshClaudeUsage(); // a turn just spent quota; server cache caps this at 1/min
       currentAssistantIdRef.current = null;
       const note = resultNote(ev);
@@ -1075,6 +1092,17 @@ export function SdkPanel({
                 </Fragment>
               );
             }
+            // What a compaction left behind: not typed by the user.
+            const compact = m.images?.length ? null : parseCompactNote(m.text);
+            if (compact?.kind === 'done') return null;
+            if (compact) {
+              return (
+                <details key={m.id} className="msg msg-compact" data-anchor={anchor ?? undefined}>
+                  <summary>Earlier conversation, compacted into a summary</summary>
+                  <div className="msg-compact-body"><MarkdownText text={compact.summary} theme={theme} projectPath={projectPath} onOpenFile={openFile} /></div>
+                </details>
+              );
+            }
             const isEditing = !!m.uuid && editingUuid === m.uuid;
             return (
               <div key={m.id} className={`msg msg-user${bmCls}`} data-anchor={anchor ?? undefined}>
@@ -1198,13 +1226,14 @@ export function SdkPanel({
       </div>
       {(() => {
         const label = toast ?? (
-          status === 'ready' ? 'Ready'
+          compacting && status === 'thinking' ? 'Compacting the conversation…'
+            : status === 'ready' ? 'Ready'
             : status === 'connecting' ? 'Connecting…'
             : status === 'reconnecting' ? 'Reconnecting…'
             : status === 'replaying' ? 'Loading history…'
             : status === 'closed' ? 'Disconnected'
             : status);
-        const showLabel = status !== 'thinking' || !!toast;
+        const showLabel = status !== 'thinking' || !!toast || compacting;
         return (
           <div className={`chat-status status-${status}`}>
             <span>{showLabel ? label : ''}</span>

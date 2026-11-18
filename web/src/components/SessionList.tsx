@@ -79,7 +79,7 @@ export function SessionList({
   onOpenSubagent?: (row: SessionRow, s: SubagentInfo) => void;
   // "New child session" on a Claude session's menu. Omitted when Claude is
   // switched off on this device.
-  onNewChild?: (row: SessionRow, inWorktree: boolean) => void;
+  onNewChild?: (row: SessionRow, mode: 'plain' | 'worktree' | 'full') => void;
   // Omitted when that provider is switched off on this device.
   onNewClaude?: () => void;
   onNewDevin?: () => void;
@@ -459,7 +459,7 @@ export function SessionList({
                 const row = menu.row!;
                 setMenu(null);
                 setSubagentsOpen((prev) => new Set(prev).add(sessionRowKey(row)));
-                onNewChild(row, false);
+                onNewChild(row, 'plain');
               }}
             >＋ New child session</button>
           )}
@@ -471,9 +471,21 @@ export function SessionList({
                 const row = menu.row!;
                 setMenu(null);
                 setSubagentsOpen((prev) => new Set(prev).add(sessionRowKey(row)));
-                onNewChild(row, true);
+                onNewChild(row, 'worktree');
               }}
             >⎇ New child session in a worktree</button>
+          )}
+          {menu.row?.kind === 'claude' && onNewChild && (
+            <button
+              className="overflow-action"
+              title="Start a child that knows everything this session knows: it begins as a copy of this whole conversation, compacted. Slower and costlier to start than a plain child, which gets a short summary."
+              onClick={() => {
+                const row = menu.row!;
+                setMenu(null);
+                setSubagentsOpen((prev) => new Set(prev).add(sessionRowKey(row)));
+                onNewChild(row, 'full');
+              }}
+            >⧉ New child session with full context</button>
           )}
           {menu.row && (
             <button

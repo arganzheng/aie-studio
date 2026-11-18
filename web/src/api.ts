@@ -658,3 +658,13 @@ export async function summarizeSession(projectId: string, sessionId: string): Pr
   if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
   return j;
 }
+
+// Model: web.NewChildSession "with full context" — fork the parent's whole
+// conversation into a child and compact it there. Returns the child's id;
+// the compaction is still running when this returns.
+export async function forkChildSession(projectId: string, sessionId: string): Promise<{ sessionId: string; title: string }> {
+  const r = await fetch(`/api/projects/${encodeURIComponent(projectId)}/sdk-sessions/${encodeURIComponent(sessionId)}/fork-child`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
