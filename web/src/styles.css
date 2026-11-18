@@ -937,6 +937,19 @@ pre {
 .msg-assistant table { border-collapse: collapse; margin: 6px 0; }
 .msg-assistant th, .msg-assistant td { border: 1px solid var(--border-strong); padding: 3px 8px; }
 .msg-system { color: var(--fg-muted); font-style: italic; font-size: 11px; }
+/* A child session's answer in its parent's chat (model: Session.children). */
+.msg-child-report {
+  align-self: stretch; max-width: none;
+  border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px;
+  background: var(--bg-elevated); padding: 8px 12px;
+}
+.msg-child-report.failed { border-left-color: var(--danger); }
+.child-report-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; font-size: 12px; }
+.child-report-mark { color: var(--accent); }
+.msg-child-report.failed .child-report-mark { color: var(--danger); }
+.child-report-title { font-weight: 600; color: var(--fg-strong); }
+.child-report-state { color: var(--fg-muted); }
+
 .msg-system-error {
   color: var(--fg);
   font-style: normal;

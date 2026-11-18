@@ -21,9 +21,15 @@ import {
   type PermissionResult,
   type SlashCommand,
   type ModelInfo,
+  createSdkMcpServer,
+  tool,
 } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
 import { mapContextUsage, type ContextSnapshot } from './context-usage.js';
-import { getProject, getSessionMeta, getSettings, putSessionMeta, setParent } from './store.js';
+import {
+  CHILD_TOOLS_INSTRUCTIONS, childIdsOf, childReport, cleanChildTitle, sessionDepth, spawnRefusal,
+} from './child-sessions.js';
+import { getProject, getSessionMeta, getSettings, putSessionMeta, setParent, type Settings } from './store.js';
 import { getUserId } from './auth.js';
 import { runBang, bangContextBlocks, type BangResult, type RunningBang } from './shell-exec.js';
 import { publishSessionEvent, type SessionOwner } from './notify.js';
@@ -161,6 +167,12 @@ type SdkEntry = {
   // Model: Session.parent — set on the handshake of a "New child session";
   // written to SessionMeta once claude names the session (system.init).
   parentSessionId: string | null;
+  // Model: Session.children — this session's agent may open child sessions
+  // (Settings.childSessionTools).
+  childTools: boolean;
+  // The turn now running was asked for by the parent agent (spawn / send):
+  // its answer goes back to the parent when it ends.
+  reportToParent: boolean;
   commands: SlashCommand[];
   agents: string[];
   models: ModelInfo[];
@@ -325,6 +337,7 @@ function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: 
       pathToClaudeCodeExecutable: process.env.REMOTE_IDE_SDK_CLAUDE_PATH || undefined,
       stderr: (data) => broadcast(entry, { type: 'stderr', data }),
       canUseTool: makeCanUseTool(entry),
+      mcpServers: entry.childTools ? { aie: childToolsServer(entry) } : undefined,
     },
   });
   entry.q = q;
@@ -413,6 +426,7 @@ function onSdkMessage(entry: SdkEntry, m: any) {
   }
   if (m?.type === 'result') {
     entry.thinking = false;
+    if (entry.reportToParent) { entry.reportToParent = false; void reportToParent(entry, m); }
     refreshContext(entry);
     scheduleTitleRefresh(entry);
     if (entry.clients.size === 0) scheduleKillIfIdle(entry);
@@ -759,6 +773,186 @@ export function stopSdkSession(sessionId: string, uid: string): boolean {
   return true;
 }
 
+// A bridge entry with no query yet (startQuery starts one).
+function newEntry(o: {
+  uid: string; projectId: string; cwd: string; settings: Settings;
+  resumeId?: string; parentSessionId?: string | null; observeWire?: boolean; model?: string;
+}): SdkEntry {
+  return {
+    cwd: o.cwd,
+    owner: { uid: o.uid, projectId: o.projectId, tabType: 'claude-sdk' },
+    sessionId: o.resumeId ?? null,
+    q: null,
+    queue: makeInputQueue(),
+    generation: 0,
+    clients: new Set(),
+    thinking: false,
+    model: null,
+    requestedModel: o.model || o.settings.model || '',
+    effort: isEffortLevel(o.settings.effort) ? o.settings.effort : '',
+    observeWire: o.observeWire === true,
+    title: null,
+    context: null,
+    tasks: new Map(),
+    parentSessionId: o.parentSessionId ?? null,
+    childTools: o.settings.childSessionTools !== false,
+    reportToParent: false,
+    commands: [],
+    agents: [],
+    models: [],
+    pendingAsks: new Map(),
+    titleTimers: [],
+    lastActivity: Date.now(),
+    externalNotified: false,
+    pendingBang: [],
+    runningBang: new Map(),
+  };
+}
+
+// ----- child sessions driven by the agent (model: Session.children) ---------
+
+// Put a message into a session as if typed, telling every attached client.
+function injectUserText(entry: SdkEntry, text: string) {
+  const uuid = randomUUID();
+  const um = userMessage(uuid, text, []);
+  entry.thinking = true;
+  touchActivity(entry);
+  broadcast(entry, { type: 'user_echo', msgId: null, uuid, message: um.message });
+  entry.queue.push(um);
+}
+
+// The live entry of one of the caller's sessions, starting its process (a
+// resume, no client attached) when it isn't running. Null when the classic
+// bridge holds it.
+async function wakeSession(from: SdkEntry, sessionId: string): Promise<SdkEntry | null> {
+  const live = byId.get(sessionId);
+  if (live) return live.owner.uid === from.owner.uid ? live : null;
+  if (liveBridge(sessionId) === 'cli') return null;
+  const settings = await getSettings(from.owner.uid);
+  const entry = newEntry({ uid: from.owner.uid, projectId: from.owner.projectId, cwd: from.cwd, settings, resumeId: sessionId });
+  byId.set(sessionId, entry);
+  markLive(sessionId, 'sdk');
+  try { entry.title = (await getSessionInfo(sessionId, { dir: from.cwd }))?.summary?.trim() || null; } catch {}
+  startQuery(entry, { resume: sessionId });
+  startWatcher(entry);
+  // Nobody is attached: end the process again once it goes quiet.
+  scheduleKillIfIdle(entry);
+  return entry;
+}
+
+// A child finished a turn its parent asked for: hand the answer to the
+// parent, waking it if needed.
+async function reportToParent(child: SdkEntry, result: any) {
+  const parentId = child.parentSessionId ?? (child.sessionId ? (await getSessionMeta(child.owner.uid).catch(() => null))?.parents[`claude:${child.sessionId}`] : undefined);
+  if (!parentId || !child.sessionId) return;
+  try {
+    const parent = await wakeSession(child, parentId);
+    if (!parent) return;
+    const ok = result?.subtype === 'success' && result?.is_error !== true;
+    injectUserText(parent, childReport({
+      title: child.title || child.sessionId.slice(0, 8),
+      sessionId: child.sessionId,
+      ok,
+      result: typeof result?.result === 'string' ? result.result : '',
+      errorKind: ok ? undefined : String(result?.subtype ?? 'error'),
+    }));
+  } catch {}
+}
+
+const toolText = (text: string, isError = false) => ({ content: [{ type: 'text' as const, text }], ...(isError ? { isError: true } : {}) });
+
+// The in-process MCP server that gives `parent`'s agent its child-session
+// tools. One per query: the handlers close over the entry.
+function childToolsServer(parent: SdkEntry) {
+  const runningChildren = (parentId: string, ids: string[]) =>
+    ids.filter((id) => byId.get(id)?.thinking).length
+    + [...pending].filter((e) => e.parentSessionId === parentId && e.thinking).length;
+
+  return createSdkMcpServer({
+    name: 'aie',
+    version: '1.0.0',
+    instructions: CHILD_TOOLS_INSTRUCTIONS,
+    tools: [
+      tool(
+        'spawn_child_session',
+        'Open a child session: a separate, full Claude session in this project that works on `prompt` in the background. The user sees it under this session in the Sessions tree and can open it and talk to it. Returns immediately with the child id; the child\'s answer arrives later as a message starting with "[Child session". The child knows nothing of this conversation, so `prompt` must be a complete brief.',
+        {
+          title: z.string().describe('Short name shown in the Sessions tree, e.g. "Draft Apple Pay tests"'),
+          prompt: z.string().describe('The complete task brief for the child: goal, relevant files, constraints, and what to report back'),
+          model: z.string().optional().describe('Model for the child (an id or alias this session can use). Omit to use the default.'),
+        },
+        async (args) => {
+          const parentId = parent.sessionId;
+          if (!parentId) return toolText('This session has no id yet; try again in a moment.', true);
+          const prompt = String(args.prompt ?? '').trim();
+          if (!prompt) return toolText('prompt is required.', true);
+          const meta = await getSessionMeta(parent.owner.uid);
+          const refusal = spawnRefusal({ depth: sessionDepth(meta.parents, parentId), runningChildren: runningChildren(parentId, childIdsOf(meta.parents, parentId)) });
+          if (refusal) return toolText(refusal, true);
+          const model = String(args.model ?? '').trim();
+          if (model && parent.models.length > 0 && !parent.models.some((m) => m.value === model)) {
+            return toolText(`Unknown model "${model}". Available: ${parent.models.map((m) => m.value).join(', ')}. Omit model to use the default.`, true);
+          }
+          const title = cleanChildTitle(String(args.title ?? ''));
+          const settings = await getSettings(parent.owner.uid);
+          const child = newEntry({ uid: parent.owner.uid, projectId: parent.owner.projectId, cwd: parent.cwd, settings, parentSessionId: parentId, model });
+          child.title = title;
+          child.reportToParent = true;
+          pending.add(child);
+          startQuery(child, {});
+          injectUserText(child, prompt);
+          // claude names the session on the first turn's system.init.
+          for (let i = 0; i < 300 && !child.sessionId && child.q; i++) await new Promise((r) => setTimeout(r, 100));
+          if (!child.sessionId) return toolText(`Started child session "${title}", but it has not reported an id yet. Its answer will still arrive as a message when it finishes.`);
+          try { await renameSession(child.sessionId, title, { dir: child.cwd }); child.title = title; broadcast(child, { type: 'title', title }); } catch {}
+          return toolText(`Started child session "${title}" (id ${child.sessionId}). It is working in the background; its answer will arrive as a message starting with "[Child session" when it finishes. Do not wait or poll for it.`);
+        },
+      ),
+      tool(
+        'send_to_child_session',
+        'Send a follow-up message to one of this session\'s child sessions (more instructions, a question, a correction). The child\'s answer arrives later as a message starting with "[Child session".',
+        {
+          child_id: z.string().describe('The child session id returned by spawn_child_session or list_child_sessions'),
+          message: z.string().describe('The message for the child'),
+        },
+        async (args) => {
+          const parentId = parent.sessionId;
+          const childId = String(args.child_id ?? '').trim();
+          const message = String(args.message ?? '').trim();
+          if (!parentId || !childId || !message) return toolText('child_id and message are required.', true);
+          const meta = await getSessionMeta(parent.owner.uid);
+          if (meta.parents[`claude:${childId}`] !== parentId) return toolText(`${childId} is not a child session of this session. Use list_child_sessions to see them.`, true);
+          const child = await wakeSession(parent, childId);
+          if (!child) return toolText('That child session is open in a classic Claude tab and cannot be messaged from here.', true);
+          child.reportToParent = true;
+          injectUserText(child, message);
+          return toolText(`Delivered to "${child.title || childId}". Its answer will arrive as a message starting with "[Child session".`);
+        },
+      ),
+      tool(
+        'list_child_sessions',
+        'List this session\'s child sessions with their ids, titles and whether each is working, waiting for the user, idle or not running.',
+        {},
+        async () => {
+          const parentId = parent.sessionId;
+          if (!parentId) return toolText('No child sessions.');
+          const meta = await getSessionMeta(parent.owner.uid);
+          const ids = childIdsOf(meta.parents, parentId);
+          if (ids.length === 0) return toolText('No child sessions.');
+          const lines = await Promise.all(ids.map(async (id) => {
+            const live = byId.get(id);
+            let title = live?.title ?? null;
+            if (!title) { try { title = (await getSessionInfo(id, { dir: parent.cwd }))?.summary?.trim() || null; } catch {} }
+            const state = live ? (live.pendingAsks.size > 0 ? 'waiting for the user' : live.thinking ? 'working' : 'idle') : 'not running';
+            return `- ${id} "${title ?? id.slice(0, 8)}": ${state}`;
+          }));
+          return toolText(lines.join('\n'));
+        },
+      ),
+    ],
+  });
+}
+
 // ----- routes --------------------------------------------------------------
 
 export function registerSdkSessionRoutes(app: FastifyInstance) {
@@ -797,34 +991,11 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
       // only while the proxy is listening; `started.wire` tells the client.
       const observeWire = req.query.wire === '1' && wireBaseUrl() !== null;
       if (observeWire && resumeId) registerWireSession(resumeId, project.path);
-      const entry: SdkEntry = {
-        cwd: project.path,
-        owner: { uid, projectId: project.id, tabType: 'claude-sdk' },
-        sessionId: resumeId ?? null,
-        q: null,
-        queue: makeInputQueue(),
-        generation: 0,
-        clients: new Set(),
-        thinking: false,
-        model: null,
-        requestedModel: settings.model || '',
-        effort: isEffortLevel(settings.effort) ? settings.effort : '',
-        observeWire,
-        title: null,
-        context: null,
-        tasks: new Map(),
+      const entry = newEntry({
+        uid, projectId: project.id, cwd: project.path, settings, resumeId, observeWire,
         // Only a fresh session can be made a child; a resume keeps its link.
         parentSessionId: !resumeId && /^[A-Za-z0-9-]{8,64}$/.test(req.query.parent ?? '') ? req.query.parent! : null,
-        commands: [],
-        agents: [],
-        models: [],
-        pendingAsks: new Map(),
-        titleTimers: [],
-        lastActivity: Date.now(),
-        externalNotified: false,
-        pendingBang: [],
-        runningBang: new Map(),
-      };
+      });
       if (resumeId) { byId.set(resumeId, entry); markLive(resumeId, 'sdk'); }
       else pending.add(entry);
       if (resumeId) {

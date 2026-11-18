@@ -26,6 +26,7 @@ import { ChatInput } from './ChatInput';
 import { bangCommand, isBangInput, splitBangTexts } from '../lib/bang';
 import { ClaudeUsageBadge, refreshClaudeUsage } from './ClaudeUsage';
 import { ContextBadge, type ContextSnapshot } from './ContextUsage';
+import { parseChildReport } from '../lib/childReport';
 import { ImageAttachmentStrip, useImageAttachments, type ImageAttachment } from './ImageAttachments';
 import { useElicitationHost } from './ElicitationHost';
 import { MarkdownLink } from './MarkdownLink';
@@ -1009,6 +1010,20 @@ export function SdkPanel({
           const anchor = msgAnchor(m);
           const bmCls = canComment && !!anchor && commentedAnchors.has(anchor) ? ' commented' : '';
           if (m.role === 'user') {
+            // A child session's answer, delivered by the server — a report, not a prompt.
+            const report = m.images?.length ? null : parseChildReport(m.text);
+            if (report) {
+              return (
+                <div key={m.id} className={`msg msg-child-report${report.ok ? '' : ' failed'}`} data-anchor={anchor ?? undefined}>
+                  <div className="child-report-head">
+                    <span className="child-report-mark" aria-hidden="true">⑂</span>
+                    <span className="child-report-title">{report.title}</span>
+                    <span className="child-report-state">{report.ok ? 'child session finished' : 'child session stopped with an error'}</span>
+                  </div>
+                  <MarkdownText text={report.body} theme={theme} projectPath={projectPath} onOpenFile={openFile} />
+                </div>
+              );
+            }
             const isEditing = !!m.uuid && editingUuid === m.uuid;
             return (
               <div key={m.id} className={`msg msg-user${bmCls}`} data-anchor={anchor ?? undefined}>

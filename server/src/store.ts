@@ -95,6 +95,9 @@ export type Settings = {
   richCopy?: boolean;
   // Right-hand Review panel (web.ReviewPanel). Default off.
   review?: boolean;
+  // Model: Session.children — give Claude (SDK) sessions the tools to open
+  // and message child sessions. Default on (absent = on).
+  childSessionTools?: boolean;
 };
 
 const DEFAULT_SETTINGS: Settings = {
