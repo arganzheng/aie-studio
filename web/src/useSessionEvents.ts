@@ -5,9 +5,12 @@ import type { SessionEvent } from './lib/sessionAlerts';
 // page, kept open across project and tab switches. Reconnects with backoff
 // and asks for what it missed (?since=), so a page that was asleep still
 // hears about a session that finished meanwhile.
-export function useSessionEvents(enabled: boolean, onEvent: (e: SessionEvent) => void): void {
+// `onInbox`: another page changed the inbox's read state (web.Inbox).
+export function useSessionEvents(enabled: boolean, onEvent: (e: SessionEvent) => void, onInbox?: () => void): void {
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
+  const onInboxRef = useRef(onInbox);
+  onInboxRef.current = onInbox;
   useEffect(() => {
     if (!enabled) return;
     let ws: WebSocket | null = null;
@@ -34,8 +37,11 @@ export function useSessionEvents(enabled: boolean, onEvent: (e: SessionEvent) =>
         try { msg = JSON.parse(m.data); } catch { return; }
         if (msg?.type === 'hello' && typeof msg.now === 'number') {
           since = Math.max(since ?? 0, msg.now);
+          // (Re)connected: anything may have changed while we were away.
+          onInboxRef.current?.();
           return;
         }
+        if (msg?.type === 'inbox') { onInboxRef.current?.(); return; }
         if (msg?.type !== 'session' || !msg.event?.id || seen.has(msg.event.id)) return;
         seen.add(msg.event.id);
         if (typeof msg.event.at === 'number') since = Math.max(since ?? 0, msg.event.at);
