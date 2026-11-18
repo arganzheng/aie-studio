@@ -938,6 +938,16 @@ pre {
 .msg-parent-ctx > summary { cursor: pointer; opacity: 0.85; }
 .msg-parent-ctx-body { margin-top: 6px; padding: 2px 10px; border-radius: 4px; background: rgba(0, 0, 0, 0.18); white-space: normal; text-align: left; }
 
+/* The summary a compaction leaves in place of the earlier turns. */
+.msg-compact {
+  align-self: stretch; max-width: none; white-space: normal;
+  border: 1px dashed var(--border); border-radius: 6px; padding: 6px 12px;
+  color: var(--fg-muted, inherit); font-size: 0.92em;
+}
+.msg-compact > summary { cursor: pointer; opacity: 0.85; }
+.msg-compact-body { margin-top: 6px; }
+.msg-compact-body p { margin: 6px 0; white-space: pre-wrap; }
+
 /* A child session's answer in its parent's chat (model: Session.children). */
 .msg-child-report {
   align-self: stretch; max-width: none;

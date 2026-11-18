@@ -42,6 +42,7 @@ import {
   logout,
   type SubagentInfo,
   createWorktree,
+  forkChildSession,
 } from './api';
 import { rewriteMovedPath } from './lib/movedPath';
 import type { Project, Tab, Batch, Comment, TabRef, Workspace, ProjectWorkspace, Settings, LocalPrefs, ClaudeBridge } from './types';
@@ -1165,13 +1166,26 @@ export default function App() {
   // model. Always the SDK bridge: only it records the link.
   // `inWorktree`: the child gets its own git worktree and branch first
   // (model: Session.worktree), so its edits can't collide with the parent's.
-  async function openChildSession(row: SessionRow, inWorktree = false) {
+  // 'compacted': the child starts as a compacted copy of the parent's whole
+  // conversation instead of a summary of it.
+  async function openChildSession(row: SessionRow, mode: 'plain' | 'worktree' | 'compacted' = 'plain') {
+    const inWorktree = mode === 'worktree';
     if (!activeProjectId) return;
     if (row.projectId !== activeProjectId) {
       showAppToast('Switch to that session\'s project to open a child session');
       return;
     }
     const title = `Child of ${row.title}`.slice(0, 60);
+    if (mode === 'compacted') {
+      showAppToast('Compacting a copy of the parent session…');
+      try {
+        const child = await forkChildSession(activeProjectId, row.sessionId);
+        openSdkTab(child.sessionId, child.title);
+      } catch (e) {
+        showAppToast(`Child session not created: ${(e as Error).message}`);
+      }
+      return;
+    }
     if (!inWorktree) { openSdkTab(undefined, title, { parentSessionId: row.sessionId }); return; }
     try {
       const wt = await createWorktree(activeProjectId, title);
@@ -1764,7 +1778,7 @@ export default function App() {
                 activeSubagent={activeTab?.type === 'subagent' ? `${activeTab.sessionId}:${activeTab.agentId}` : null}
                 onOpen={(row) => { setDrawerOpen(false); openSessionRow(row); }}
                 onOpenSubagent={(row, s) => { setDrawerOpen(false); openSubagentTab(row, s); }}
-                onNewChild={localPrefs.enableClaude ? (row, inWorktree) => { setDrawerOpen(false); void openChildSession(row, inWorktree); } : undefined}
+                onNewChild={localPrefs.enableClaude ? (row, mode) => { setDrawerOpen(false); void openChildSession(row, mode); } : undefined}
                 onNewClaude={localPrefs.enableClaude ? () => { setDrawerOpen(false); if (localPrefs.claudeBridge === 'sdk') openSdkTab(); else openSessionTab(); } : undefined}
                 onNewDevin={localPrefs.enableDevin ? () => { setDrawerOpen(false); openDevinTab(); } : undefined}
                 onRenamed={retitleSessionTabs}
