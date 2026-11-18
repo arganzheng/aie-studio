@@ -22,6 +22,7 @@ export const CHILD_TOOLS_INSTRUCTIONS = [
   'Use spawn_child_session for a substantial, self-contained piece of work that the user may want to follow or steer (a feature slice, a long investigation, work that can run in parallel with yours).',
   'For a quick lookup or a short helper task, prefer the built-in Agent tool: it is cheaper and faster.',
   'A child starts with none of your context: give it a complete brief (goal, relevant files, constraints, what to report back).',
+  'If a child goes the wrong way or is no longer needed, stop_child_session interrupts it.',
   'spawn_child_session returns at once. When the child finishes, its answer arrives as a message in this conversation starting with "[Child session". Do not wait, sleep or poll for it; carry on with other work or end your turn.',
 ].join(' ');
 
@@ -50,6 +51,15 @@ export function spawnRefusal(opts: { depth: number; runningChildren: number }): 
   return null;
 }
 
+// An SDK `result` that closes a turn the model actually ran. Resuming a
+// session whose background task died with its old process yields a
+// bookkeeping result first (num_turns 0, no text): that is not the answer
+// to anything, and reporting it would swallow the real one.
+export function isTurnResult(result: any): boolean {
+  if (result?.num_turns === 0 && !(typeof result?.result === 'string' && result.result.trim())) return false;
+  return true;
+}
+
 export function cleanChildTitle(raw: string): string {
   return raw.replace(/\s+/g, ' ').trim().slice(0, 80) || 'Child session';
 }
@@ -59,16 +69,28 @@ export function cleanChildTitle(raw: string): string {
 // `userNotes`: what the user typed into the child directly during the turn
 // (an intervention the parent did not see) — quoted ahead of the answer so
 // the parent can adjust its plan.
-export function childReport(opts: { title: string; sessionId: string; ok: boolean; result: string; errorKind?: string; userNotes?: readonly string[] }): string {
+// `stopped`: the turn did not end by itself — the user stopped the child,
+// its parent did (stop_child_session), or the server went down under it.
+export type ChildStop = 'user' | 'parent' | 'restart';
+const STOP_STATE: Record<ChildStop, string> = {
+  user: 'was stopped by the user',
+  parent: 'was stopped by its parent session',
+  restart: 'was interrupted by an aie-studio restart',
+};
+export function childReport(opts: { title: string; sessionId: string; ok: boolean; result: string; errorKind?: string; userNotes?: readonly string[]; stopped?: ChildStop }): string {
   const notes = (opts.userNotes ?? []).map((n) => n.trim()).filter(Boolean);
-  const state = opts.ok
-    ? (notes.length > 0 ? 'finished after the user stepped in' : 'finished')
-    : `stopped with an error${opts.errorKind ? ` (${opts.errorKind})` : ''}`;
+  const state = opts.stopped
+    ? STOP_STATE[opts.stopped]
+    : opts.ok
+      ? (notes.length > 0 ? 'finished after the user stepped in' : 'finished')
+      : `stopped with an error${opts.errorKind ? ` (${opts.errorKind})` : ''}`;
   const head = `${CHILD_REPORT_PREFIX}"${opts.title}" (${opts.sessionId}) ${state}]`;
   let body = opts.result.trim();
   if (body.length > MAX_REPORT_CHARS) body = `${body.slice(0, MAX_REPORT_CHARS)}\n… [report cut at ${MAX_REPORT_CHARS} characters; ask the child for the rest with send_to_child_session]`;
   const tail = '(Sent automatically by aie-studio when the child session finished; not typed by the user.)';
-  const answer = body || '(the child session gave no final answer)';
+  const answer = body || (opts.stopped
+    ? `(no final answer: the child session ${STOP_STATE[opts.stopped]} before it finished${opts.stopped === 'parent' ? '' : '; use send_to_child_session to have it continue'})`
+    : '(the child session gave no final answer)');
   if (notes.length === 0) return [head, answer, tail].join('\n\n');
   const quoted = notes.map((n) => clipNote(n).split('\n').map((l) => `> ${l}`).join('\n')).join('\n>\n');
   return [
@@ -92,7 +114,7 @@ export function clipNote(text: string): string {
 
 // Parse the header of a report (for display). Null when `text` isn't one.
 export function parseChildReport(text: string): { title: string; sessionId: string; ok: boolean; body: string } | null {
-  const m = /^\[Child session "(.*?)" \(([A-Za-z0-9-]+)\) (finished after the user stepped in|finished|stopped with an error[^\]]*)\]\n\n([\s\S]*)$/.exec(text);
+  const m = /^\[Child session "(.*?)" \(([A-Za-z0-9-]+)\) (finished after the user stepped in|finished|stopped with an error[^\]]*|was stopped by the user|was stopped by its parent session|was interrupted by an aie-studio restart)\]\n\n([\s\S]*)$/.exec(text);
   if (!m) return null;
   const body = m[4].replace(/\n\n\(Sent automatically by aie-studio[^)]*\)\s*$/, '');
   return { title: m[1], sessionId: m[2], ok: m[3].startsWith('finished'), body };

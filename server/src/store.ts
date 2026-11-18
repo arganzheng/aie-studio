@@ -120,6 +120,7 @@ function projectsFile(uid: string): string { return path.join(userDir(uid), 'pro
 function workspaceFile(uid: string): string { return path.join(userDir(uid), 'workspace.json'); }
 function settingsFile(uid: string): string { return path.join(userDir(uid), 'settings.json'); }
 function sessionMetaFile(uid: string): string { return path.join(userDir(uid), 'session-meta.json'); }
+function owedReportsFile(uid: string): string { return path.join(userDir(uid), 'child-reports.json'); }
 
 // Legacy single-user file locations — used only for the one-shot migration
 // into the per-user tree on first start after the multi-user upgrade.
@@ -490,6 +491,49 @@ export function setParent(meta: SessionMeta, childKey: string, parentId: string)
     seen.add(p);
   }
   return { ...meta, parents: { ...meta.parents, [childKey]: parentId } };
+}
+
+// Model: Session.children — the reports child sessions still owe their
+// parents, kept on disk so a server crash mid-turn doesn't leave a parent
+// waiting for ever: on the next start each one is delivered as "interrupted".
+// Keyed by the child's session id.
+export type OwedReport = {
+  parentId: string;
+  projectId: string;
+  cwd: string;
+  title: string;
+  // The parent's agent asked for the turn (spawn / send).
+  requested: boolean;
+  // What the user typed into the child during the turn.
+  notes: string[];
+};
+export type OwedReports = Record<string, OwedReport>;
+
+export function normalizeOwedReports(raw: unknown): OwedReports {
+  const out: OwedReports = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [id, v] of Object.entries(raw as Record<string, any>)) {
+    if (!v || typeof v !== 'object' || typeof v.parentId !== 'string' || !v.parentId || typeof v.cwd !== 'string' || typeof v.projectId !== 'string') continue;
+    out[id] = {
+      parentId: v.parentId,
+      projectId: v.projectId,
+      cwd: v.cwd,
+      title: typeof v.title === 'string' ? v.title : '',
+      requested: v.requested === true,
+      notes: Array.isArray(v.notes) ? v.notes.filter((n: unknown): n is string => typeof n === 'string') : [],
+    };
+  }
+  return out;
+}
+export async function getOwedReports(uid: string): Promise<OwedReports> {
+  return normalizeOwedReports(await readJson<unknown>(owedReportsFile(uid), {}));
+}
+export async function putOwedReports(uid: string, reports: OwedReports): Promise<void> {
+  await writeJson(owedReportsFile(uid), normalizeOwedReports(reports));
+}
+export async function listUserIds(): Promise<string[]> {
+  try { return (await fs.readdir(USERS_DIR, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name); }
+  catch { return []; }
 }
 
 export async function getSessionMeta(uid: string): Promise<SessionMeta> {

@@ -111,13 +111,32 @@ async function rowsFor(project: Project): Promise<Omit<SessionRow, 'archived'>[]
   return [...(await claudeRows(project)), ...devinRows(project)];
 }
 
-function stopLive(kind: SessionKind, sessionId: string, uid: string): boolean {
+function stopLive(kind: SessionKind, sessionId: string, uid: string, opts: { silent?: boolean } = {}): boolean {
   if (kind === 'devin') return stopDevinSession(sessionId, uid);
   // One of the two Claude bridges holds it, at most.
-  return stopSdkSession(sessionId, uid) || stopCliSession(sessionId, uid);
+  return stopSdkSession(sessionId, uid, opts) || stopCliSession(sessionId, uid);
 }
 
-type Target = { projectId?: string; kind?: string; sessionId?: string };
+// Pure: every session under `sessionId` in the tree (children, their
+// children, …), nearest first. A link cycle is walked once.
+export function descendantIds(parents: Readonly<Record<string, string>>, kind: SessionKind, sessionId: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>([sessionId]);
+  for (let layer = [sessionId]; layer.length > 0;) {
+    const next: string[] = [];
+    for (const [k, v] of Object.entries(parents)) {
+      const id = k.slice(k.indexOf(':') + 1);
+      if (!k.startsWith(`${kind}:`) || !layer.includes(v) || seen.has(id)) continue;
+      seen.add(id);
+      next.push(id);
+    }
+    out.push(...next);
+    layer = next;
+  }
+  return out;
+}
+
+type Target = { projectId?: string; kind?: string; sessionId?: string; withChildren?: boolean };
 
 export function registerSessionIndexRoutes(app: FastifyInstance) {
   // The session named by a mutating request, checked against the caller's own
@@ -192,7 +211,14 @@ export function registerSessionIndexRoutes(app: FastifyInstance) {
     if (!uid) return reply.code(401).send({ error: 'unauthorized' });
     try {
       const t = await resolveTarget(uid, req.body);
-      return { ok: true, stopped: stopLive(t.kind, t.sessionId, uid) };
+      // "Stop with child sessions": the children go first and quietly, so
+      // none of them reports to a parent that is about to stop too.
+      let children = 0;
+      if (req.body?.withChildren === true) {
+        const meta = await getSessionMeta(uid);
+        for (const id of descendantIds(meta.parents, t.kind, t.sessionId)) if (stopLive(t.kind, id, uid, { silent: true })) children++;
+      }
+      return { ok: true, stopped: stopLive(t.kind, t.sessionId, uid), children };
     } catch (e: any) {
       return reply.code(e.code ?? 500).send({ error: e.message });
     }

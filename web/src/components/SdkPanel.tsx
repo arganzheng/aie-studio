@@ -1018,7 +1018,7 @@ export function SdkPanel({
                   <div className="child-report-head">
                     <span className="child-report-mark" aria-hidden="true">⑂</span>
                     <span className="child-report-title">{report.title}</span>
-                    <span className="child-report-state">{report.ok ? 'child session finished' : 'child session stopped with an error'}</span>
+                    <span className="child-report-state">child session {report.state}</span>
                     {report.intervened && <span className="child-report-flag" title="You typed into this child session during the turn; the parent is told what you said">you stepped in</span>}
                   </div>
                   <MarkdownText text={report.body} theme={theme} projectPath={projectPath} onOpenFile={openFile} />

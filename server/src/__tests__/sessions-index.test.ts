@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applySessionMeta, cleanTitle, forgetSession, MAX_TITLE_LENGTH, sessionKey, setArchived, type SessionRow } from '../sessions-index.js';
-import { normalizeSessionMeta, setParent } from '../store.js';
+import { applySessionMeta, cleanTitle, descendantIds, forgetSession, MAX_TITLE_LENGTH, sessionKey, setArchived, type SessionRow } from '../sessions-index.js';
+import { normalizeOwedReports, normalizeSessionMeta, setParent } from '../store.js';
 
 function row(over: Partial<SessionRow> = {}): Omit<SessionRow, 'archived'> {
   return { kind: 'claude', sessionId: 's1', projectId: 'p1', title: 'First', updatedAt: 100, live: null, state: null, ...over };
@@ -66,6 +66,26 @@ describe('child sessions', () => {
     expect(forgetSession(meta, 'claude:c2').agentSpawned).toEqual(['claude:c1']);
     expect(forgetSession(meta, 'claude:c1').agentSpawned).toEqual([]);
     expect(forgetSession(meta, 'claude:p1').agentSpawned).toEqual([]);
+  });
+});
+
+describe('stopping a session with its children', () => {
+  it('finds every descendant, nearest first, of the same kind only', () => {
+    const parents = { 'claude:c1': 'p', 'claude:c2': 'p', 'claude:g1': 'c1', 'claude:other': 'q', 'devin:d1': 'p' };
+    expect(descendantIds(parents, 'claude', 'p')).toEqual(['c1', 'c2', 'g1']);
+    expect(descendantIds(parents, 'claude', 'c2')).toEqual([]);
+    expect(descendantIds({ 'claude:a': 'b', 'claude:b': 'a' }, 'claude', 'a')).toEqual(['b']);
+  });
+});
+
+describe('owed child reports', () => {
+  it('keeps well-formed records and drops the rest', () => {
+    const good = { parentId: 'p', projectId: 'proj', cwd: '/w', title: 'T', requested: true, notes: ['a', 3, 'b'] };
+    expect(normalizeOwedReports({ c1: good, c2: { parentId: '' }, c3: 'x', c4: { parentId: 'p', projectId: 'proj', cwd: '/w' } })).toEqual({
+      c1: { ...good, notes: ['a', 'b'] },
+      c4: { parentId: 'p', projectId: 'proj', cwd: '/w', title: '', requested: false, notes: [] },
+    });
+    expect(normalizeOwedReports(null)).toEqual({});
   });
 });
 
