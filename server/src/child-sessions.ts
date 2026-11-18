@@ -84,6 +84,18 @@ export function worktreePreface(o: { path: string; branch: string; projectPath: 
   ].join(' ');
 }
 
+// The model a session last answered with, from its transcript (SDK
+// getSessionMessages). Null when it never answered.
+export function lastModelOf(messages: readonly unknown[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as { type?: unknown; message?: { model?: unknown } } | null;
+    const model = m?.type === 'assistant' ? m.message?.model : undefined;
+    // claude writes "<synthetic>" on messages it made up itself (errors).
+    if (typeof model === 'string' && model && !model.startsWith('<')) return model;
+  }
+  return null;
+}
+
 export function cleanChildTitle(raw: string): string {
   return raw.replace(/\s+/g, ' ').trim().slice(0, 80) || 'Child session';
 }

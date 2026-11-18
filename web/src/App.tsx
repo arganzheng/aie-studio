@@ -1166,9 +1166,9 @@ export default function App() {
   // model. Always the SDK bridge: only it records the link.
   // `inWorktree`: the child gets its own git worktree and branch first
   // (model: Session.worktree), so its edits can't collide with the parent's.
-  // 'full': the child starts as a compacted copy of the parent's whole
+  // 'compacted': the child starts as a compacted copy of the parent's whole
   // conversation instead of a summary of it.
-  async function openChildSession(row: SessionRow, mode: 'plain' | 'worktree' | 'full' = 'plain') {
+  async function openChildSession(row: SessionRow, mode: 'plain' | 'worktree' | 'compacted' = 'plain') {
     const inWorktree = mode === 'worktree';
     if (!activeProjectId) return;
     if (row.projectId !== activeProjectId) {
@@ -1176,8 +1176,8 @@ export default function App() {
       return;
     }
     const title = `Child of ${row.title}`.slice(0, 60);
-    if (mode === 'full') {
-      showAppToast('Copying the parent session…');
+    if (mode === 'compacted') {
+      showAppToast('Compacting a copy of the parent session…');
       try {
         const child = await forkChildSession(activeProjectId, row.sessionId);
         openSdkTab(child.sessionId, child.title);

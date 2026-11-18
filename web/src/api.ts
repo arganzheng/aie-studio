@@ -659,7 +659,7 @@ export async function summarizeSession(projectId: string, sessionId: string): Pr
   return j;
 }
 
-// Model: web.NewChildSession "with full context" — fork the parent's whole
+// Model: web.NewChildSession "with compacted context" — fork the parent's whole
 // conversation into a child and compact it there. Returns the child's id;
 // the compaction is still running when this returns.
 export async function forkChildSession(projectId: string, sessionId: string): Promise<{ sessionId: string; title: string }> {

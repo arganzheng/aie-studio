@@ -1,6 +1,6 @@
 import { normalizeChildTerms } from '../store.js';
 import { describe, it, expect } from 'vitest';
-import { childIdsOf, childReport, cleanBudget, cleanResultSchema, usd, cleanChildTitle, cleanGroup, joinReports, splitReports, isTurnResult, MAX_CHILD_DEPTH, MAX_NOTE_CHARS, MAX_REPORT_CHARS, MAX_RUNNING_CHILDREN, parseChildReport, sessionDepth, spawnRefusal } from '../child-sessions.js';
+import { lastModelOf, childIdsOf, childReport, cleanBudget, cleanResultSchema, usd, cleanChildTitle, cleanGroup, joinReports, splitReports, isTurnResult, MAX_CHILD_DEPTH, MAX_NOTE_CHARS, MAX_REPORT_CHARS, MAX_RUNNING_CHILDREN, parseChildReport, sessionDepth, spawnRefusal } from '../child-sessions.js';
 
 const parents = { 'claude:c1': 'p', 'claude:c2': 'p', 'claude:g1': 'c1', 'devin:d': 'p' };
 
@@ -154,5 +154,21 @@ describe('budget and structured results', () => {
   it('normalizes stored terms', () => {
     expect(normalizeChildTerms({ a: { budgetUsd: 1 }, b: { budgetUsd: -1 }, c: { resultSchema: { type: 'object' } }, d: 3, e: {} }))
       .toEqual({ a: { budgetUsd: 1 }, c: { resultSchema: { type: 'object' } } });
+  });
+});
+
+describe('lastModelOf', () => {
+  it('finds the model of the last real answer', () => {
+    expect(lastModelOf([
+      { type: 'user', message: {} },
+      { type: 'assistant', message: { model: 'claude-a' } },
+      { type: 'assistant', message: { model: 'claude-b' } },
+      { type: 'assistant', message: { model: '<synthetic>' } },
+      { type: 'user', message: {} },
+    ])).toBe('claude-b');
+  });
+  it('is null for a session that never answered', () => {
+    expect(lastModelOf([])).toBeNull();
+    expect(lastModelOf([{ type: 'user', message: {} }, null])).toBeNull();
   });
 });

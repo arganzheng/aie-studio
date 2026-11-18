@@ -79,7 +79,7 @@ export function SessionList({
   onOpenSubagent?: (row: SessionRow, s: SubagentInfo) => void;
   // "New child session" on a Claude session's menu. Omitted when Claude is
   // switched off on this device.
-  onNewChild?: (row: SessionRow, mode: 'plain' | 'worktree' | 'full') => void;
+  onNewChild?: (row: SessionRow, mode: 'plain' | 'worktree' | 'compacted') => void;
   // Omitted when that provider is switched off on this device.
   onNewClaude?: () => void;
   onNewDevin?: () => void;
@@ -478,14 +478,14 @@ export function SessionList({
           {menu.row?.kind === 'claude' && onNewChild && (
             <button
               className="overflow-action"
-              title="Start a child that knows everything this session knows: it begins as a copy of this whole conversation, compacted. Slower and costlier to start than a plain child, which gets a short summary."
+              title="Start a child from a compacted copy of this whole conversation, written by this session's model: it keeps far more detail than the short summary a plain child gets, and takes longer to start. This session itself is not compacted."
               onClick={() => {
                 const row = menu.row!;
                 setMenu(null);
                 setSubagentsOpen((prev) => new Set(prev).add(sessionRowKey(row)));
-                onNewChild(row, 'full');
+                onNewChild(row, 'compacted');
               }}
-            >⧉ New child session with full context</button>
+            >⧉ New child session with compacted context</button>
           )}
           {menu.row && (
             <button
