@@ -590,8 +590,11 @@ export async function archiveSession(t: SessionTarget, archived: boolean): Promi
 export async function renameAnySession(t: SessionTarget, title: string): Promise<string> {
   return (await postSessionAction('rename', { ...target(t), title })).title;
 }
-export async function stopSession(t: SessionTarget): Promise<boolean> {
-  return !!(await postSessionAction('stop', target(t))).stopped;
+// `withChildren`: also stop every child session under it (quietly — a
+// stopped child then doesn't report to its parent).
+export async function stopSession(t: SessionTarget, opts: { withChildren?: boolean } = {}): Promise<boolean> {
+  const r = await postSessionAction('stop', { ...target(t), ...(opts.withChildren ? { withChildren: true } : {}) });
+  return !!r.stopped || (r.children ?? 0) > 0;
 }
 export async function deleteSessionForever(t: SessionTarget): Promise<void> {
   await postSessionAction('delete', target(t));

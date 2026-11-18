@@ -27,9 +27,13 @@ import {
 import { z } from 'zod';
 import { mapContextUsage, type ContextSnapshot } from './context-usage.js';
 import {
-  CHILD_TOOLS_INSTRUCTIONS, MAX_NOTES_PER_TURN, childIdsOf, childReport, cleanChildTitle, sessionDepth, spawnRefusal,
+  CHILD_TOOLS_INSTRUCTIONS, MAX_NOTES_PER_TURN, childIdsOf, childReport, cleanChildTitle, isTurnResult, sessionDepth, spawnRefusal,
+  type ChildStop,
 } from './child-sessions.js';
-import { getProject, getSessionMeta, getSettings, putSessionMeta, setParent, type Settings } from './store.js';
+import {
+  getOwedReports, getProject, getSessionMeta, getSettings, listUserIds, putOwedReports, putSessionMeta, setParent,
+  type OwedReports, type Settings,
+} from './store.js';
 import { getUserId } from './auth.js';
 import { runBang, bangContextBlocks, type BangResult, type RunningBang } from './shell-exec.js';
 import { publishSessionEvent, type SessionOwner } from './notify.js';
@@ -179,6 +183,8 @@ type SdkEntry = {
   // is an agent-spawned child, the parent is told (model: Session.children
   // rule "interventions").
   userNotes: string[];
+  // stop_child_session interrupted the running turn: its report says so.
+  stoppedByParent: boolean;
   commands: SlashCommand[];
   agents: string[];
   models: ModelInfo[];
@@ -413,7 +419,46 @@ async function linkToParent(entry: SdkEntry, oldId: string | null, newId: string
     const byAgent = entry.spawnedByAgent || (oldId !== null && meta.agentSpawned.includes(`claude:${oldId}`));
     if (byAgent && !next.agentSpawned.includes(`claude:${newId}`)) next = { ...next, agentSpawned: [...next.agentSpawned, `claude:${newId}`] };
     if (next !== meta) await putSessionMeta(entry.owner.uid, next);
+    entry.parentSessionId = parent;
+    if (byAgent) entry.spawnedByAgent = true;
+    if (oldId) await editOwed(entry.owner.uid, (r) => { delete r[oldId]; });
+    saveOwed(entry);
   } catch {}
+}
+
+// ----- what children owe their parents, on disk (model: OwedReport) ---------
+
+// One writer at a time per user: these are read-modify-write.
+const owedChains = new Map<string, Promise<void>>();
+function editOwed(uid: string, edit: (r: OwedReports) => void): Promise<void> {
+  const next = (owedChains.get(uid) ?? Promise.resolve()).then(async () => {
+    const r = await getOwedReports(uid);
+    const before = JSON.stringify(r);
+    edit(r);
+    if (JSON.stringify(r) !== before) await putOwedReports(uid, r);
+  }).catch(() => {});
+  owedChains.set(uid, next);
+  return next;
+}
+
+// Does this turn end in a report to the parent?
+function owesReport(entry: SdkEntry): boolean {
+  return entry.parentSessionId !== null && (entry.reportToParent || (entry.spawnedByAgent && entry.userNotes.length > 0));
+}
+
+// Mirror the entry's debt to disk (or clear it).
+function saveOwed(entry: SdkEntry) {
+  const id = entry.sessionId;
+  if (!id) return;
+  const owed = owesReport(entry) ? {
+    parentId: entry.parentSessionId!,
+    projectId: entry.owner.projectId,
+    cwd: entry.cwd,
+    title: entry.title || id.slice(0, 8),
+    requested: entry.reportToParent,
+    notes: [...entry.userNotes],
+  } : null;
+  void editOwed(entry.owner.uid, (r) => { if (owed) r[id] = owed; else delete r[id]; });
 }
 
 function onSdkMessage(entry: SdkEntry, m: any) {
@@ -436,13 +481,16 @@ function onSdkMessage(entry: SdkEntry, m: any) {
   }
   if (m?.type === 'result') {
     entry.thinking = false;
-    {
+    if (isTurnResult(m)) {
       // The parent hears about this turn if it asked for it, or if the user
       // stepped into a child the parent's agent opened.
       const requested = entry.reportToParent;
       const notes = entry.userNotes.splice(0);
+      const stopped: ChildStop | undefined = entry.stoppedByParent ? 'parent' : undefined;
       entry.reportToParent = false;
-      if (requested || notes.length > 0) void reportToParent(entry, m, { requested, notes });
+      entry.stoppedByParent = false;
+      saveOwed(entry);
+      if (requested || notes.length > 0) void reportToParent(entry, m, { requested, notes, stopped });
     }
     refreshContext(entry);
     scheduleTitleRefresh(entry);
@@ -599,6 +647,7 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
     touchActivity(entry);
     if (entry.userNotes.length < MAX_NOTES_PER_TURN) {
       entry.userNotes.push([text, images.length > 0 ? `[${images.length} image${images.length === 1 ? '' : 's'} attached]` : ''].filter(Boolean).join('\n'));
+      saveOwed(entry);
     }
     // The SDK does not echo our own prompts back; every client (sender
     // included) learns the uuid from this frame.
@@ -785,11 +834,19 @@ export async function stopSdkTask(sessionId: string, uid: string, taskId: string
   try { await entry.q.stopTask(taskId); } catch { return false; }
   return true;
 }
-export function stopSdkSession(sessionId: string, uid: string): boolean {
+// `silent`: don't tell the session's parent (the user is stopping the whole
+// tree — a report would only start the parent again).
+export function stopSdkSession(sessionId: string, uid: string, opts: { silent?: boolean } = {}): boolean {
   const entry = byId.get(sessionId);
   if (!entry || entry.owner.uid !== uid) return false;
+  const owed = owesReport(entry);
+  const why = { requested: entry.reportToParent, notes: entry.userNotes.splice(0), stopped: 'user' as const };
+  entry.reportToParent = false;
+  saveOwed(entry);
   broadcast(entry, { type: 'exit', code: 'stopped' });
   destroy(entry);
+  // The turn died with the process: the parent would wait for ever.
+  if (owed && !opts.silent) void reportToParent(entry, null, why);
   return true;
 }
 
@@ -819,6 +876,7 @@ function newEntry(o: {
     reportToParent: false,
     spawnedByAgent: o.spawnedByAgent === true,
     userNotes: [],
+    stoppedByParent: false,
     commands: [],
     agents: [],
     models: [],
@@ -846,37 +904,47 @@ function injectUserText(entry: SdkEntry, text: string) {
 // The live entry of one of the caller's sessions, starting its process (a
 // resume, no client attached) when it isn't running. Null when the classic
 // bridge holds it.
-async function wakeSession(from: SdkEntry, sessionId: string): Promise<SdkEntry | null> {
+async function wakeSession(who: { uid: string; projectId: string; cwd: string }, sessionId: string): Promise<SdkEntry | null> {
   const live = byId.get(sessionId);
-  if (live) return live.owner.uid === from.owner.uid ? live : null;
+  if (live) return live.owner.uid === who.uid ? live : null;
   if (liveBridge(sessionId) === 'cli') return null;
-  const settings = await getSettings(from.owner.uid);
-  const entry = newEntry({ uid: from.owner.uid, projectId: from.owner.projectId, cwd: from.cwd, settings, resumeId: sessionId });
+  const settings = await getSettings(who.uid);
+  const entry = newEntry({ uid: who.uid, projectId: who.projectId, cwd: who.cwd, settings, resumeId: sessionId });
   byId.set(sessionId, entry);
   markLive(sessionId, 'sdk');
-  try { entry.title = (await getSessionInfo(sessionId, { dir: from.cwd }))?.summary?.trim() || null; } catch {}
+  await loadTreePosition(entry);
+  try { entry.title = (await getSessionInfo(sessionId, { dir: who.cwd }))?.summary?.trim() || null; } catch {}
   startQuery(entry, { resume: sessionId });
   startWatcher(entry);
   // Nobody is attached: end the process again once it goes quiet.
   scheduleKillIfIdle(entry);
   return entry;
 }
+const whoOf = (e: SdkEntry) => ({ uid: e.owner.uid, projectId: e.owner.projectId, cwd: e.cwd });
+
+// A resumed session's place in the tree, from SessionMeta.
+async function loadTreePosition(entry: SdkEntry) {
+  if (!entry.sessionId) return;
+  try {
+    const meta = await getSessionMeta(entry.owner.uid);
+    const key = `claude:${entry.sessionId}`;
+    entry.parentSessionId = meta.parents[key] ?? null;
+    entry.spawnedByAgent = meta.agentSpawned.includes(key);
+  } catch {}
+}
 
 // A child finished a turn its parent asked for: hand the answer to the
 // parent, waking it if needed.
-async function reportToParent(child: SdkEntry, result: any, why: { requested: boolean; notes: string[] }) {
-  if (!child.sessionId) return;
-  const meta = await getSessionMeta(child.owner.uid).catch(() => null);
-  const key = `claude:${child.sessionId}`;
-  const parentId = child.parentSessionId ?? meta?.parents[key];
-  if (!parentId) return;
+async function reportToParent(child: SdkEntry, result: any, why: { requested: boolean; notes: string[]; stopped?: ChildStop }) {
+  const parentId = child.parentSessionId;
+  if (!child.sessionId || !parentId) return;
   // A turn only the user asked for is the parent's business only when its
   // own agent opened this child.
-  if (!why.requested && !(child.spawnedByAgent || meta?.agentSpawned.includes(key))) return;
+  if (!why.requested && !child.spawnedByAgent) return;
   try {
-    const parent = await wakeSession(child, parentId);
+    const parent = await wakeSession(whoOf(child), parentId);
     if (!parent) return;
-    const ok = result?.subtype === 'success' && result?.is_error !== true;
+    const ok = !why.stopped && result?.subtype === 'success' && result?.is_error !== true;
     injectUserText(parent, childReport({
       title: child.title || child.sessionId.slice(0, 8),
       sessionId: child.sessionId,
@@ -884,8 +952,31 @@ async function reportToParent(child: SdkEntry, result: any, why: { requested: bo
       result: typeof result?.result === 'string' ? result.result : '',
       errorKind: ok ? undefined : String(result?.subtype ?? 'error'),
       userNotes: why.notes,
+      stopped: why.stopped,
     }));
   } catch {}
+}
+
+// Model: server start — a crash (or a kill) took child sessions down mid-turn.
+// Tell each parent its child was interrupted, with whatever the user had
+// told that child, instead of leaving it waiting.
+export async function recoverChildReports(): Promise<number> {
+  let delivered = 0;
+  for (const uid of await listUserIds()) {
+    const owed = await getOwedReports(uid).catch(() => ({} as OwedReports));
+    for (const [childId, rec] of Object.entries(owed)) {
+      if (byId.has(childId)) continue; // running again already: it will report itself
+      try {
+        const parent = await wakeSession({ uid, projectId: rec.projectId, cwd: rec.cwd }, rec.parentId);
+        if (parent) {
+          injectUserText(parent, childReport({ title: rec.title || childId.slice(0, 8), sessionId: childId, ok: false, result: '', userNotes: rec.notes, stopped: 'restart' }));
+          delivered++;
+        }
+      } catch {}
+      await editOwed(uid, (r) => { delete r[childId]; });
+    }
+  }
+  return delivered;
 }
 
 const toolText = (text: string, isError = false) => ({ content: [{ type: 'text' as const, text }], ...(isError ? { isError: true } : {}) });
@@ -934,6 +1025,7 @@ function childToolsServer(parent: SdkEntry) {
           for (let i = 0; i < 300 && !child.sessionId && child.q; i++) await new Promise((r) => setTimeout(r, 100));
           if (!child.sessionId) return toolText(`Started child session "${title}", but it has not reported an id yet. Its answer will still arrive as a message when it finishes.`);
           try { await renameSession(child.sessionId, title, { dir: child.cwd }); child.title = title; broadcast(child, { type: 'title', title }); } catch {}
+          saveOwed(child);
           return toolText(`Started child session "${title}" (id ${child.sessionId}). It is working in the background; its answer will arrive as a message starting with "[Child session" when it finishes. Do not wait or poll for it.`);
         },
       ),
@@ -951,11 +1043,31 @@ function childToolsServer(parent: SdkEntry) {
           if (!parentId || !childId || !message) return toolText('child_id and message are required.', true);
           const meta = await getSessionMeta(parent.owner.uid);
           if (meta.parents[`claude:${childId}`] !== parentId) return toolText(`${childId} is not a child session of this session. Use list_child_sessions to see them.`, true);
-          const child = await wakeSession(parent, childId);
+          const child = await wakeSession(whoOf(parent), childId);
           if (!child) return toolText('That child session is open in a classic Claude tab and cannot be messaged from here.', true);
           child.reportToParent = true;
           injectUserText(child, message);
+          saveOwed(child);
           return toolText(`Delivered to "${child.title || childId}". Its answer will arrive as a message starting with "[Child session".`);
+        },
+      ),
+      tool(
+        'stop_child_session',
+        'Stop what one of this session\'s child sessions is doing right now (it went the wrong way, or its work is no longer needed). The child keeps its conversation and can be given new instructions with send_to_child_session. A report saying it was stopped arrives as a message starting with "[Child session".',
+        { child_id: z.string().describe('The child session id') },
+        async (args) => {
+          const parentId = parent.sessionId;
+          const childId = String(args.child_id ?? '').trim();
+          if (!parentId || !childId) return toolText('child_id is required.', true);
+          const meta = await getSessionMeta(parent.owner.uid);
+          if (meta.parents[`claude:${childId}`] !== parentId) return toolText(`${childId} is not a child session of this session. Use list_child_sessions to see them.`, true);
+          const child = byId.get(childId);
+          if (!child || !child.q || !child.thinking) return toolText(`"${child?.title || childId}" is not working right now; there is nothing to stop.`);
+          child.stoppedByParent = true;
+          child.reportToParent = true;
+          for (const r of child.runningBang.values()) r.run.interrupt();
+          try { await child.q.interrupt(); } catch (e) { child.stoppedByParent = false; return toolText(`Could not stop it: ${String(e)}`, true); }
+          return toolText(`Stopping "${child.title || childId}". A report confirming it was stopped will arrive as a message.`);
         },
       ),
       tool(
@@ -1028,6 +1140,7 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
       if (resumeId) { byId.set(resumeId, entry); markLive(resumeId, 'sdk'); }
       else pending.add(entry);
       if (resumeId) {
+        await loadTreePosition(entry);
         try { entry.title = (await getSessionInfo(resumeId, { dir: project.path }))?.summary?.trim() || null; } catch {}
       }
       startQuery(entry, { resume: resumeId });

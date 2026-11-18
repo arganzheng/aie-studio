@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { childIdsOf, childReport, cleanChildTitle, MAX_CHILD_DEPTH, MAX_NOTE_CHARS, MAX_REPORT_CHARS, MAX_RUNNING_CHILDREN, parseChildReport, sessionDepth, spawnRefusal } from '../child-sessions.js';
+import { childIdsOf, childReport, cleanChildTitle, isTurnResult, MAX_CHILD_DEPTH, MAX_NOTE_CHARS, MAX_REPORT_CHARS, MAX_RUNNING_CHILDREN, parseChildReport, sessionDepth, spawnRefusal } from '../child-sessions.js';
 
 const parents = { 'claude:c1': 'p', 'claude:c2': 'p', 'claude:g1': 'c1', 'devin:d': 'p' };
 
@@ -13,6 +13,19 @@ describe('child session tree', () => {
   it('lists the Claude children of a session', () => {
     expect(childIdsOf(parents, 'p').sort()).toEqual(['c1', 'c2']);
     expect(childIdsOf(parents, 'c2')).toEqual([]);
+  });
+});
+
+describe('isTurnResult', () => {
+  it('skips the empty bookkeeping result a resumed session can start with', () => {
+    expect(isTurnResult({ type: 'result', subtype: 'success', num_turns: 0, result: '' })).toBe(false);
+    expect(isTurnResult({ type: 'result', subtype: 'success', num_turns: 0 })).toBe(false);
+  });
+  it('keeps real turns, including failed and textless ones', () => {
+    expect(isTurnResult({ subtype: 'success', num_turns: 1, result: 'done' })).toBe(true);
+    expect(isTurnResult({ subtype: 'error_during_execution', num_turns: 2 })).toBe(true);
+    expect(isTurnResult({ subtype: 'success', num_turns: 0, result: 'text' })).toBe(true);
+    expect(isTurnResult({ subtype: 'success' })).toBe(true);
   });
 });
 
@@ -58,6 +71,18 @@ describe('child reports', () => {
     const text = childReport({ title: 'T', sessionId: 's1', ok: true, result: 'ok', userNotes: ['y'.repeat(MAX_NOTE_CHARS + 100)] });
     expect(text).toContain('… [cut]');
     expect(text.length).toBeLessThan(MAX_NOTE_CHARS + 600);
+  });
+  it('says who stopped a child, and keeps what the user had told it', () => {
+    const byUser = childReport({ title: 'T', sessionId: 's1', ok: false, result: '', stopped: 'user' });
+    expect(byUser).toContain('[Child session "T" (s1) was stopped by the user]');
+    expect(byUser).toContain('use send_to_child_session to have it continue');
+    expect(parseChildReport(byUser)).toMatchObject({ ok: false });
+    const byParent = childReport({ title: 'T', sessionId: 's1', ok: false, result: 'Got half way.', stopped: 'parent' });
+    expect(byParent).toContain('was stopped by its parent session]\n\nGot half way.');
+    const restart = childReport({ title: 'T', sessionId: 's1', ok: false, result: '', stopped: 'restart', userNotes: ['Unit tests only.'] });
+    expect(restart).toContain('was interrupted by an aie-studio restart]');
+    expect(restart).toContain('> Unit tests only.');
+    expect(parseChildReport(restart)).toMatchObject({ title: 'T', sessionId: 's1', ok: false });
   });
   it('ignores ordinary messages', () => {
     expect(parseChildReport('hello')).toBeNull();

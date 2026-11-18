@@ -684,6 +684,28 @@ export function SessionList({
               onClick={() => { const row = menu.row!; void act('Stop', async () => { await stopSession(row); }); }}
             >■ Stop</button>
           )}
+          {(() => {
+            // Child sessions (any depth) of this one that are running now.
+            const row = menu.row;
+            if (!row || row.kind !== 'claude' || !kids) return null;
+            let live = 0;
+            const walk = (id: string, depth: number) => {
+              for (const c of kids.childrenOf.get(id) ?? []) {
+                if (!c.row) continue;
+                if (c.row.live) live++;
+                if (depth < 4) walk(c.row.sessionId, depth + 1);
+              }
+            };
+            walk(row.sessionId, 0);
+            if (live === 0) return null;
+            return (
+              <button
+                className="overflow-action"
+                title="Stops this session and every child session under it. The children do not report back, so nothing is started again."
+                onClick={() => { void act('Stop', async () => { await stopSession(row, { withChildren: true }); }); }}
+              >■ Stop with {live} child session{live === 1 ? '' : 's'}</button>
+            );
+          })()}
           {menu.row?.kind === 'claude' && (
             <button className="overflow-action danger" onClick={() => confirmDelete(menu.row!)}>🗑 Delete…</button>
           )}

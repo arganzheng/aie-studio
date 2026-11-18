@@ -10,7 +10,7 @@ import nodePath from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registerFsRoutes } from './fs.js';
 import { registerSessionRoutes } from './session.js';
-import { registerSdkSessionRoutes } from './sdk-session.js';
+import { recoverChildReports, registerSdkSessionRoutes } from './sdk-session.js';
 import { registerDevinRoutes } from './devin.js';
 import { registerNotifyRoutes } from './notify.js';
 import { registerSessionIndexRoutes } from './sessions-index.js';
@@ -133,5 +133,7 @@ if (WIRE_PORT > 0) {
 }
 
 app.listen({ port: PORT, host: HOST }).then((addr) => {
+  // Children that were mid-turn when the server last went down: tell their parents.
+  setTimeout(() => { void recoverChildReports().then((n) => { if (n > 0) app.log.info(`child sessions: ${n} interrupted report(s) delivered`); }).catch(() => {}); }, 3000);
   app.log.info(`remote-ide server listening on ${addr}`);
 });
