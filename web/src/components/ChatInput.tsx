@@ -4,6 +4,7 @@ import { filterCommands, matchCommandQuery, type CommandItem } from '../lib/comm
 import { imageFilesFromClipboard } from '../lib/imageAttachments';
 import { isSendKeyTrigger } from '../lib/sendKey';
 import { AttachImagesButton } from './ImageAttachments';
+import { isBangInput } from '../lib/bang';
 import { addQuotes, composeQuotedPrompt, quoteCardLabel, quoteCardPreview, type ChatQuote } from '../lib/addToChat';
 
 export type ChatInputStatus =
@@ -59,6 +60,7 @@ export const ChatInput = memo(function ChatInput({
   onAddFiles,
   onStop,
   lock,
+  bashMode = false,
 }: {
   status: ChatInputStatus;
   sendKey: SendKey;
@@ -81,6 +83,9 @@ export const ChatInput = memo(function ChatInput({
   onStop: () => void;
   // Model: web.PendingFormInputLock. null/undefined = editable as usual.
   lock?: InputLock | null;
+  // Model: web.BangCommand. Panels that run `!command` locally set this so a
+  // leading "!" is shown as bash mode (Claude Code CLI style).
+  bashMode?: boolean;
 }) {
   const [text, setText] = useState('');
   // Model: web.AddToChat — quote cards waiting above the input.
@@ -284,7 +289,8 @@ export const ChatInput = memo(function ChatInput({
         </div>
       </div>
     )}
-    <div className={`chat-input${lock ? ' locked' : ''}`}>
+    <div className={`chat-input${lock ? ' locked' : ''}${bashMode && isBangInput(text) ? ' bash-mode' : ''}`}>
+      {bashMode && isBangInput(text) && <span className="chat-input-bash-badge" title="Runs in the project directory; output goes to Claude with your next message">! bash</span>}
       <div
         className="chat-input-resize"
         title="Drag up to enlarge; double-click to reset"

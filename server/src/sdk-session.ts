@@ -25,6 +25,7 @@ import {
 import { mapContextUsage, type ContextSnapshot } from './context-usage.js';
 import { getProject, getSettings } from './store.js';
 import { getUserId } from './auth.js';
+import { runBang, bangContextBlocks, type BangResult, type RunningBang } from './shell-exec.js';
 import { publishSessionEvent, type SessionOwner } from './notify.js';
 import { isEffortLevel } from './models.js';
 import { markLive, unmarkLive, liveBridge, type LiveState } from './live-sessions.js';
@@ -169,6 +170,11 @@ type SdkEntry = {
   externalNotified: boolean;
   watcher?: nodeFs.FSWatcher;
   externalTimer?: NodeJS.Timeout;
+  // Model: server.RunBangCommand. Finished `!` commands not yet seen by the
+  // model — prepended to the next prompt (Claude Code bash-mode semantics:
+  // the output joins the conversation but doesn't start a turn by itself).
+  pendingBang: Array<{ id: string; result: BangResult }>;
+  runningBang: Map<string, { command: string; run: RunningBang }>;
 };
 
 const byId = new Map<string, SdkEntry>();
@@ -453,6 +459,7 @@ function scheduleKillIfIdle(entry: SdkEntry) {
 
 function teardown(entry: SdkEntry) {
   stopWatcher(entry);
+  for (const r of entry.runningBang.values()) r.run.interrupt();
   denyAllAsks(entry, 'Session ended');
   for (const t of entry.titleTimers) clearTimeout(t);
   if (entry.killTimer) { clearTimeout(entry.killTimer); entry.killTimer = undefined; }
@@ -470,8 +477,9 @@ function destroy(entry: SdkEntry) {
   teardown(entry);
 }
 
-function userMessage(uuid: string, text: string, images: Array<{ mediaType?: string; data?: string }> | undefined): SDKUserMessage {
+function userMessage(uuid: string, text: string, images: Array<{ mediaType?: string; data?: string }> | undefined, bang: BangResult[] = []): SDKUserMessage {
   const content: any[] = [];
+  for (const r of bang) for (const t of bangContextBlocks(r)) content.push({ type: 'text', text: t });
   if (text) content.push({ type: 'text', text });
   for (const img of images ?? []) {
     if (!img?.mediaType || !img?.data) continue;
@@ -528,6 +536,8 @@ function attachClient(entry: SdkEntry, socket: WebSocket) {
 
 async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any) {
   if (msg.type === 'ping') { send(socket, { type: 'pong' }); return; }
+  if (msg.type === 'bang') { handleBang(entry, msg); return; }
+  if (msg.type === 'bang_interrupt') { entry.runningBang.get(String(msg.id ?? ''))?.run.interrupt(); return; }
   if (!entry.q) { send(socket, { type: 'error', message: 'session is not live' }); return; }
 
   if (msg.type === 'user') {
@@ -535,7 +545,8 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
     const images = Array.isArray(msg.images) ? msg.images : [];
     if (!text && images.length === 0) return;
     const uuid = randomUUID();
-    const um = userMessage(uuid, text, images);
+    const bang = entry.pendingBang.splice(0).map((b) => b.result);
+    const um = userMessage(uuid, text, images, bang);
     entry.thinking = true;
     touchActivity(entry);
     // The SDK does not echo our own prompts back; every client (sender
@@ -545,6 +556,7 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
     return;
   }
   if (msg.type === 'stop') {
+    for (const r of entry.runningBang.values()) r.run.interrupt();
     try { await entry.q.interrupt(); } catch (e) { send(socket, { type: 'error', message: `interrupt failed: ${String(e)}` }); }
     return;
   }
@@ -593,6 +605,33 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
     await handleRewind(entry, socket, msg);
     return;
   }
+}
+
+// Model: server.RunBangCommand. Every attached client sees the command start
+// and finish (bang_start / bang_result, keyed by the client's id).
+function handleBang(entry: SdkEntry, msg: any) {
+  const command = String(msg.command ?? '').trim();
+  const id = typeof msg.id === 'string' && msg.id ? msg.id.slice(0, 64) : randomUUID();
+  if (!command || entry.runningBang.has(id)) return;
+  touchActivity(entry);
+  const running = runBang(command, entry.cwd);
+  entry.runningBang.set(id, { command, run: running });
+  broadcast(entry, { type: 'bang_start', id, command });
+  void running.promise.then((result) => {
+    entry.runningBang.delete(id);
+    entry.pendingBang.push({ id, result });
+    broadcast(entry, { type: 'bang_result', id, result });
+  });
+}
+
+// A (re)attaching client rebuilt its view from the jsonl, which doesn't hold
+// `!` commands the model hasn't seen yet — hand those over.
+function bangStateFrame(entry: SdkEntry) {
+  return {
+    type: 'bang_state',
+    running: [...entry.runningBang].map(([id, r]) => ({ id, command: r.command })),
+    pending: entry.pendingBang,
+  };
 }
 
 // Close the live query and start another on the same entry. Clients stay
@@ -722,6 +761,7 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
         const entry = byId.get(resumeId)!;
         attachClient(entry, socket);
         send(socket, startedFrame(entry, true));
+        send(socket, bangStateFrame(entry));
         for (const [id, ask] of entry.pendingAsks) send(socket, { type: 'ask', data: askEvent(id, ask) });
         return;
       }
@@ -763,6 +803,8 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
         titleTimers: [],
         lastActivity: Date.now(),
         externalNotified: false,
+        pendingBang: [],
+        runningBang: new Map(),
       };
       if (resumeId) { byId.set(resumeId, entry); markLive(resumeId, 'sdk'); }
       else pending.add(entry);

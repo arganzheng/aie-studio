@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSubagentTranscript, stopSubagent, type SubagentInfo } from '../api';
 import type { Theme } from '../types';
-import { buildFromEvents, MarkdownText, summarizeTool, ToolFields, type Msg } from './SdkPanel';
+import { BangBlock, buildFromEvents, MarkdownText, summarizeTool, ToolFields, type Msg } from './SdkPanel';
 import { shortTokens } from './ContextUsage';
 import { subagentStatusLabel } from '../lib/subagents';
 
@@ -140,6 +140,7 @@ export function SubagentPanel({
             return <div key={m.id} className="msg msg-assistant"><MarkdownText text={m.text} theme={theme} projectPath={projectPath} onOpenFile={onOpenFile} /></div>;
           }
           if (m.role === 'system') return <div key={m.id} className="msg msg-system">{m.text}</div>;
+          if (m.role === 'bang') return <BangBlock key={m.id} msg={m} />;
           const isOpen = expanded.has(m.id);
           const summary = summarizeTool(m.name, m.input, rel);
           return (

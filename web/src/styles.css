@@ -3257,3 +3257,63 @@ pre {
   .sidebar-views button { padding: 8px 4px; font-size: 13px; }
   .sessions-seg button { padding: 7px 4px; }
 }
+
+/* ----- `!` shell commands in chat (web.BangCommand) ----- */
+.chat-input.bash-mode textarea,
+.chat-input.bash-mode textarea:focus {
+  outline: none;
+  border-color: #d670d6;
+  box-shadow: 0 0 0 1px #d670d6 inset;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.chat-input-bash-badge {
+  position: absolute;
+  top: -10px;
+  left: 56px;
+  z-index: 1;
+  padding: 0 6px;
+  border-radius: 3px;
+  font: 600 10px/16px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #fff;
+  background: #b04fb0;
+}
+.msg-bang {
+  align-self: stretch;
+  max-width: 100%;
+  padding: 0;
+  background: var(--tool-bg);
+  border-left: 3px solid #d670d6;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: calc(11px * var(--font-scale));
+}
+.bang-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+}
+.bang-prompt { color: #d670d6; font-weight: 700; }
+.bang-command { flex: 1; min-width: 0; color: var(--fg-strong); white-space: pre-wrap; word-break: break-all; background: none; }
+.bang-state { color: var(--fg-muted); white-space: nowrap; }
+.bang-state.bad { color: #f14c4c; }
+.msg-bang.running .bang-state { color: var(--accent); }
+.bang-stop {
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--fg);
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.bang-output {
+  margin: 0;
+  padding: 6px 10px 8px;
+  max-height: 320px;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg);
+}
+.bang-note { padding: 0 10px 6px; color: var(--fg-muted); font-style: italic; }
