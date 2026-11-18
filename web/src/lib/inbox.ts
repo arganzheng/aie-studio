@@ -1,7 +1,7 @@
 // Model: web.Inbox — the notification history (server.Inbox), behind the
 // inbox button next to the sidebar view switch. Collapsed by default; opens as
 // a column beside the sidebar. Pure helpers only; App owns the state.
-import { isViewing, type SessionEvent, type ViewState } from './sessionAlerts';
+import { alertKey, isViewing, type SessionEvent, type ViewState } from './sessionAlerts';
 
 // Mirrors server/src/inbox.ts InboxItem.
 export type InboxItem = SessionEvent & { readAt: number | null };
@@ -14,6 +14,13 @@ export const EMPTY_INBOX: InboxState = { items: [], unread: 0, hasMore: false };
 // Unread items for the session the user is looking at right now.
 export function viewedUnread(items: readonly InboxItem[], v: ViewState): InboxItem[] {
   return items.filter((i) => i.readAt === null && isViewing(i, v));
+}
+
+// Unread rows for the sessions of `events` (dismissed pop-up cards): a
+// dismissed card counts as seen.
+export function unreadForSessions(items: readonly InboxItem[], events: readonly SessionEvent[]): InboxItem[] {
+  const keys = new Set(events.map(alertKey));
+  return items.filter((i) => i.readAt === null && keys.has(alertKey(i)));
 }
 
 // Apply a local read mark before the server confirms, so the dot clears at once.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { markLocallyRead, removeLocally, shortAge, viewedUnread, type InboxItem, type InboxState } from '../inbox';
+import { markLocallyRead, removeLocally, shortAge, unreadForSessions, viewedUnread, type InboxItem, type InboxState } from '../inbox';
 
 function item(id: string, over: Partial<InboxItem> = {}): InboxItem {
   return { id, kind: 'done', tabType: 'claude-sdk', projectId: 'p', sessionId: id, title: null, summary: null, at: 1, readAt: null, ...over };
@@ -46,5 +46,13 @@ describe('shortAge', () => {
     expect(shortAge(now - 5 * 60_000, now)).toBe('5m');
     expect(shortAge(now - 17 * 3600_000, now)).toBe('17h');
     expect(shortAge(now - 21 * 86400_000, now)).toBe('21d');
+  });
+});
+
+describe('unreadForSessions', () => {
+  it('matches dismissed cards by session, across both Claude tab kinds', () => {
+    const items = [item('a'), item('b'), item('c', { readAt: 2 }), item('d', { tabType: 'devin', sessionId: 'a' })];
+    const dismissed = [{ ...item('x', { tabType: 'session', sessionId: 'a' }) }, { ...item('y', { sessionId: 'c' }) }];
+    expect(unreadForSessions(items, dismissed).map((i) => i.id)).toEqual(['a']);
   });
 });
