@@ -35,10 +35,13 @@ export type DevinTab = { id: string; type: 'devin'; resumeId?: string; title?: s
 // of the hand-rolled stream-json one. Same jsonl sessions as `session` tabs;
 // title follows the SDK's session summary (custom title > AI title > first
 // prompt) and is updated by the server whenever it changes.
+// worktree (model: Session.worktree): a fresh session starts in this git
+// worktree of the project (a name under .claude/worktrees) instead of the
+// project directory; a resumed one finds its own.
 // parentSessionId (model: Session.parent): this tab was opened with "New child
 // session" under that Claude session; the server records the link once the
 // child has a session id, and the Sessions tree shows it under its parent.
-export type ClaudeSdkTab = { id: string; type: 'claude-sdk'; resumeId?: string; title?: string; initialPrompt?: string; wire?: boolean; parentSessionId?: string; groupId?: string };
+export type ClaudeSdkTab = { id: string; type: 'claude-sdk'; resumeId?: string; title?: string; initialPrompt?: string; wire?: boolean; parentSessionId?: string; worktree?: string; groupId?: string };
 // Model: entity Tab (type=observe) / web.ObserveTab. A read-only observation
 // view of one AI session: origin points at the source session (type session
 // or devin, key = resumeId). No process, no WS — closing it never touches the

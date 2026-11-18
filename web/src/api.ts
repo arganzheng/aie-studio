@@ -596,8 +596,18 @@ export async function stopSession(t: SessionTarget, opts: { withChildren?: boole
   const r = await postSessionAction('stop', { ...target(t), ...(opts.withChildren ? { withChildren: true } : {}) });
   return !!r.stopped || (r.children ?? 0) > 0;
 }
-export async function deleteSessionForever(t: SessionTarget): Promise<void> {
-  await postSessionAction('delete', target(t));
+// `worktree`: what became of the session's own git worktree, if it had one —
+// removed only when nothing would be lost.
+export async function deleteSessionForever(t: SessionTarget): Promise<{ worktree?: { name: string; removed: boolean; reason?: string } }> {
+  return { worktree: (await postSessionAction('delete', target(t))).worktree };
+}
+// Model: server.CreateWorktree — a new git worktree (own branch) under the
+// project, for a child session to work in.
+export async function createWorktree(projectId: string, title: string): Promise<{ name: string; branch: string; path: string }> {
+  const r = await fetch(`/api/projects/${encodeURIComponent(projectId)}/worktrees`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
 }
 
 // Model: Claude Session.subagents (server/src/subagents.ts) — the child

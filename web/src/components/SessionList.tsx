@@ -107,7 +107,7 @@ export function SessionList({
   onOpenSubagent?: (row: SessionRow, s: SubagentInfo) => void;
   // "New child session" on a Claude session's menu. Omitted when Claude is
   // switched off on this device.
-  onNewChild?: (row: SessionRow) => void;
+  onNewChild?: (row: SessionRow, inWorktree: boolean) => void;
   // Omitted when that provider is switched off on this device.
   onNewClaude?: () => void;
   onNewDevin?: () => void;
@@ -248,8 +248,9 @@ export function SessionList({
     const running = row.live ? '\n\nIt is running now and will be stopped first.' : '';
     if (!window.confirm(`Delete "${row.title}"?\n\nIts transcript is removed for good — this cannot be undone.${running}`)) return;
     void act('Delete', async () => {
-      await deleteSessionForever(row);
+      const { worktree } = await deleteSessionForever(row);
       onDeleted(row);
+      if (worktree) onNotice(worktree.removed ? `Worktree ${worktree.name} removed with it` : `Worktree ${worktree.name} kept: ${worktree.reason ?? 'it still has work in it'}`);
     });
   }
 
@@ -398,6 +399,7 @@ export function SessionList({
           )}
           <div className="session-row-sub">
             <span className="session-row-status">{status.label}</span>
+            {row?.worktree && <span className="session-row-worktree" title={`Works in its own git worktree: .claude/worktrees/${row.worktree}`}> · ⎇ {row.worktree}</span>}
             {project && <span> · {project}</span>}
           </div>
         </div>
@@ -661,9 +663,21 @@ export function SessionList({
                 const row = menu.row!;
                 setMenu(null);
                 setSubagentsOpen((prev) => new Set(prev).add(sessionRowKey(row)));
-                onNewChild(row);
+                onNewChild(row, false);
               }}
             >＋ New child session</button>
+          )}
+          {menu.row?.kind === 'claude' && onNewChild && (
+            <button
+              className="overflow-action"
+              title="Start a new Claude session under this one in its own git worktree and branch (.claude/worktrees/…), so its edits can't collide with other sessions'"
+              onClick={() => {
+                const row = menu.row!;
+                setMenu(null);
+                setSubagentsOpen((prev) => new Set(prev).add(sessionRowKey(row)));
+                onNewChild(row, true);
+              }}
+            >⎇ New child session in a worktree</button>
           )}
           {moveTargets.map((g) => (
             <button

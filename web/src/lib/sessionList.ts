@@ -19,6 +19,8 @@ export type SessionRow = {
   subagents?: { total: number; running: number };
   // The session this one was opened under as a child, if any.
   parentId?: string;
+  // Claude: the git worktree it runs in (a name under .claude/worktrees).
+  worktree?: string;
 };
 
 // Same shape as lib/sessionAlerts.alertKey, so a pending alert marks its row.
