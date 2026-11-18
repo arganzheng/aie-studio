@@ -21,7 +21,7 @@ export const CHILD_TOOLS_INSTRUCTIONS = [
   'Child sessions are full Claude sessions the user can open, watch and talk to in the Sessions tree, each with its own context window.',
   'Use spawn_child_session for a substantial, self-contained piece of work that the user may want to follow or steer (a feature slice, a long investigation, work that can run in parallel with yours).',
   'For a quick lookup or a short helper task, prefer the built-in Agent tool: it is cheaper and faster.',
-  'A child starts with none of your context: give it a complete brief (goal, relevant files, constraints, what to report back).',
+  'A child starts with none of your context. Put what it must know about the wider work in `background` (the goal, decisions already made and why, constraints and preferences the user stated, relevant files) and the job itself in `prompt` (what to do and what to report back).',
   'When a child will edit files while you or other children are editing too, open it with isolation "worktree": it then works on its own branch in its own checkout, and its report says which branch to merge. For read-only work (investigation, review) leave isolation out.',
   'If a child goes the wrong way or is no longer needed, stop_child_session interrupts it.',
   'spawn_child_session returns at once. When the child finishes, its answer arrives as a message in this conversation starting with "[Child session". Do not wait, sleep or poll for it; carry on with other work or end your turn.',
@@ -59,6 +59,18 @@ export function spawnRefusal(opts: { depth: number; runningChildren: number }): 
 export function isTurnResult(result: any): boolean {
   if (result?.num_turns === 0 && !(typeof result?.result === 'string' && result.result.trim())) return false;
   return true;
+}
+
+// The first message of a child the parent's agent opens: where it stands,
+// what the parent knows, and the job.
+export function childBrief(o: { parentTitle: string; parentId: string; background: string; prompt: string; worktree?: string }): string {
+  const background = o.background.trim();
+  return [
+    `You are a child session of "${o.parentTitle}" (session ${o.parentId}) in aie-studio. That parent session's agent opened you for the task below. When you finish, your final answer is sent to it automatically, so end with a clear report of what you did and found. The user can see this session and may message you directly; follow what they say.`,
+    ...(o.worktree ? [o.worktree] : []),
+    ...(background && !/^(none|n\/a)\.?$/i.test(background) ? [`Background from the parent session:\n${background}`] : []),
+    `Your task:\n${o.prompt.trim()}`,
+  ].join('\n\n');
 }
 
 // What a child opened in its own worktree is told ahead of its brief.

@@ -27,7 +27,7 @@ import {
 import { z } from 'zod';
 import { mapContextUsage, type ContextSnapshot } from './context-usage.js';
 import {
-  CHILD_TOOLS_INSTRUCTIONS, MAX_NOTES_PER_TURN, childIdsOf, childReport, cleanChildTitle, isTurnResult, sessionDepth, spawnRefusal,
+  CHILD_TOOLS_INSTRUCTIONS, MAX_NOTES_PER_TURN, childBrief, childIdsOf, childReport, cleanChildTitle, isTurnResult, sessionDepth, spawnRefusal,
   worktreePreface, type ChildStop,
 } from './child-sessions.js';
 import { createWorktree, isWorktreeName, listProjectSessions, realPath, sessionCwd, worktreeNameOf, worktreeNote, worktreePath, worktreeStatus } from './worktrees.js';
@@ -1012,10 +1012,11 @@ function childToolsServer(parent: SdkEntry) {
     tools: [
       tool(
         'spawn_child_session',
-        'Open a child session: a separate, full Claude session in this project that works on `prompt` in the background. The user sees it under this session in the Sessions tree and can open it and talk to it. Returns immediately with the child id; the child\'s answer arrives later as a message starting with "[Child session". The child knows nothing of this conversation, so `prompt` must be a complete brief.',
+        'Open a child session: a separate, full Claude session in this project that works on `prompt` in the background. The user sees it under this session in the Sessions tree and can open it and talk to it. Returns immediately with the child id; the child\'s answer arrives later as a message starting with "[Child session". The child knows nothing of this conversation: give it the context in `background` and the job in `prompt`.',
         {
           title: z.string().describe('Short name shown in the Sessions tree, e.g. "Draft Apple Pay tests"'),
-          prompt: z.string().describe('The complete task brief for the child: goal, relevant files, constraints, and what to report back'),
+          background: z.string().describe('What the child must know about the wider work, since it sees none of this conversation: the overall goal, decisions already made and why, constraints and preferences the user stated, relevant files and branches. Write "none" only for a task that truly stands alone.'),
+          prompt: z.string().describe('The task itself: what to do and what to report back'),
           model: z.string().optional().describe('Model for the child (an id or alias this session can use). Omit to use the default.'),
           isolation: z.enum(['shared', 'worktree']).optional().describe('"worktree": the child gets its own git worktree and branch (under .claude/worktrees/), branched from your current commit — use it when the child will edit files while you or other children are editing too. "shared" (default): it works in the same directory as you.'),
         },
@@ -1034,13 +1035,13 @@ function childToolsServer(parent: SdkEntry) {
           const title = cleanChildTitle(String(args.title ?? ''));
           const settings = await getSettings(parent.owner.uid);
           let cwd = parent.cwd;
-          let brief = prompt;
+          let wtBrief: string | undefined;
           let where = '';
           if (args.isolation === 'worktree') {
             try {
               const wt = await createWorktree(parent.projectPath, parent.cwd, title);
               cwd = wt.path;
-              brief = `${worktreePreface({ path: wt.path, branch: wt.branch, projectPath: parent.projectPath })}\n\n${prompt}`;
+              wtBrief = worktreePreface({ path: wt.path, branch: wt.branch, projectPath: parent.projectPath });
               where = ` It works in its own git worktree (.claude/worktrees/${wt.name}) on branch ${wt.branch}, created from your current commit; your uncommitted changes are not in it. Its report will say what to merge.`;
             } catch (e) {
               return toolText(`Could not create a worktree: ${String((e as Error).message)}. Open the child without isolation, or fix that first.`, true);
@@ -1051,7 +1052,7 @@ function childToolsServer(parent: SdkEntry) {
           child.reportToParent = true;
           pending.add(child);
           startQuery(child, {});
-          injectUserText(child, brief);
+          injectUserText(child, childBrief({ parentTitle: parent.title || parentId.slice(0, 8), parentId, background: String(args.background ?? ''), prompt, worktree: wtBrief }));
           // claude names the session on the first turn's system.init.
           for (let i = 0; i < 300 && !child.sessionId && child.q; i++) await new Promise((r) => setTimeout(r, 100));
           if (!child.sessionId) return toolText(`Started child session "${title}", but it has not reported an id yet. Its answer will still arrive as a message when it finishes.`);

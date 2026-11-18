@@ -937,6 +937,25 @@ pre {
 .msg-assistant table { border-collapse: collapse; margin: 6px 0; }
 .msg-assistant th, .msg-assistant td { border: 1px solid var(--border-strong); padding: 3px 8px; }
 .msg-system { color: var(--fg-muted); font-style: italic; font-size: 11px; }
+/* "Includes context from parent" above the input of a fresh child session. */
+.parent-ctx { flex: 0 0 auto; margin: 0 10px; border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0; background: var(--bg-elevated); font-size: 12px; color: var(--fg-muted); }
+.parent-ctx-bar { display: flex; align-items: center; gap: 6px; padding: 5px 6px 5px 10px; min-width: 0; }
+.parent-ctx-bar > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.parent-ctx-mark { color: var(--accent); flex: none; }
+.parent-ctx-title { background: none; border: none; padding: 0; color: var(--fg); text-decoration: underline; cursor: pointer; font: inherit; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.parent-ctx-close { margin-left: auto; flex: none; background: none; border: none; color: var(--fg-muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 6px; border-radius: 4px; }
+.parent-ctx-close:hover { color: var(--fg); background: var(--bg-hover); }
+.parent-ctx-error { color: #d9a72c; }
+.parent-ctx-spin { flex: none; width: 10px; height: 10px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: parent-ctx-spin 0.9s linear infinite; }
+@keyframes parent-ctx-spin { to { transform: rotate(360deg); } }
+.parent-ctx-body { max-height: 240px; overflow: auto; padding: 4px 12px 8px; border-top: 1px solid var(--border); color: var(--fg); line-height: 1.45; }
+.parent-ctx-body p, .msg-parent-ctx-body p { margin: 6px 0; }
+.parent-ctx-body ul, .parent-ctx-body ol, .msg-parent-ctx-body ul, .msg-parent-ctx-body ol { margin: 4px 0; padding-left: 20px; }
+/* The same summary, folded, in the first message of the child's chat. */
+.msg-parent-ctx { margin-bottom: 6px; font-size: 0.92em; }
+.msg-parent-ctx > summary { cursor: pointer; opacity: 0.85; }
+.msg-parent-ctx-body { margin-top: 6px; padding: 2px 10px; border-radius: 4px; background: rgba(0, 0, 0, 0.18); white-space: normal; text-align: left; }
+
 /* A child session's answer in its parent's chat (model: Session.children). */
 .msg-child-report {
   align-self: stretch; max-width: none;

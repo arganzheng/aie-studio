@@ -649,3 +649,12 @@ export async function getSubagentTranscript(projectId: string, sessionId: string
 export async function stopSubagent(projectId: string, sessionId: string, agentId: string): Promise<void> {
   await jsonOrThrow(await fetch(`${subagentsUrl(projectId, sessionId)}/${encodeURIComponent(agentId)}/stop`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }));
 }
+
+// Model: server.SummarizeSession — a brief of a Claude session for a new
+// session that has not seen it (web.NewChildSession). Takes a few seconds.
+export async function summarizeSession(projectId: string, sessionId: string): Promise<{ summary: string; title: string }> {
+  const r = await fetch(`/api/projects/${encodeURIComponent(projectId)}/sdk-sessions/${encodeURIComponent(sessionId)}/summary`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
