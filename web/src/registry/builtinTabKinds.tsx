@@ -118,6 +118,7 @@ registerTabKind({
         projectPath={project.path}
         resumeId={t.resumeId}
         wire={t.wire}
+        parentSessionId={t.parentSessionId}
         initialPrompt={t.initialPrompt}
         sendKey={settings.sendKey}
         theme={settings.theme}

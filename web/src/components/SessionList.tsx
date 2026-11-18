@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { archiveSession, deleteSessionForever, listAllSessions, renameAnySession, stopSession, type SubagentInfo } from '../api';
 import { useFitMenuTop } from '../lib/fitMenu';
 import {
-  NO_FILTER, filterSessions, isFiltering, sectionSessions, sessionRowKey, sessionStatus,
+  NO_FILTER, childSessions, filterSessions, isFiltering, sectionSessions, sessionRowKey, sessionStatus,
   type SectionGroup, type SectionTab, type SessionFilter, type SessionKind, type SessionRow, type SessionSection,
 } from '../lib/sessionList';
 import { groupActivityMark, type TabActivity } from '../lib/tabActivity';
@@ -84,6 +84,7 @@ export function SessionList({
   activeSubagent,
   onOpen,
   onOpenSubagent,
+  onNewChild,
   onNewClaude,
   onNewDevin,
   onRenamed,
@@ -104,6 +105,9 @@ export function SessionList({
   onOpen: (row: SessionRow) => void;
   // A subagent row under an expanded Claude session was clicked.
   onOpenSubagent?: (row: SessionRow, s: SubagentInfo) => void;
+  // "New child session" on a Claude session's menu. Omitted when Claude is
+  // switched off on this device.
+  onNewChild?: (row: SessionRow) => void;
   // Omitted when that provider is switched off on this device.
   onNewClaude?: () => void;
   onNewDevin?: () => void;
@@ -205,6 +209,13 @@ export function SessionList({
       filtering,
     });
   }, [workspace, scope, filter.archived, rows, shown, projectId, filtering]);
+
+  // Child sessions sit under their parent rather than at the top level —
+  // except while searching / filtering, where every match is listed flat.
+  const kids = useMemo(() => {
+    if (filtering || rows === null) return null;
+    return childSessions({ projectId, rows: filter.archived ? shown : rows.filter((r) => !r.archived), tabs: workspace?.tabs ?? [] });
+  }, [filtering, rows, shown, filter.archived, projectId, workspace?.tabs]);
 
   async function act(what: string, fn: () => Promise<void>) {
     setMenu(null);
@@ -314,7 +325,7 @@ export function SessionList({
 
   // One session line. `tabId`/`groupId` are set for rows inside a Group
   // section (an open tab); `row` is null for a tab not listed yet.
-  function renderRow(row: SessionRow | null, opts: { tabId?: string; groupId?: string; title?: string; kind?: SessionKind } = {}): ReactNode {
+  function renderRow(row: SessionRow | null, opts: { tabId?: string; groupId?: string; title?: string; kind?: SessionKind; depth?: number } = {}): ReactNode {
     const key = row ? sessionRowKey(row) : `tab:${opts.tabId}`;
     const isUnread = row ? unread.has(key) : false;
     const status = row ? sessionStatus(row, isUnread, now) : { tone: 'idle' as const, label: 'Not started' };
@@ -323,8 +334,15 @@ export function SessionList({
     const kind = row?.kind ?? opts.kind ?? 'claude';
     const isActive = opts.tabId ? opts.tabId === workspace?.activeTabId : key === activeKey;
     const draggable = !!(opts.tabId && opts.groupId && workspace && !editing);
+    const depth = opts.depth ?? 0;
     const subs = row?.kind === 'claude' && row.subagents && row.subagents.total > 0 ? row.subagents : null;
-    const subsOpen = subs !== null && subagentsOpen.has(key);
+    // Child sessions of this one (capped depth: a link cycle can't recurse forever).
+    const children = (row?.kind === 'claude' && depth < 4 && kids?.childrenOf.get(row.sessionId)) || [];
+    const hasTree = subs !== null || children.length > 0;
+    const childRunning = children.filter((c) => c.row?.state === 'running' || c.row?.state === 'awaiting').length;
+    const treeTotal = (subs?.total ?? 0) + children.length;
+    const treeRunning = (subs?.running ?? 0) + childRunning;
+    const subsOpen = hasTree && subagentsOpen.has(key);
     const toggleSubs = (e: React.MouseEvent) => {
       e.stopPropagation();
       setSubagentsOpen((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
@@ -332,7 +350,8 @@ export function SessionList({
     return (
       <Fragment key={key}>
       <div
-        className={`session-row tone-${status.tone}${isActive ? ' active' : ''}${row?.archived ? ' archived' : ''}${drag?.kind === 'tab' && drag.id === opts.tabId ? ' dragging' : ''}`}
+        className={`session-row tone-${status.tone}${isActive ? ' active' : ''}${row?.archived ? ' archived' : ''}${drag?.kind === 'tab' && drag.id === opts.tabId ? ' dragging' : ''}${depth > 0 ? ' child' : ''}`}
+        style={depth > 0 ? { paddingLeft: 12 + depth * 18 } : undefined}
         title={row?.title ?? opts.title}
         draggable={draggable}
         onDragStart={draggable ? (e) => {
@@ -348,11 +367,12 @@ export function SessionList({
           else if (row) onOpen(row);
         }}
       >
-        {subs ? (
+        {hasTree ? (
           <button
             type="button"
+            style={depth > 0 ? { left: depth * 18 } : undefined}
             className="session-row-caret"
-            aria-label={subsOpen ? 'Hide subagents' : 'Show subagents'}
+            aria-label={subsOpen ? 'Hide child sessions and subagents' : 'Show child sessions and subagents'}
             aria-expanded={subsOpen}
             onClick={toggleSubs}
           >{subsOpen ? '▾' : '▸'}</button>
@@ -381,13 +401,16 @@ export function SessionList({
             {project && <span> · {project}</span>}
           </div>
         </div>
-        {subs && (
+        {hasTree && (
           <button
             type="button"
-            className={`session-row-subagents${subs.running > 0 ? ' running' : ''}`}
-            title={`${subs.total} subagent${subs.total === 1 ? '' : 's'}${subs.running > 0 ? `, ${subs.running} running` : ', all finished'} — click to ${subsOpen ? 'hide' : 'show'}`}
+            className={`session-row-subagents${treeRunning > 0 ? ' running' : ''}`}
+            title={`${[
+              children.length > 0 ? `${children.length} child session${children.length === 1 ? '' : 's'}` : '',
+              subs ? `${subs.total} subagent${subs.total === 1 ? '' : 's'}` : '',
+            ].filter(Boolean).join(', ')}${treeRunning > 0 ? ` — ${treeRunning} running` : ' — none running'}; click to ${subsOpen ? 'hide' : 'show'}`}
             onClick={toggleSubs}
-          >⑂ {subs.total - subs.running}/{subs.total}</button>
+          >⑂ {treeTotal - treeRunning}/{treeTotal}</button>
         )}
         {(status.tone === 'awaiting' || status.tone === 'running' || isUnread) && (
           <span className={`session-row-dot ${status.tone}`} aria-hidden="true" />
@@ -413,9 +436,12 @@ export function SessionList({
           onNotice={onNotice}
         />
       )}
+      {subsOpen && children.map((c) => renderRow(c.row, { tabId: c.tabId ?? undefined, title: c.title, kind: 'claude', depth: depth + 1 }))}
       </Fragment>
     );
   }
+
+  const topLevel = (list: readonly SessionRow[]) => (kids ? list.filter((r) => !kids.childRowKeys.has(sessionRowKey(r))) : list);
 
   function renderSection(s: SessionSection): ReactNode {
     const ws = workspace!;
@@ -485,7 +511,7 @@ export function SessionList({
         </div>
         {!closed && (
           <>
-            {s.items.map((it) => renderRow(it.row, { tabId: it.tabId, groupId: s.groupId, title: it.title, kind: it.kind }))}
+            {s.items.filter((it) => !kids?.childTabIds.has(it.tabId)).map((it) => renderRow(it.row, { tabId: it.tabId, groupId: s.groupId, title: it.title, kind: it.kind }))}
             {s.otherTabs > 0 && (
               <div className="sessions-section-note" onClick={() => ws.onSelectGroup(s.groupId)}>
                 + {s.otherTabs} other tab{s.otherTabs === 1 ? '' : 's'}
@@ -495,6 +521,12 @@ export function SessionList({
             {s.tabCount > 0 && s.items.length === 0 && s.otherTabs === 0 && (
               <div className="sessions-section-note">No sessions</div>
             )}
+            {(() => {
+              const nested = s.items.filter((it) => kids?.childTabIds.has(it.tabId)).length;
+              return nested > 0 && nested === s.items.length
+                ? <div className="sessions-section-note">{nested} child session tab{nested === 1 ? '' : 's'} — listed under {nested === 1 ? 'its' : 'their'} parent</div>
+                : null;
+            })()}
           </>
         )}
       </div>
@@ -518,9 +550,9 @@ export function SessionList({
               <div className="sessions-section-head" onClick={() => toggleCollapsed(HISTORY_ID)} title="Sessions with no open tab">
                 <span className="sessions-section-caret" aria-hidden="true">{historyClosed ? '▸' : '▾'}</span>
                 <span className="sessions-section-name">History</span>
-                <span className="sessions-section-count">{history.length}</span>
+                <span className="sessions-section-count">{topLevel(history).length}</span>
               </div>
-              {!historyClosed && history.map((r) => renderRow(r))}
+              {!historyClosed && topLevel(history).map((r) => renderRow(r))}
             </div>
           )}
         </>
@@ -535,7 +567,7 @@ export function SessionList({
         </div>
       );
     }
-    return shown.map((r) => renderRow(r));
+    return topLevel(shown).map((r) => renderRow(r));
   }
 
   const menuGroup = menu?.kind === 'group' ? workspace?.groups.find((g) => g.id === menu.groupId) : undefined;
@@ -620,6 +652,18 @@ export function SessionList({
               className="overflow-action"
               onClick={() => { const row = menu.row!; setMenu(null); setRenaming({ key: sessionRowKey(row), text: row.title }); }}
             >✎ Rename</button>
+          )}
+          {menu.row?.kind === 'claude' && onNewChild && (
+            <button
+              className="overflow-action"
+              title="Start a new Claude session filed under this one"
+              onClick={() => {
+                const row = menu.row!;
+                setMenu(null);
+                setSubagentsOpen((prev) => new Set(prev).add(sessionRowKey(row)));
+                onNewChild(row);
+              }}
+            >＋ New child session</button>
           )}
           {moveTargets.map((g) => (
             <button

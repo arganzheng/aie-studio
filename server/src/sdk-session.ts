@@ -23,7 +23,7 @@ import {
   type ModelInfo,
 } from '@anthropic-ai/claude-agent-sdk';
 import { mapContextUsage, type ContextSnapshot } from './context-usage.js';
-import { getProject, getSettings } from './store.js';
+import { getProject, getSessionMeta, getSettings, putSessionMeta, setParent } from './store.js';
 import { getUserId } from './auth.js';
 import { runBang, bangContextBlocks, type BangResult, type RunningBang } from './shell-exec.js';
 import { publishSessionEvent, type SessionOwner } from './notify.js';
@@ -158,6 +158,9 @@ type SdkEntry = {
   // Background tasks and subagents of the live query, by task id (SDK
   // task_* events). Kept after they end so the Sessions tree can show how.
   tasks: Map<string, SdkTask>;
+  // Model: Session.parent — set on the handshake of a "New child session";
+  // written to SessionMeta once claude names the session (system.init).
+  parentSessionId: string | null;
   commands: SlashCommand[];
   agents: string[];
   models: ModelInfo[];
@@ -377,12 +380,26 @@ async function pump(entry: SdkEntry, q: Query, gen: number) {
   teardown(entry);
 }
 
+// Record the session's place in the tree under its new id: the parent named
+// on the handshake, or — when claude re-ids a session (a rewind forks it) —
+// the parent its previous id had.
+async function linkToParent(entry: SdkEntry, oldId: string | null, newId: string) {
+  try {
+    const meta = await getSessionMeta(entry.owner.uid);
+    const parent = entry.parentSessionId ?? (oldId ? meta.parents[`claude:${oldId}`] : undefined);
+    if (!parent || parent === newId) return;
+    const next = setParent(meta, `claude:${newId}`, parent);
+    if (next !== meta) await putSessionMeta(entry.owner.uid, next);
+  } catch {}
+}
+
 function onSdkMessage(entry: SdkEntry, m: any) {
   touchActivity(entry);
   applyTaskEvent(entry.tasks, m);
   if (m?.type === 'system' && m?.subtype === 'init') {
     const sid: string | undefined = m.session_id;
     if (sid && entry.sessionId !== sid) {
+      void linkToParent(entry, entry.sessionId, sid);
       if (entry.sessionId) { byId.delete(entry.sessionId); unmarkLive(entry.sessionId, 'sdk'); }
       entry.sessionId = sid;
       byId.set(sid, entry);
@@ -745,7 +762,7 @@ export function stopSdkSession(sessionId: string, uid: string): boolean {
 // ----- routes --------------------------------------------------------------
 
 export function registerSdkSessionRoutes(app: FastifyInstance) {
-  app.get<{ Querystring: { project?: string; resume?: string; wire?: string } }>(
+  app.get<{ Querystring: { project?: string; resume?: string; wire?: string; parent?: string } }>(
     '/ws/sdk-session',
     { websocket: true },
     async (socket, req) => {
@@ -796,6 +813,8 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
         title: null,
         context: null,
         tasks: new Map(),
+        // Only a fresh session can be made a child; a resume keeps its link.
+        parentSessionId: !resumeId && /^[A-Za-z0-9-]{8,64}$/.test(req.query.parent ?? '') ? req.query.parent! : null,
         commands: [],
         agents: [],
         models: [],

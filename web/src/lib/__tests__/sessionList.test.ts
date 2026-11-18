@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NO_FILTER, filterSessions, isFiltering, sectionSessions, sessionRowKey, sessionStatus, timeAgo, type SessionRow } from '../sessionList';
+import { NO_FILTER, childSessions, filterSessions, isFiltering, sectionSessions, sessionRowKey, sessionStatus, timeAgo, type SessionRow } from '../sessionList';
 import { alertKey } from '../sessionAlerts';
 
 function row(over: Partial<SessionRow> = {}): SessionRow {
@@ -119,5 +119,36 @@ describe('sectionSessions', () => {
   it('does not list an open session in History even when another kind of tab shows it', () => {
     const { history } = sectionSessions({ ...base, tabs: [{ id: 'x', type: 'session', resumeId: 'old' }] });
     expect(history.map((r) => r.sessionId)).toEqual(['a', 'b', 'd1']);
+  });
+});
+
+describe('childSessions', () => {
+  const rows = [
+    row({ sessionId: 'p', title: 'Parent', updatedAt: 50 }),
+    row({ sessionId: 'c2', title: 'Second child', parentId: 'p', updatedAt: 30 }),
+    row({ sessionId: 'c1', title: 'First child', parentId: 'p', updatedAt: 20 }),
+    row({ sessionId: 'orphan', title: 'Orphan', parentId: 'deleted' }),
+    row({ kind: 'devin', sessionId: 'p', title: 'Devin with the same id' }),
+    row({ sessionId: 'far', title: 'Other project child', projectId: 'p2', parentId: 'p' }),
+  ];
+  const tabs = [
+    { id: 't1', type: 'claude-sdk', resumeId: 'c1' },
+    { id: 't2', type: 'claude-sdk', title: 'Child of Parent', parentSessionId: 'p' }, // not started yet
+    { id: 't3', type: 'claude-sdk', title: 'Lost', parentSessionId: 'nowhere' },
+  ];
+  const idx = childSessions({ projectId: 'p1', rows, tabs });
+
+  it('files children under a listed parent, oldest first, unstarted tabs last', () => {
+    expect([...idx.childrenOf.keys()]).toEqual(['p']);
+    expect(idx.childrenOf.get('p')!.map((c) => [c.row?.sessionId ?? null, c.tabId, c.title])).toEqual([
+      ['c1', 't1', 'First child'],
+      ['c2', null, 'Second child'],
+      [null, 't2', 'Child of Parent'],
+    ]);
+  });
+
+  it('takes children out of the top level; orphans and other projects stay', () => {
+    expect([...idx.childRowKeys].sort()).toEqual(['p1:claude:c1', 'p1:claude:c2']);
+    expect([...idx.childTabIds].sort()).toEqual(['t1', 't2']);
   });
 });

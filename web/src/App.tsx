@@ -1021,7 +1021,7 @@ export default function App() {
   // Model: web.SdkChatPanel / web.SdkSessionPicker — the Agent-SDK Claude
   // tab. Same dedupe-by-resumeId as openSessionTab; the two kinds are kept
   // apart (a session already open as `session` opens again as `claude-sdk`).
-  function openSdkTab(resumeId?: string, title?: string, opts: { wire?: boolean } = {}): string | undefined {
+  function openSdkTab(resumeId?: string, title?: string, opts: { wire?: boolean; parentSessionId?: string } = {}): string | undefined {
     if (!activeProjectId) {
       logDebug('tab', 'openSdkTab ignored — no active project');
       return;
@@ -1044,7 +1044,7 @@ export default function App() {
     }
     const d = new Date();
     const defaultTitle = `SDK ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    const tab: Tab = { id: randomId(), type: 'claude-sdk', resumeId, title: title || defaultTitle, groupId: activeGroupId, ...(opts.wire ? { wire: true } : {}) };
+    const tab: Tab = { id: randomId(), type: 'claude-sdk', resumeId, title: title || defaultTitle, groupId: activeGroupId, ...(opts.wire ? { wire: true } : {}), ...(opts.parentSessionId && !resumeId ? { parentSessionId: opts.parentSessionId } : {}) };
     logDebug('tab', `openSdkTab: new claude-sdk tab ${tab.id}${resumeId ? ` (resume ${resumeId})` : ' (fresh)'} in project ${activeProjectId} group ${activeGroupId}`);
     updateProjectTabs(activeProjectId, [...tabs, tab]);
     setActiveSelection(activeProjectId, activeGroupId, tab.id);
@@ -1237,6 +1237,18 @@ export default function App() {
     // The 👁 comes from tabIcon(); a glyph in the title would show twice.
     const title = src.title || src.resumeId.slice(0, 8);
     openTab({ id: randomId(), type: 'observe', origin, title });
+  }
+
+  // Model: web.NewChildSession — a fresh Claude (SDK) session filed under
+  // `row` in the Sessions tree. A full session: its own process, prompt,
+  // model. Always the SDK bridge: only it records the link.
+  function openChildSession(row: SessionRow) {
+    if (!activeProjectId) return;
+    if (row.projectId !== activeProjectId) {
+      showAppToast('Switch to that session\'s project to open a child session');
+      return;
+    }
+    openSdkTab(undefined, `Child of ${row.title}`.slice(0, 60), { parentSessionId: row.sessionId });
   }
 
   // Model: web.SessionList tree → web.SubagentPanel. Open (or re-activate)
@@ -1901,6 +1913,7 @@ export default function App() {
                 activeSubagent={activeTab?.type === 'subagent' ? `${activeTab.sessionId}:${activeTab.agentId}` : null}
                 onOpen={(row) => { setDrawerOpen(false); openSessionRow(row); }}
                 onOpenSubagent={(row, s) => { setDrawerOpen(false); openSubagentTab(row, s); }}
+                onNewChild={localPrefs.enableClaude ? (row) => { setDrawerOpen(false); openChildSession(row); } : undefined}
                 onNewClaude={localPrefs.enableClaude ? () => { setDrawerOpen(false); if (localPrefs.claudeBridge === 'sdk') openSdkTab(); else openSessionTab(); } : undefined}
                 onNewDevin={localPrefs.enableDevin ? () => { setDrawerOpen(false); openDevinTab(); } : undefined}
                 onRenamed={retitleSessionTabs}

@@ -29,6 +29,8 @@ export type SessionRow = {
   // Claude: the subagents it has spawned (absent for Devin). `running` is
   // only known while the SDK bridge holds the session.
   subagents?: { total: number; running: number };
+  // The session this one was opened under as a child, if any.
+  parentId?: string;
 };
 
 export const MAX_TITLE_LENGTH = 200;
@@ -39,12 +41,13 @@ export function sessionKey(kind: SessionKind, sessionId: string): string {
 
 // Pure: lay the user's archive flags and title overrides over the raw rows,
 // newest first.
-export function applySessionMeta(rows: readonly Omit<SessionRow, 'archived'>[], meta: SessionMeta): SessionRow[] {
+export function applySessionMeta(rows: readonly Omit<SessionRow, 'archived' | 'parentId'>[], meta: SessionMeta): SessionRow[] {
   const archived = new Set(meta.archived);
   return rows
     .map((r) => {
       const key = sessionKey(r.kind, r.sessionId);
-      return { ...r, title: meta.titles[key] ?? r.title, archived: archived.has(key) };
+      const parentId = meta.parents[key];
+      return { ...r, title: meta.titles[key] ?? r.title, archived: archived.has(key), ...(parentId ? { parentId } : {}) };
     })
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
@@ -58,7 +61,11 @@ export function setArchived(meta: SessionMeta, key: string, archived: boolean): 
 // Pure: the meta after forgetting a session altogether (it was deleted).
 export function forgetSession(meta: SessionMeta, key: string): SessionMeta {
   const { [key]: _gone, ...titles } = meta.titles;
-  return { archived: meta.archived.filter((k) => k !== key), titles };
+  // Its own link goes, and so do the links of its children: they stay, as
+  // top-level sessions.
+  const id = key.slice(key.indexOf(':') + 1);
+  const parents = Object.fromEntries(Object.entries(meta.parents).filter(([k, v]) => k !== key && v !== id));
+  return { archived: meta.archived.filter((k) => k !== key), titles, parents };
 }
 
 export function cleanTitle(raw: unknown): string | null {

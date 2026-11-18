@@ -17,6 +17,8 @@ export type SessionRow = {
   archived: boolean;
   // Claude: the subagents it has spawned (absent for Devin).
   subagents?: { total: number; running: number };
+  // The session this one was opened under as a child, if any.
+  parentId?: string;
 };
 
 // Same shape as lib/sessionAlerts.alertKey, so a pending alert marks its row.
@@ -92,7 +94,7 @@ export function timeAgo(ts: number, now: number): string {
 export const DEFAULT_SECTION_ID = 'default';
 
 // The slice of a Tab this needs (web/src/types.ts Tab).
-export type SectionTab = { id: string; type: string; resumeId?: string; title?: string; groupId?: string };
+export type SectionTab = { id: string; type: string; resumeId?: string; title?: string; groupId?: string; parentSessionId?: string };
 export type SectionGroup = { id: string; name: string };
 
 export type SectionItem = {
@@ -173,4 +175,55 @@ export function sectionSessions(input: {
   ].filter((s) => !filtering || s.items.length > 0);
   const history = rows.filter((r) => !opened.has(sessionRowKey(r)));
   return { sections, history };
+}
+
+// ---- child sessions (model: Session.parent) ----
+//
+// A child session is a full session opened under another one ("New child
+// session"). In the list it sits under its parent instead of at the top
+// level — as long as the parent is listed; an orphan stays where it was.
+
+export type ChildItem = {
+  // null: the child's tab is open but claude hasn't named the session yet.
+  row: SessionRow | null;
+  // The open tab showing it in this project, if any.
+  tabId: string | null;
+  title: string;
+};
+export type ChildIndex = {
+  // Parent session id → its children, oldest activity first, unstarted last.
+  childrenOf: Map<string, ChildItem[]>;
+  // What to leave out of the top level.
+  childRowKeys: Set<string>;
+  childTabIds: Set<string>;
+};
+
+export function childSessions(input: {
+  // The project `tabs` belong to.
+  projectId: string;
+  // Every listed row a child or parent may be among.
+  rows: readonly SessionRow[];
+  tabs: readonly SectionTab[];
+}): ChildIndex {
+  const { projectId, rows, tabs } = input;
+  const claude = rows.filter((r) => r.kind === 'claude');
+  const parentKey = (pid: string, sid: string) => `${pid}:${sid}`;
+  const listed = new Set(claude.map((r) => parentKey(r.projectId, r.sessionId)));
+  const childrenOf = new Map<string, ChildItem[]>();
+  const childRowKeys = new Set<string>();
+  const childTabIds = new Set<string>();
+  const add = (parent: string, item: ChildItem) => childrenOf.set(parent, [...(childrenOf.get(parent) ?? []), item]);
+  for (const r of [...claude].sort((a, b) => a.updatedAt - b.updatedAt)) {
+    if (!r.parentId || !listed.has(parentKey(r.projectId, r.parentId))) continue;
+    const tab = r.projectId === projectId ? tabs.find((t) => tabKind(t) === 'claude' && t.resumeId === r.sessionId) : undefined;
+    add(r.parentId, { row: r, tabId: tab?.id ?? null, title: r.title });
+    childRowKeys.add(sessionRowKey(r));
+    if (tab) childTabIds.add(tab.id);
+  }
+  for (const t of tabs) {
+    if (tabKind(t) !== 'claude' || t.resumeId || !t.parentSessionId || !listed.has(parentKey(projectId, t.parentSessionId))) continue;
+    add(t.parentSessionId, { row: null, tabId: t.id, title: t.title?.trim() || 'New child session' });
+    childTabIds.add(t.id);
+  }
+  return { childrenOf, childRowKeys, childTabIds };
 }
