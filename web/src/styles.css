@@ -3205,6 +3205,21 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   background: transparent; border: none; color: var(--fg-muted); font-size: 10px; cursor: pointer;
 }
 .session-row-caret:hover { color: var(--fg); }
+/* A project's section heading (model: web.SessionList rule "by project"). */
+.session-project-row {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px 6px 12px; cursor: pointer;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  font-size: 12px; font-weight: 600; color: var(--fg-muted);
+}
+/* Desktop: the sidebar sits on --bg-elevated (see the end of the file). */
+@media (min-width: 769px) { .files-panel .session-project-row { background: var(--bg-elevated); } }
+.session-project-row:hover { color: var(--fg); }
+.session-project-row.current { color: var(--fg-strong); box-shadow: inset 2px 0 0 var(--accent); }
+.session-project-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-project-row .session-row-subagents { cursor: inherit; font-weight: 400; }
+.session-project-count { flex: none; font-weight: 400; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--fg-muted); }
 /* A batch of child sessions under their parent (model: SessionMeta.groups). */
 .session-group-row { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 12px; cursor: pointer; font-size: 12px; color: var(--fg-muted); }
 .session-group-row:hover { background: var(--bg-hover); color: var(--fg); }

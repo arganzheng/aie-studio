@@ -216,3 +216,51 @@ export function groupChildren(children: readonly ChildItem[]): ChildGroupNode[] 
   }
   return out;
 }
+
+// ---- project sections (model: web.SessionList rule "by project") ----
+//
+// The list shows every project at once: one foldable section per project, in
+// the project list's order, each holding that project's sessions. A section's
+// counts tell what is going on inside it while it is folded.
+
+export type ProjectSection = {
+  projectId: string;
+  name: string;
+  // This project's rows, in the order they were given.
+  rows: SessionRow[];
+  // Sessions working now, waiting on the user, and holding an unread alert.
+  running: number;
+  awaiting: number;
+  unread: number;
+};
+
+export function sessionsByProject(input: {
+  // Project id → name, in the project list's order.
+  projects: ReadonlyMap<string, string>;
+  rows: readonly SessionRow[];
+  unread: ReadonlySet<string>;
+  // This project's section is kept even when it has no rows.
+  keepEmpty?: string | null;
+}): ProjectSection[] {
+  const { projects, rows, unread, keepEmpty } = input;
+  const byId = new Map<string, ProjectSection>();
+  const section = (projectId: string): ProjectSection => {
+    let s = byId.get(projectId);
+    if (!s) {
+      s = { projectId, name: projects.get(projectId) ?? 'Unknown project', rows: [], running: 0, awaiting: 0, unread: 0 };
+      byId.set(projectId, s);
+    }
+    return s;
+  };
+  // Listed projects first, in their order; a row of a project that isn't
+  // listed (just removed) lands in a section after them.
+  for (const id of projects.keys()) section(id);
+  for (const r of rows) {
+    const s = section(r.projectId);
+    s.rows.push(r);
+    if (r.state === 'awaiting') s.awaiting++;
+    else if (r.state === 'running') s.running++;
+    if (unread.has(sessionRowKey(r))) s.unread++;
+  }
+  return [...byId.values()].filter((s) => s.rows.length > 0 || s.projectId === keepEmpty);
+}
