@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NO_FILTER, childSessions, groupChildren, filterSessions, isFiltering, openSessionTabs, sessionRowKey, sessionStatus, timeAgo, type SessionRow } from '../sessionList';
+import { NO_FILTER, childSessions, groupChildren, filterSessions, sessionsByProject, isFiltering, openSessionTabs, sessionRowKey, sessionStatus, timeAgo, type SessionRow } from '../sessionList';
 import { alertKey } from '../sessionAlerts';
 
 function row(over: Partial<SessionRow> = {}): SessionRow {
@@ -162,5 +162,33 @@ describe('groupChildren', () => {
   });
   it('leaves children without a label as they are', () => {
     expect(groupChildren([item('a'), item('b')]).every((n) => n.kind === 'child')).toBe(true);
+  });
+});
+
+describe('sessionsByProject', () => {
+  const projects = new Map([['p1', 'Blog'], ['p2', 'Studio'], ['p3', 'Empty']]);
+  const rows = [
+    row({ projectId: 'p2', sessionId: 'a', state: 'running' }),
+    row({ projectId: 'p1', sessionId: 'b', state: 'awaiting' }),
+    row({ projectId: 'p2', sessionId: 'c' }),
+    row({ projectId: 'p2', sessionId: 'd', state: 'running' }),
+  ];
+  it('makes one section per project, in the project list order, rows in the given order', () => {
+    const out = sessionsByProject({ projects, rows, unread: none });
+    expect(out.map((s) => [s.name, s.rows.map((r) => r.sessionId)])).toEqual([['Blog', ['b']], ['Studio', ['a', 'c', 'd']]]);
+  });
+  it('counts running, waiting and unread sessions per section', () => {
+    const unread = new Set([sessionRowKey(rows[2]), sessionRowKey(rows[1])]);
+    const [blog, studio] = sessionsByProject({ projects, rows, unread });
+    expect([blog.running, blog.awaiting, blog.unread]).toEqual([0, 1, 1]);
+    expect([studio.running, studio.awaiting, studio.unread]).toEqual([2, 0, 1]);
+  });
+  it('leaves out projects with no rows, except the one asked to keep', () => {
+    expect(sessionsByProject({ projects, rows, unread: none, keepEmpty: 'p3' }).map((s) => s.projectId)).toEqual(['p1', 'p2', 'p3']);
+    expect(sessionsByProject({ projects, rows: [], unread: none, keepEmpty: 'p1' }).map((s) => s.projectId)).toEqual(['p1']);
+  });
+  it('puts rows of a project that is not listed in a section after the listed ones', () => {
+    const out = sessionsByProject({ projects, rows: [row({ projectId: 'gone' }), row({ projectId: 'p1' })], unread: none });
+    expect(out.map((s) => [s.projectId, s.name])).toEqual([['p1', 'Blog'], ['gone', 'Unknown project']]);
   });
 });

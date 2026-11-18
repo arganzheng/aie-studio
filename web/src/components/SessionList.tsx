@@ -3,33 +3,29 @@ import { createPortal } from 'react-dom';
 import { archiveSession, deleteSessionForever, listAllSessions, renameAnySession, stopSession, type SubagentInfo } from '../api';
 import { useFitMenuTop } from '../lib/fitMenu';
 import {
-  NO_FILTER, childSessions, groupChildren, filterSessions, isFiltering, openSessionTabs, sessionRowKey, sessionStatus,
-  type SessionFilter, type SessionKind, type SessionRow, type SessionTabLike,
+  NO_FILTER, childSessions, groupChildren, filterSessions, isFiltering, openSessionTabs, sessionRowKey, sessionStatus, sessionsByProject,
+  type ProjectSection, type SessionFilter, type SessionKind, type SessionRow, type SessionTabLike,
 } from '../lib/sessionList';
 import { providerIcon } from './TabBar';
 import { SessionSubagents } from './SessionSubagents';
 
 // Model: web.SessionList — the sidebar's Sessions view: every Claude and
-// Devin session of this project (or of all projects), newest first, with
-// what it is doing right now. Click a row to open or go to the session; the
+// Devin session of every project, with what it is doing right now. Each
+// project is a foldable section (model: web.SessionList rule "by project");
+// inside one, sessions are newest first. Click a row to open or go to the session; the
 // ⋯ menu renames, archives, stops and deletes. Fed by server.ListAllSessions,
 // refreshed on a timer while visible and whenever `refreshSignal` changes
 // (a session event arrived).
 //
-// The list is flat (model: web.SessionList rule "flat"): opening or closing a
+// A section is flat (model: web.SessionList rule "flat"): opening or closing a
 // session's tab never moves its row, it only toggles the row's "open" mark,
 // and clicking an open row goes to its tab. Session tabs that aren't listed
 // yet (a fresh session before its first reply) sit on top.
 
 const POLL_MS = 5000;
-const SCOPE_LS_KEY = 'remote-ide:sessionListScope';
+const PROJECTS_OPEN_LS_KEY = 'remote-ide:sessionProjectsOpen';
 const SUBAGENTS_OPEN_LS_KEY = 'remote-ide:sessionSubagentsOpen';
 
-type Scope = 'project' | 'all';
-
-function loadScope(): Scope {
-  try { return localStorage.getItem(SCOPE_LS_KEY) === 'all' ? 'all' : 'project'; } catch { return 'project'; }
-}
 function loadStringSet(key: string): Set<string> {
   try {
     const v = JSON.parse(localStorage.getItem(key) || '[]');
@@ -91,7 +87,9 @@ export function SessionList({
   onArchived: (row: SessionRow) => void;
   onNotice: (text: string) => void;
 }) {
-  const [scope, setScope] = useState<Scope>(loadScope);
+  // Project sections that are unfolded. The project on screen is unfolded
+  // whenever it becomes the one on screen; the user may fold it again.
+  const [projectsOpen, setProjectsOpen] = useState<Set<string>>(() => loadStringSet(PROJECTS_OPEN_LS_KEY));
   const [rows, setRows] = useState<SessionRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<SessionFilter>(NO_FILTER);
@@ -110,17 +108,19 @@ export function SessionList({
   const seq = useRef(0);
 
   useEffect(() => {
-    try { localStorage.setItem(SCOPE_LS_KEY, scope); } catch {}
-  }, [scope]);
+    setProjectsOpen((prev) => (prev.has(projectId) ? prev : new Set(prev).add(projectId)));
+  }, [projectId]);
+  useEffect(() => {
+    try { localStorage.setItem(PROJECTS_OPEN_LS_KEY, JSON.stringify([...projectsOpen])); } catch {}
+  }, [projectsOpen]);
   useEffect(() => {
     try { localStorage.setItem(SUBAGENTS_OPEN_LS_KEY, JSON.stringify([...subagentsOpen].slice(-200))); } catch {}
   }, [subagentsOpen]);
 
-  const target = scope === 'all' ? 'all' : projectId;
   const refresh = useCallback(async () => {
     const my = ++seq.current;
     try {
-      const list = await listAllSessions(target);
+      const list = await listAllSessions('all');
       if (my !== seq.current) return;
       setRows(list);
       setError(null);
@@ -130,11 +130,8 @@ export function SessionList({
     }
     setNow(Date.now());
     setTick((n) => n + 1);
-  }, [target]);
+  }, []);
 
-  // A different project / scope: drop the old rows rather than show them
-  // under the new heading while the fetch is out.
-  useEffect(() => { setRows(null); }, [target]);
   useEffect(() => {
     void refresh();
     const t = window.setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, POLL_MS);
@@ -237,7 +234,6 @@ export function SessionList({
     const tabId = opts.tabId ?? (row ? openTabs?.tabOf.get(key) : undefined);
     const isUnread = row ? unread.has(key) : false;
     const status = row ? sessionStatus(row, isUnread, now) : { tone: 'idle' as const, label: 'Not started' };
-    const project = row && scope === 'all' ? projectNames.get(row.projectId) : undefined;
     const editing = row !== null && renaming?.key === key;
     const kind = row?.kind ?? opts.kind ?? 'claude';
     const isActive = tabId ? tabId === workspace?.activeTabId : key === activeKey;
@@ -298,7 +294,6 @@ export function SessionList({
           <div className="session-row-sub">
             <span className="session-row-status" title={status.tone === 'running' && row?.activity ? `Working — ${row.activity}` : undefined}>{status.label}</span>
             {row?.worktree && <span className="session-row-worktree" title={`Works in its own git worktree: .claude/worktrees/${row.worktree}`}> · ⎇ {row.worktree}</span>}
-            {project && <span> · {project}</span>}
           </div>
         </div>
         {hasTree && (
@@ -366,26 +361,53 @@ export function SessionList({
 
   const topLevel = (list: readonly SessionRow[]) => (kids ? list.filter((r) => !kids.childRowKeys.has(sessionRowKey(r))) : list);
 
+  // One project's section: its heading, and under it (unless folded) its sessions.
+  function renderSection(s: ProjectSection, pending: NonNullable<typeof openTabs>['pending']): ReactNode {
+    const current = s.projectId === projectId;
+    // A search or filter shows every match, whatever is folded.
+    const open = filtering || projectsOpen.has(s.projectId);
+    const toggle = () => setProjectsOpen((prev) => { const next = new Set(prev); if (next.has(s.projectId)) next.delete(s.projectId); else next.add(s.projectId); return next; });
+    const busy = s.running + s.awaiting;
+    const top = topLevel(s.rows);
+    const mine = current ? pending : [];
+    return (
+      <Fragment key={`p:${s.projectId}`}>
+        <div
+          className={`session-project-row${current ? ' current' : ''}`}
+          role="button"
+          aria-expanded={open}
+          title={`${s.name}${current ? ' — the project on screen' : ''} — ${[
+            `${s.rows.length} session${s.rows.length === 1 ? '' : 's'}`,
+            s.awaiting > 0 ? `${s.awaiting} waiting for you` : '',
+            s.running > 0 ? `${s.running} running` : '',
+            s.unread > 0 ? `${s.unread} unread` : '',
+          ].filter(Boolean).join(', ')}`}
+          onClick={filtering ? undefined : toggle}
+        >
+          <span className="session-group-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
+          <span className="session-project-name">{s.name}</span>
+          <span className="session-project-count">{s.rows.length}</span>
+          {busy > 0 && <span className="session-row-subagents running">{busy} running</span>}
+          {s.awaiting > 0 ? <span className="session-row-dot awaiting" aria-hidden="true" />
+            : s.unread > 0 ? <span className="session-row-dot" aria-hidden="true" /> : null}
+        </div>
+        {open && mine.map((p) => renderRow(null, { tabId: p.tabId, title: p.title, kind: p.kind }))}
+        {open && top.map((r) => renderRow(r))}
+        {open && top.length === 0 && mine.length === 0 && <div className="sessions-empty">No sessions yet — start one with ＋</div>}
+      </Fragment>
+    );
+  }
+
   function renderBody(): ReactNode {
     if (error) return <div className="sessions-empty error">{error}</div>;
     if (rows === null) return <div className="sessions-empty">Loading…</div>;
     // Fresh tabs not listed yet (children sit under their parent instead).
     const pending = !filtering && openTabs ? openTabs.pending.filter((p) => !kids?.childTabIds.has(p.tabId)) : [];
-    if (shown.length === 0 && pending.length === 0) {
-      return (
-        <div className="sessions-empty">
-          {rows.length === 0 ? 'No sessions yet — start one with ＋'
-            : filter.archived ? 'Nothing archived'
-            : 'No sessions match'}
-        </div>
-      );
+    const sections = sessionsByProject({ projects: projectNames, rows: shown, unread, keepEmpty: filtering ? null : projectId });
+    if (sections.length === 0) {
+      return <div className="sessions-empty">{filter.archived ? 'Nothing archived' : 'No sessions match'}</div>;
     }
-    return (
-      <>
-        {pending.map((p) => renderRow(null, { tabId: p.tabId, title: p.title, kind: p.kind }))}
-        {topLevel(shown).map((r) => renderRow(r))}
-      </>
-    );
+    return <>{sections.map((s) => renderSection(s, pending))}</>;
   }
 
   return (
@@ -415,9 +437,9 @@ export function SessionList({
         )}
         <button
           type="button"
-          className={`sessions-icon-btn${filtersOpen || isFiltering(filter) || scope === 'all' ? ' on' : ''}`}
-          title="Scope and filters"
-          aria-label="Scope and filters"
+          className={`sessions-icon-btn${filtersOpen || isFiltering(filter) ? ' on' : ''}`}
+          title="Filters"
+          aria-label="Filters"
           aria-expanded={filtersOpen}
           onClick={() => setFiltersOpen((v) => !v)}
         >⚙</button>
@@ -431,7 +453,6 @@ export function SessionList({
       />
       {filtersOpen && (
         <div className="sessions-filters">
-          {seg(scope, [['project', 'This project'], ['all', 'All projects']] as const, setScope)}
           {seg(filter.kind, [['all', 'All'], ['claude', 'Claude'], ['devin', 'Devin']] as const, (kind) => setFilter((f) => ({ ...f, kind })))}
           {seg(filter.status, [['all', 'Any status'], ['active', 'Active']] as const, (status) => setFilter((f) => ({ ...f, status })))}
           {seg(filter.archived ? 'archived' : 'current', [['current', 'Current'], ['archived', `Archived${archivedCount ? ` (${archivedCount})` : ''}`]] as const, (v) => setFilter((f) => ({ ...f, archived: v === 'archived' })))}
