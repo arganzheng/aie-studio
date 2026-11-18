@@ -61,6 +61,7 @@ export function SessionList({
   onNewDevin,
   onRenamed,
   onDeleted,
+  onArchived,
   onNotice,
 }: {
   projectId: string;
@@ -86,6 +87,8 @@ export function SessionList({
   // The caller owns the tabs: it retitles / closes the ones showing the session.
   onRenamed: (row: SessionRow, title: string) => void;
   onDeleted: (row: SessionRow) => void;
+  // Archived (not unarchived) in the list: the caller closes its tabs.
+  onArchived: (row: SessionRow) => void;
   onNotice: (text: string) => void;
 }) {
   const [scope, setScope] = useState<Scope>(loadScope);
@@ -490,7 +493,7 @@ export function SessionList({
           {menu.row && (
             <button
               className="overflow-action"
-              onClick={() => { const row = menu.row!; void act(row.archived ? 'Unarchive' : 'Archive', () => archiveSession(row, !row.archived)); }}
+              onClick={() => { const row = menu.row!; void act(row.archived ? 'Unarchive' : 'Archive', async () => { await archiveSession(row, !row.archived); if (!row.archived) onArchived(row); }); }}
             >{menu.row.archived ? '↩ Unarchive' : '🗄 Archive'}</button>
           )}
           {menu.row?.live && (

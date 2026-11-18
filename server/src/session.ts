@@ -6,7 +6,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import type { WebSocket } from '@fastify/websocket';
-import { getProject, getSettings } from './store.js';
+import { getProject, getSettings, unarchiveOnUse } from './store.js';
 import { getUserId } from './auth.js';
 import { publishSessionEvent, type SessionOwner } from './notify.js';
 import { askSummary, toSummary } from './inbox.js';
@@ -387,6 +387,7 @@ function attachClientHandlers(entry: SessionEntry, socket: WebSocket) {
     if (msg.type === 'user') {
       const text = String(msg.text ?? '');
       const images: { mediaType: string; data: string }[] = Array.isArray(msg.images) ? msg.images : [];
+      if (entry.resumeId) void unarchiveOnUse(entry.owner.uid, `claude:${entry.resumeId}`);
       const msgId = typeof msg.msgId === 'string' ? msg.msgId : null;
       const content: any[] = [];
       if (text) content.push({ type: 'text', text });

@@ -1579,8 +1579,9 @@ export default function App() {
     if (!pw?.tabs.some((t) => showsSession(t, row))) return;
     updateProjectTabs(row.projectId, pw.tabs.map((t) => (showsSession(t, row) ? { ...t, title } : t)));
   }
-  // Deleted in the list: its tabs have nothing left to show.
-  function closeDeletedSessionTabs(row: SessionRow) {
+  // Deleted or archived in the list: its tabs go with it. (Archiving puts
+  // a session away; a tab left open would keep it in front of the user.)
+  function closeSessionTabs(row: SessionRow) {
     const pw = workspaceRef.current.projects[row.projectId];
     const gone = pw?.tabs.filter((t) => showsSession(t, row)) ?? [];
     if (gone.length === 0) return;
@@ -1870,7 +1871,8 @@ export default function App() {
                 onNewClaude={localPrefs.enableClaude ? () => { setDrawerOpen(false); if (localPrefs.claudeBridge === 'sdk') openSdkTab(); else openSessionTab(); } : undefined}
                 onNewDevin={localPrefs.enableDevin ? () => { setDrawerOpen(false); openDevinTab(); } : undefined}
                 onRenamed={retitleSessionTabs}
-                onDeleted={closeDeletedSessionTabs}
+                onDeleted={closeSessionTabs}
+                onArchived={closeSessionTabs}
                 onNotice={showAppToast}
               />
             ) : sidebarView === 'files' ? (
