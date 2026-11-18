@@ -27,7 +27,7 @@ import {
 import { z } from 'zod';
 import { mapContextUsage, type ContextSnapshot } from './context-usage.js';
 import {
-  BUDGET_ERROR, CHILD_TOOLS_INSTRUCTIONS, MAX_NOTES_PER_TURN, cleanBudget, cleanResultSchema, usd, childBrief, childIdsOf, childReport, cleanGroup, joinReports, cleanChildTitle, isTurnResult, lastModelOf, sessionDepth, spawnRefusal,
+  CHILD_TOOLS_INSTRUCTIONS, MAX_NOTES_PER_TURN, cleanResultSchema, childBrief, childIdsOf, childReport, cleanGroup, joinReports, cleanChildTitle, isTurnResult, lastModelOf, sessionDepth, spawnRefusal,
   worktreePreface, type ChildStop,
 } from './child-sessions.js';
 import { createWorktree, isWorktreeName, listProjectSessions, realPath, sessionCwd, worktreeNameOf, worktreeNote, worktreePath, worktreeStatus } from './worktrees.js';
@@ -196,16 +196,10 @@ type SdkEntry = {
   // The title the parent's agent gave this child ('' = none, or the user
   // has renamed it since).
   givenTitle: string;
-  // Model: ChildTerms — the spending cap its parent's agent set (0 = none)
-  // and the shape its answers must have (null = free text). Both are query
-  // options, so they are applied each time the process starts.
-  budgetUsd: number;
+  // Model: ChildTerms — the shape its parent's agent set for its answers
+  // (null = free text). A query option, so it is applied each time the
+  // process starts.
   resultSchema: Record<string, unknown> | null;
-  // What the session has cost so far, as of its last result (0 = unknown).
-  spentUsd: number;
-  // The last turn ran into the cap: the process answers nothing more until
-  // the cap is raised (parent) or lifted (the user writes to it).
-  overBudget: boolean;
   // Model: Session.activity — the tool call the running turn last made.
   activity: string;
   // Compacting its conversation right now (SDK status event).
@@ -375,7 +369,6 @@ function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: 
       stderr: (data) => broadcast(entry, { type: 'stderr', data }),
       canUseTool: makeCanUseTool(entry),
       mcpServers: entry.childTools ? { aie: childToolsServer(entry) } : undefined,
-      maxBudgetUsd: entry.budgetUsd > 0 ? entry.budgetUsd : undefined,
       outputFormat: entry.resultSchema ? { type: 'json_schema', schema: entry.resultSchema } : undefined,
     },
   });
@@ -477,7 +470,7 @@ function saveTerms(entry: SdkEntry, oldId?: string | null) {
   const id = entry.sessionId;
   if (!id) return;
   const uid = entry.owner.uid;
-  const terms = { ...(entry.budgetUsd > 0 ? { budgetUsd: entry.budgetUsd } : {}), ...(entry.resultSchema ? { resultSchema: entry.resultSchema } : {}) };
+  const terms = { ...(entry.resultSchema ? { resultSchema: entry.resultSchema } : {}) };
   const has = Object.keys(terms).length > 0;
   const next = (termsChains.get(uid) ?? Promise.resolve()).then(async () => {
     const all = await getChildTerms(uid);
@@ -536,8 +529,6 @@ function onSdkMessage(entry: SdkEntry, m: any) {
   if (m?.type === 'result') {
     entry.thinking = false;
     entry.compacting = false;
-    if (typeof m.total_cost_usd === 'number') entry.spentUsd = m.total_cost_usd;
-    entry.overBudget = m.subtype === BUDGET_ERROR;
     if (isTurnResult(m)) {
       // The parent hears about this turn if it asked for it, or if the user
       // stepped into a child the parent's agent opened.
@@ -708,15 +699,6 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
     const text = String(msg.text ?? '');
     const images = Array.isArray(msg.images) ? msg.images : [];
     if (!text && images.length === 0) return;
-    // The cap was the parent agent's; the user writing to a session that
-    // stopped at it means "go on". The cap is a query option, so lifting it
-    // takes a new process on the same session.
-    if (entry.overBudget && entry.sessionId) {
-      entry.budgetUsd = 0;
-      entry.overBudget = false;
-      void saveTerms(entry);
-      replaceQuery(entry, { resume: entry.sessionId });
-    }
     const uuid = randomUUID();
     const bang = entry.pendingBang.splice(0).map((b) => b.result);
     const um = userMessage(uuid, text, images, bang);
@@ -973,10 +955,7 @@ function newEntry(o: {
     stoppedByParent: false,
     group: o.group ?? '',
     givenTitle: '',
-    budgetUsd: 0,
     resultSchema: null,
-    spentUsd: 0,
-    overBudget: false,
     activity: '',
     compacting: false,
     commands: [],
@@ -1039,7 +1018,6 @@ async function loadTreePosition(entry: SdkEntry) {
     entry.parentSessionId = meta.parents[key] ?? null;
     entry.spawnedByAgent = meta.agentSpawned.includes(key);
     const terms = (await getChildTerms(entry.owner.uid))[entry.sessionId];
-    entry.budgetUsd = terms?.budgetUsd ?? 0;
     entry.resultSchema = terms?.resultSchema ?? null;
   } catch {}
 }
@@ -1066,7 +1044,6 @@ async function reportToParent(child: SdkEntry, result: any, why: { requested: bo
       userNotes: why.notes,
       stopped: why.stopped,
       structured: result?.structured_output,
-      budgetUsd: child.budgetUsd || undefined,
     }), child);
   } catch {}
 }
@@ -1181,7 +1158,6 @@ function childToolsServer(parent: SdkEntry) {
           prompt: z.string().describe('The task itself: what to do and what to report back'),
           model: z.string().optional().describe('Model for the child (an id or alias this session can use). Omit to use the default.'),
           group: z.string().optional().describe('A short label shared by children you open as one batch (e.g. "Python series review"): the user sees them together under it, with a done/total count.'),
-          budget_usd: z.number().positive().optional().describe('The most this child may spend, in US dollars (e.g. 2). It is stopped when it gets there and you get a report saying so; send_to_child_session add_budget_usd lets it go on. Omit for no cap.'),
           result_schema: z.record(z.string(), z.unknown()).optional().describe('A JSON Schema of type "object" for the child\'s answer. When given, the report carries JSON matching it instead of prose — use it when you will process the result mechanically. Put every field you need in `required`.'),
           isolation: z.enum(['shared', 'worktree']).optional().describe('"worktree": the child gets its own git worktree and branch (under .claude/worktrees/), branched from your current commit — use it when the child will edit files while you or other children are editing too. "shared" (default): it works in the same directory as you.'),
         },
@@ -1200,8 +1176,6 @@ function childToolsServer(parent: SdkEntry) {
           const title = cleanChildTitle(String(args.title ?? ''));
           const schema = cleanResultSchema(args.result_schema, MAX_RESULT_SCHEMA_CHARS);
           if (schema && 'error' in schema) return toolText(schema.error, true);
-          const budget = args.budget_usd === undefined ? null : cleanBudget(args.budget_usd);
-          if (args.budget_usd !== undefined && budget === null) return toolText('budget_usd must be a positive number of dollars.', true);
           const settings = await getSettings(parent.owner.uid);
           let cwd = parent.cwd;
           let wtBrief: string | undefined;
@@ -1219,7 +1193,6 @@ function childToolsServer(parent: SdkEntry) {
           const child = newEntry({ uid: parent.owner.uid, projectId: parent.owner.projectId, cwd, projectPath: parent.projectPath, settings, parentSessionId: parentId, model, spawnedByAgent: true, group: cleanGroup(args.group) });
           child.title = title;
           child.reportToParent = true;
-          child.budgetUsd = budget ?? 0;
           child.resultSchema = schema ? schema.schema : null;
           pending.add(child);
           startQuery(child, {});
@@ -1232,7 +1205,7 @@ function childToolsServer(parent: SdkEntry) {
           broadcast(child, { type: 'title', title });
           void nameChildSession(child, title);
           saveOwed(child);
-          const terms = `${budget ? ` Budget: ${usd(budget)}.` : ''}${schema ? ' Its report will be JSON matching your schema.' : ''}`;
+          const terms = schema ? ' Its report will be JSON matching your schema.' : '';
           return toolText(`Started child session "${title}" (id ${child.sessionId}).${where}${terms} It is working in the background; its answer will arrive as a message starting with "[Child session" when it finishes. Do not wait or poll for it.`);
         },
       ),
@@ -1242,7 +1215,6 @@ function childToolsServer(parent: SdkEntry) {
         {
           child_id: z.string().describe('The child session id returned by spawn_child_session or list_child_sessions'),
           message: z.string().describe('The message for the child'),
-          add_budget_usd: z.number().positive().optional().describe('Raise the child\'s spending cap by this many US dollars — needed before a child that used up its budget can do anything more. Ignored for a child without a cap.'),
         },
         async (args) => {
           const parentId = parent.sessionId;
@@ -1251,37 +1223,12 @@ function childToolsServer(parent: SdkEntry) {
           if (!parentId || !childId || !message) return toolText('child_id and message are required.', true);
           const meta = await getSessionMeta(parent.owner.uid);
           if (meta.parents[`claude:${childId}`] !== parentId) return toolText(`${childId} is not a child session of this session. Use list_child_sessions to see them.`, true);
-          const add = args.add_budget_usd === undefined ? null : cleanBudget(args.add_budget_usd);
-          if (args.add_budget_usd !== undefined && add === null) return toolText('add_budget_usd must be a positive number of dollars.', true);
-          let raised = '';
-          if (add !== null) {
-            const live = byId.get(childId);
-            if (live?.thinking) return toolText(`"${live.title || childId}" is working; its budget can be raised once it is idle. Nothing was sent.`, true);
-            const cap = live ? live.budgetUsd : (await getChildTerms(parent.owner.uid).catch(() => ({} as Record<string, { budgetUsd?: number }>)))[childId]?.budgetUsd ?? 0;
-            if (cap > 0) {
-              const next = Math.round((cap + add) * 10000) / 10000;
-              if (live) {
-                live.budgetUsd = next;
-                live.overBudget = false;
-                await saveTerms(live);
-                // The cap is a query option: a new process on the same session.
-                replaceQuery(live, { resume: childId });
-              } else {
-                // Not running: the process about to start reads it from disk.
-                const all = await getChildTerms(parent.owner.uid);
-                all[childId] = { ...all[childId], budgetUsd: next };
-                await putChildTerms(parent.owner.uid, all);
-              }
-              raised = ` Its budget is now ${usd(next)}.`;
-            }
-          }
           const child = await wakeSession(whoOf(parent), childId);
           if (!child) return toolText('That child session is open in a classic Claude tab and cannot be messaged from here.', true);
-          if (child.overBudget) return toolText(`"${child.title || childId}" has used up its budget of ${usd(child.budgetUsd)} and cannot do anything more. Send again with add_budget_usd to let it continue. Nothing was sent.`, true);
           child.reportToParent = true;
           injectUserText(child, message);
           saveOwed(child);
-          return toolText(`Delivered to "${child.title || childId}".${raised} Its answer will arrive as a message starting with "[Child session".`);
+          return toolText(`Delivered to "${child.title || childId}". Its answer will arrive as a message starting with "[Child session".`);
         },
       ),
       tool(
@@ -1326,18 +1273,13 @@ function childToolsServer(parent: SdkEntry) {
           const meta = await getSessionMeta(parent.owner.uid);
           const ids = childIdsOf(meta.parents, parentId);
           if (ids.length === 0) return toolText('No child sessions.');
-          const terms = await getChildTerms(parent.owner.uid).catch(() => ({} as Awaited<ReturnType<typeof getChildTerms>>));
           const lines = await Promise.all(ids.map(async (id) => {
             const live = byId.get(id);
             let title = live?.title ?? null;
             if (!title) { try { title = (await getSessionInfo(id, { dir: parent.projectPath }))?.summary?.trim() || null; } catch {} }
             const state = live ? (live.pendingAsks.size > 0 ? 'waiting for the user' : live.thinking ? 'working' : 'idle') : 'not running';
             const group = meta.groups[`claude:${id}`];
-            const cap = live ? live.budgetUsd : terms[id]?.budgetUsd ?? 0;
-            const money = cap > 0
-              ? `, ${live?.overBudget ? 'budget used up' : 'budget'} ${live && live.spentUsd > 0 ? `${usd(live.spentUsd)} of ` : ''}${usd(cap)}`
-              : live && live.spentUsd > 0 ? `, spent ${usd(live.spentUsd)}` : '';
-            return `- ${id} "${title ?? id.slice(0, 8)}"${group ? ` [${group}]` : ''}: ${state}${money}`;
+            return `- ${id} "${title ?? id.slice(0, 8)}"${group ? ` [${group}]` : ''}: ${state}`;
           }));
           return toolText(lines.join('\n'));
         },

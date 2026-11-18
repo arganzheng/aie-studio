@@ -26,7 +26,6 @@ import { ChatInput } from './ChatInput';
 import { bangCommand, isBangInput, splitBangTexts } from '../lib/bang';
 import { ClaudeUsageBadge, refreshClaudeUsage } from './ClaudeUsage';
 import { ContextBadge, type ContextSnapshot } from './ContextUsage';
-import { resultNote } from '../lib/resultNote';
 import { childLinkOfTool } from '../lib/childLink';
 import { parseCompactNote } from '../lib/compactNote';
 import { parseChildReports } from '../lib/childReport';
@@ -850,8 +849,6 @@ export function SdkPanel({
       }
       refreshClaudeUsage(); // a turn just spent quota; server cache caps this at 1/min
       currentAssistantIdRef.current = null;
-      const note = resultNote(ev);
-      if (note) append({ id: shortId(), role: 'system', text: note });
       return;
     }
     if (ev?.type === 'assistant' && ev.message?.id && streamedAssistantIdsRef.current.has(ev.message.id)) {
