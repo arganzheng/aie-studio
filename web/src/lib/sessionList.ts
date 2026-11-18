@@ -23,7 +23,19 @@ export type SessionRow = {
   worktree?: string;
   // The batch label its parent's agent gave it (children opened together).
   group?: string;
+  // Claude (SDK bridge), while its process is up: the tool call a running
+  // turn last made, what the session has cost so far, and its spending cap.
+  activity?: string;
+  costUsd?: number;
+  budgetUsd?: number;
 };
+
+// "$0.12", or "$0.12 / $0.50" under a cap; '' when nothing is known.
+export function costLabel(r: Pick<SessionRow, 'costUsd' | 'budgetUsd'>): string {
+  const usd = (n: number) => (n > 0 && n < 0.01 ? '<$0.01' : `$${n >= 100 ? n.toFixed(0) : n.toFixed(2)}`);
+  if (r.budgetUsd && r.budgetUsd > 0) return `${usd(r.costUsd ?? 0)} / ${usd(r.budgetUsd)}`;
+  return r.costUsd && r.costUsd > 0 ? usd(r.costUsd) : '';
+}
 
 // Same shape as lib/sessionAlerts.alertKey, so a pending alert marks its row.
 export function sessionRowKey(r: Pick<SessionRow, 'projectId' | 'kind' | 'sessionId'>): string {
@@ -66,7 +78,7 @@ export type SessionTone = 'awaiting' | 'running' | 'unread' | 'idle';
 // outranks "there is a result you haven't looked at".
 export function sessionStatus(r: SessionRow, unread: boolean, now: number): { tone: SessionTone; label: string } {
   if (r.state === 'awaiting') return { tone: 'awaiting', label: 'Needs your input' };
-  if (r.state === 'running') return { tone: 'running', label: 'Running…' };
+  if (r.state === 'running') return { tone: 'running', label: r.activity || 'Running…' };
   if (unread) return { tone: 'unread', label: `Finished · ${timeAgo(r.updatedAt, now)}` };
   return { tone: 'idle', label: timeAgo(r.updatedAt, now) };
 }

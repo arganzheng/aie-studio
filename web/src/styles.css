@@ -938,6 +938,17 @@ pre {
 .msg-parent-ctx > summary { cursor: pointer; opacity: 0.85; }
 .msg-parent-ctx-body { margin-top: 6px; padding: 2px 10px; border-radius: 4px; background: rgba(0, 0, 0, 0.18); white-space: normal; text-align: left; }
 
+/* Jump from the parent's chat to a child session. */
+.tool-child-open {
+  margin-left: auto; flex-shrink: 0; padding: 1px 8px; font-size: 0.85em; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 10px; background: transparent; color: var(--accent);
+}
+.tool-child-open:hover { border-color: var(--accent); }
+.tool-child-open + .tool-popout-btn { margin-left: 6px; }
+button.child-report-open { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; color: var(--fg-strong); cursor: pointer; text-align: left; }
+button.child-report-open:hover { text-decoration: underline; color: var(--accent); }
+.session-row-cost { font-variant-numeric: tabular-nums; }
+
 /* A child session's answer in its parent's chat (model: Session.children). */
 .msg-child-report {
   align-self: stretch; max-width: none;
@@ -3168,7 +3179,10 @@ pre {
 .session-row-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-row.tone-unread .session-row-title,
 .session-row.tone-awaiting .session-row-title { font-weight: 600; color: var(--fg-strong); }
-.session-row-sub { font-size: 11px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-row-sub { font-size: 11px; color: var(--fg-muted); overflow: hidden; white-space: nowrap; display: flex; min-width: 0; }
+/* Each part gives way with an ellipsis, except the cost: a cut-off amount says nothing. */
+.session-row-sub > span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.session-row-sub > .session-row-cost { flex: 0 0 auto; }
 .session-row.tone-awaiting .session-row-status { color: #d97706; }
 .session-row.tone-running .session-row-status { color: var(--accent); }
 /* Subagent tree: the caret sits in the row's left padding, so rows without

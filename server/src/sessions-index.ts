@@ -5,7 +5,7 @@ import { getUserId } from './auth.js';
 import { getProject, getSessionMeta, listProjects, putSessionMeta, type Project, type SessionMeta } from './store.js';
 import { liveBridge, type LiveState } from './live-sessions.js';
 import { cliLiveState, stopCliSession } from './session.js';
-import { sdkLiveState, stopSdkSession } from './sdk-session.js';
+import { sdkLiveDetail, sdkLiveState, stopSdkSession, userRenamedSdkSession } from './sdk-session.js';
 import { countSubagents } from './subagents.js';
 import { devinLiveState, listDevinSessionsInDb, stopDevinSession } from './devin.js';
 
@@ -37,6 +37,11 @@ export type SessionRow = {
   // Claude: the git worktree it runs in (a name under .claude/worktrees),
   // absent when it runs in the project directory.
   worktree?: string;
+  // Claude on the SDK bridge, while its process is up: the tool call a
+  // running turn last made, what the session has cost, and its spending cap.
+  activity?: string;
+  costUsd?: number;
+  budgetUsd?: number;
 };
 
 export const MAX_TITLE_LENGTH = 200;
@@ -100,6 +105,7 @@ async function claudeRows(project: Project): Promise<Omit<SessionRow, 'archived'
       state: live === 'sdk' ? sdkLiveState(s.sessionId) : live === 'cli' ? cliLiveState(s.sessionId) : null,
       subagents: await countSubagents(s.cwd || project.path, s.sessionId),
       ...(s.worktree ? { worktree: s.worktree } : {}),
+      ...(live === 'sdk' ? sdkLiveDetail(s.sessionId) : {}),
     };
   }));
 }
@@ -207,6 +213,7 @@ export function registerSessionIndexRoutes(app: FastifyInstance) {
       const t = await resolveTarget(uid, req.body);
       if (t.kind === 'claude') {
         await renameSession(t.sessionId, title, { dir: t.project.path });
+        userRenamedSdkSession(t.sessionId, title);
       } else {
         const meta = await getSessionMeta(uid);
         await putSessionMeta(uid, { ...meta, titles: { ...meta.titles, [sessionKey(t.kind, t.sessionId)]: title } });
