@@ -27,7 +27,7 @@ import {
 import { z } from 'zod';
 import { mapContextUsage, type ContextSnapshot } from './context-usage.js';
 import {
-  CHILD_TOOLS_INSTRUCTIONS, childIdsOf, childReport, cleanChildTitle, sessionDepth, spawnRefusal,
+  CHILD_TOOLS_INSTRUCTIONS, MAX_NOTES_PER_TURN, childIdsOf, childReport, cleanChildTitle, sessionDepth, spawnRefusal,
 } from './child-sessions.js';
 import { getProject, getSessionMeta, getSettings, putSessionMeta, setParent, type Settings } from './store.js';
 import { getUserId } from './auth.js';
@@ -173,6 +173,12 @@ type SdkEntry = {
   // The turn now running was asked for by the parent agent (spawn / send):
   // its answer goes back to the parent when it ends.
   reportToParent: boolean;
+  // Opened by the parent's agent (spawn tool), as opposed to by the user.
+  spawnedByAgent: boolean;
+  // What the user typed into this session since its last turn ended. If it
+  // is an agent-spawned child, the parent is told (model: Session.children
+  // rule "interventions").
+  userNotes: string[];
   commands: SlashCommand[];
   agents: string[];
   models: ModelInfo[];
@@ -401,7 +407,11 @@ async function linkToParent(entry: SdkEntry, oldId: string | null, newId: string
     const meta = await getSessionMeta(entry.owner.uid);
     const parent = entry.parentSessionId ?? (oldId ? meta.parents[`claude:${oldId}`] : undefined);
     if (!parent || parent === newId) return;
-    const next = setParent(meta, `claude:${newId}`, parent);
+    let next = setParent(meta, `claude:${newId}`, parent);
+    if (next === meta && meta.parents[`claude:${newId}`] !== parent) return;
+    // A re-id keeps the mark of who opened it.
+    const byAgent = entry.spawnedByAgent || (oldId !== null && meta.agentSpawned.includes(`claude:${oldId}`));
+    if (byAgent && !next.agentSpawned.includes(`claude:${newId}`)) next = { ...next, agentSpawned: [...next.agentSpawned, `claude:${newId}`] };
     if (next !== meta) await putSessionMeta(entry.owner.uid, next);
   } catch {}
 }
@@ -426,7 +436,14 @@ function onSdkMessage(entry: SdkEntry, m: any) {
   }
   if (m?.type === 'result') {
     entry.thinking = false;
-    if (entry.reportToParent) { entry.reportToParent = false; void reportToParent(entry, m); }
+    {
+      // The parent hears about this turn if it asked for it, or if the user
+      // stepped into a child the parent's agent opened.
+      const requested = entry.reportToParent;
+      const notes = entry.userNotes.splice(0);
+      entry.reportToParent = false;
+      if (requested || notes.length > 0) void reportToParent(entry, m, { requested, notes });
+    }
     refreshContext(entry);
     scheduleTitleRefresh(entry);
     if (entry.clients.size === 0) scheduleKillIfIdle(entry);
@@ -580,6 +597,9 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
     const um = userMessage(uuid, text, images, bang);
     entry.thinking = true;
     touchActivity(entry);
+    if (entry.userNotes.length < MAX_NOTES_PER_TURN) {
+      entry.userNotes.push([text, images.length > 0 ? `[${images.length} image${images.length === 1 ? '' : 's'} attached]` : ''].filter(Boolean).join('\n'));
+    }
     // The SDK does not echo our own prompts back; every client (sender
     // included) learns the uuid from this frame.
     broadcast(entry, { type: 'user_echo', msgId: typeof msg.msgId === 'string' ? msg.msgId : null, uuid, message: um.message });
@@ -776,7 +796,7 @@ export function stopSdkSession(sessionId: string, uid: string): boolean {
 // A bridge entry with no query yet (startQuery starts one).
 function newEntry(o: {
   uid: string; projectId: string; cwd: string; settings: Settings;
-  resumeId?: string; parentSessionId?: string | null; observeWire?: boolean; model?: string;
+  resumeId?: string; parentSessionId?: string | null; observeWire?: boolean; model?: string; spawnedByAgent?: boolean;
 }): SdkEntry {
   return {
     cwd: o.cwd,
@@ -797,6 +817,8 @@ function newEntry(o: {
     parentSessionId: o.parentSessionId ?? null,
     childTools: o.settings.childSessionTools !== false,
     reportToParent: false,
+    spawnedByAgent: o.spawnedByAgent === true,
+    userNotes: [],
     commands: [],
     agents: [],
     models: [],
@@ -842,9 +864,15 @@ async function wakeSession(from: SdkEntry, sessionId: string): Promise<SdkEntry 
 
 // A child finished a turn its parent asked for: hand the answer to the
 // parent, waking it if needed.
-async function reportToParent(child: SdkEntry, result: any) {
-  const parentId = child.parentSessionId ?? (child.sessionId ? (await getSessionMeta(child.owner.uid).catch(() => null))?.parents[`claude:${child.sessionId}`] : undefined);
-  if (!parentId || !child.sessionId) return;
+async function reportToParent(child: SdkEntry, result: any, why: { requested: boolean; notes: string[] }) {
+  if (!child.sessionId) return;
+  const meta = await getSessionMeta(child.owner.uid).catch(() => null);
+  const key = `claude:${child.sessionId}`;
+  const parentId = child.parentSessionId ?? meta?.parents[key];
+  if (!parentId) return;
+  // A turn only the user asked for is the parent's business only when its
+  // own agent opened this child.
+  if (!why.requested && !(child.spawnedByAgent || meta?.agentSpawned.includes(key))) return;
   try {
     const parent = await wakeSession(child, parentId);
     if (!parent) return;
@@ -855,6 +883,7 @@ async function reportToParent(child: SdkEntry, result: any) {
       ok,
       result: typeof result?.result === 'string' ? result.result : '',
       errorKind: ok ? undefined : String(result?.subtype ?? 'error'),
+      userNotes: why.notes,
     }));
   } catch {}
 }
@@ -895,7 +924,7 @@ function childToolsServer(parent: SdkEntry) {
           }
           const title = cleanChildTitle(String(args.title ?? ''));
           const settings = await getSettings(parent.owner.uid);
-          const child = newEntry({ uid: parent.owner.uid, projectId: parent.owner.projectId, cwd: parent.cwd, settings, parentSessionId: parentId, model });
+          const child = newEntry({ uid: parent.owner.uid, projectId: parent.owner.projectId, cwd: parent.cwd, settings, parentSessionId: parentId, model, spawnedByAgent: true });
           child.title = title;
           child.reportToParent = true;
           pending.add(child);

@@ -452,10 +452,13 @@ export async function migrateLegacyIfNeeded(): Promise<void> {
 // parents (model: Session.parent): child session key → the session id of the
 // session it was opened under ("New child session"). A child is a full
 // session of its own; the link only places it in the Sessions tree.
-export type SessionMeta = { archived: string[]; titles: Record<string, string>; parents: Record<string, string> };
+// agentSpawned: child keys the parent's agent opened itself (spawn tool).
+// Only those report the user's interventions back to the parent — a child
+// the user opened by hand is unknown to the parent agent.
+export type SessionMeta = { archived: string[]; titles: Record<string, string>; parents: Record<string, string>; agentSpawned: string[] };
 
 export function normalizeSessionMeta(raw: unknown): SessionMeta {
-  const r = (raw && typeof raw === 'object' ? raw : {}) as { archived?: unknown; titles?: unknown; parents?: unknown };
+  const r = (raw && typeof raw === 'object' ? raw : {}) as { archived?: unknown; titles?: unknown; parents?: unknown; agentSpawned?: unknown };
   const archived = Array.isArray(r.archived) ? [...new Set(r.archived.filter((k): k is string => typeof k === 'string'))] : [];
   const titles: Record<string, string> = {};
   if (r.titles && typeof r.titles === 'object') {
@@ -470,7 +473,9 @@ export function normalizeSessionMeta(raw: unknown): SessionMeta {
       if (typeof v === 'string' && v && !k.endsWith(`:${v}`)) parents[k] = v;
     }
   }
-  return { archived, titles, parents };
+  // Only linked children can be agent-spawned.
+  const agentSpawned = Array.isArray(r.agentSpawned) ? [...new Set(r.agentSpawned.filter((k): k is string => typeof k === 'string' && k in parents))] : [];
+  return { archived, titles, parents, agentSpawned };
 }
 
 // Pure: the meta after `childKey` was opened as a child of session `parentId`.

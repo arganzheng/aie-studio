@@ -65,7 +65,7 @@ export function forgetSession(meta: SessionMeta, key: string): SessionMeta {
   // top-level sessions.
   const id = key.slice(key.indexOf(':') + 1);
   const parents = Object.fromEntries(Object.entries(meta.parents).filter(([k, v]) => k !== key && v !== id));
-  return { archived: meta.archived.filter((k) => k !== key), titles, parents };
+  return { archived: meta.archived.filter((k) => k !== key), titles, parents, agentSpawned: meta.agentSpawned.filter((k) => k in parents) };
 }
 
 export function cleanTitle(raw: unknown): string | null {
