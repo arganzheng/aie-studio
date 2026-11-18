@@ -38,11 +38,8 @@ export type SessionRow = {
   // Claude: the git worktree it runs in (a name under .claude/worktrees),
   // absent when it runs in the project directory.
   worktree?: string;
-  // Claude on the SDK bridge, while its process is up: the tool call a
-  // running turn last made, what the session has cost, and its spending cap.
+  // Claude on the SDK bridge: the tool call its running turn last made.
   activity?: string;
-  costUsd?: number;
-  budgetUsd?: number;
 };
 
 export const MAX_TITLE_LENGTH = 200;

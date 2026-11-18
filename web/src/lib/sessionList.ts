@@ -23,19 +23,9 @@ export type SessionRow = {
   worktree?: string;
   // The batch label its parent's agent gave it (children opened together).
   group?: string;
-  // Claude (SDK bridge), while its process is up: the tool call a running
-  // turn last made, what the session has cost so far, and its spending cap.
+  // Claude (SDK bridge): the tool call its running turn last made.
   activity?: string;
-  costUsd?: number;
-  budgetUsd?: number;
 };
-
-// "$0.12", or "$0.12 / $0.50" under a cap; '' when nothing is known.
-export function costLabel(r: Pick<SessionRow, 'costUsd' | 'budgetUsd'>): string {
-  const usd = (n: number) => (n > 0 && n < 0.01 ? '<$0.01' : `$${n >= 100 ? n.toFixed(0) : n.toFixed(2)}`);
-  if (r.budgetUsd && r.budgetUsd > 0) return `${usd(r.costUsd ?? 0)} / ${usd(r.budgetUsd)}`;
-  return r.costUsd && r.costUsd > 0 ? usd(r.costUsd) : '';
-}
 
 // Same shape as lib/sessionAlerts.alertKey, so a pending alert marks its row.
 export function sessionRowKey(r: Pick<SessionRow, 'projectId' | 'kind' | 'sessionId'>): string {

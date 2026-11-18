@@ -904,15 +904,10 @@ export function userRenamedSdkSession(sessionId: string, title: string) {
   if (entry.givenTitle) entry.givenTitle = title;
   entry.title = title;
 }
-// More for the session's row: what it is doing, what it has cost, its cap.
-export function sdkLiveDetail(sessionId: string): { activity?: string; costUsd?: number; budgetUsd?: number } {
+// More for the session's row: what its running turn is doing.
+export function sdkLiveDetail(sessionId: string): { activity?: string } {
   const entry = byId.get(sessionId);
-  if (!entry) return {};
-  return {
-    ...(entry.thinking && entry.activity ? { activity: entry.activity } : {}),
-    ...(entry.spentUsd > 0 ? { costUsd: entry.spentUsd } : {}),
-    ...(entry.budgetUsd > 0 ? { budgetUsd: entry.budgetUsd } : {}),
-  };
+  return entry?.thinking && entry.activity ? { activity: entry.activity } : {};
 }
 // Model: Claude Session.tasks, read by server.ListSubagents.
 export function sdkTasks(sessionId: string): SdkTask[] {

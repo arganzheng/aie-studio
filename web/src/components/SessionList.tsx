@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { archiveSession, deleteSessionForever, listAllSessions, renameAnySession, stopSession, type SubagentInfo } from '../api';
 import { useFitMenuTop } from '../lib/fitMenu';
 import {
-  NO_FILTER, childSessions, costLabel, groupChildren, filterSessions, isFiltering, openSessionTabs, sessionRowKey, sessionStatus,
+  NO_FILTER, childSessions, groupChildren, filterSessions, isFiltering, openSessionTabs, sessionRowKey, sessionStatus,
   type SessionFilter, type SessionKind, type SessionRow, type SessionTabLike,
 } from '../lib/sessionList';
 import { providerIcon } from './TabBar';
@@ -294,7 +294,6 @@ export function SessionList({
           )}
           <div className="session-row-sub">
             <span className="session-row-status" title={status.tone === 'running' && row?.activity ? `Working — ${row.activity}` : undefined}>{status.label}</span>
-            {row?.parentId && costLabel(row) && <span className="session-row-cost" title={row.budgetUsd ? 'Spent so far / the cap its parent session set' : 'Spent so far (estimate)'}> · {costLabel(row)}</span>}
             {row?.worktree && <span className="session-row-worktree" title={`Works in its own git worktree: .claude/worktrees/${row.worktree}`}> · ⎇ {row.worktree}</span>}
             {project && <span> · {project}</span>}
           </div>
