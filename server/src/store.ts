@@ -567,7 +567,7 @@ export async function putHeldReports(uid: string, held: HeldReports): Promise<vo
 // the child's session id; on disk because it must hold again whenever the
 // child's process is started anew.
 // mode (model: Session.mode): kept only when it is not the default.
-export type ChildTerms = { resultSchema?: Record<string, unknown>; mode?: 'plan' };
+export type ChildTerms = { resultSchema?: Record<string, unknown>; mode?: 'plan' | 'acceptEdits' | 'auto' };
 export type ChildTermsMap = Record<string, ChildTerms>;
 export const MAX_RESULT_SCHEMA_CHARS = 20_000;
 export function normalizeChildTerms(raw: unknown): ChildTermsMap {
@@ -578,7 +578,7 @@ export function normalizeChildTerms(raw: unknown): ChildTermsMap {
     const t: ChildTerms = {};
     if (v.resultSchema && typeof v.resultSchema === 'object' && !Array.isArray(v.resultSchema)
       && JSON.stringify(v.resultSchema).length <= MAX_RESULT_SCHEMA_CHARS) t.resultSchema = v.resultSchema;
-    if (v.mode === 'plan') t.mode = 'plan';
+    if (v.mode === 'plan' || v.mode === 'acceptEdits' || v.mode === 'auto') t.mode = v.mode;
     if (t.resultSchema || t.mode) out[id] = t;
   }
   return out;

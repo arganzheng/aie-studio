@@ -20,7 +20,7 @@ import { applyQuoteHighlights } from '../lib/quoteHighlight';
 import { RichCopyButton, useRichCopy } from './RichCopy';
 import type { ExportMessage } from '../lib/export/types';
 import { awaitingUser, stripStatus } from '../lib/sessionStatus';
-import { MODES, isSessionMode, modeInfo, type SessionMode } from '../lib/sessionMode';
+import { MODES, addPermissionAsk, isSessionMode, modeInfo, parsePermissionAsk, permissionHeadline, type PermissionAsk, type SessionMode } from '../lib/sessionMode';
 import { parseAttachedFiles, withAttachedFiles } from '../lib/fileAttachments';
 import { FileAttachmentStrip, SentFileChips, useFileAttachments } from './FileAttachments';
 
@@ -382,6 +382,8 @@ export function SdkPanel({
   const [mode, setMode] = useState<SessionMode>('bypassPermissions');
   const [modePickerOpen, setModePickerOpen] = useState(false);
   const [planAsk, setPlanAsk] = useState<{ id: string; plan: string } | null>(null);
+  // Tool calls waiting for the user's leave (acceptEdits / auto).
+  const [permAsks, setPermAsks] = useState<PermissionAsk[]>([]);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [wireOn, setWireOn] = useState(false);
   // Context window reading, pushed by the server after each turn.
@@ -569,7 +571,7 @@ export function SdkPanel({
   });
 
   const generating = status === 'thinking';
-  const awaitingInput = forms.elicitations.some((e) => !e.recap) || planAsk !== null;
+  const awaitingInput = forms.elicitations.some((e) => !e.recap) || planAsk !== null || permAsks.length > 0;
   useEffect(() => { onActivityRef.current?.({ generating, awaitingInput }); }, [generating, awaitingInput]);
   useEffect(() => () => onActivityRef.current?.(null), []);
 
@@ -748,6 +750,7 @@ export function SdkPanel({
       }
       if (isSessionMode(m.mode)) setMode(m.mode);
       setPlanAsk(null); // a pending one is re-sent right after this frame
+      setPermAsks([]);
       if (m.model) setModel(m.model);
       else if (m.requestedModel) setModel((cur) => cur ?? m.requestedModel);
       if (typeof m.effort === 'string') setEffort(m.effort);
@@ -816,7 +819,12 @@ export function SdkPanel({
     if (m.type === 'permission_mode') { if (isSessionMode(m.mode)) setMode(m.mode); return; }
     if (m.type === 'plan_ask') { setPlanAsk({ id: String(m.id), plan: typeof m.plan === 'string' ? m.plan : '' }); return; }
     if (m.type === 'plan_done') { setPlanAsk((cur) => (cur?.id === m.id ? null : cur)); return; }
-    if (m.type === 'ask_timeout' || m.type === 'ask_cancel') setPlanAsk((cur) => (cur?.id === m.id ? null : cur));
+    if (m.type === 'permission_ask') { const a = parsePermissionAsk(m); if (a) setPermAsks((cur) => addPermissionAsk(cur, a)); return; }
+    if (m.type === 'permission_done') { setPermAsks((cur) => cur.filter((a) => a.id !== m.id)); return; }
+    if (m.type === 'ask_timeout' || m.type === 'ask_cancel') {
+      setPlanAsk((cur) => (cur?.id === m.id ? null : cur));
+      setPermAsks((cur) => cur.filter((a) => a.id !== m.id));
+    }
     if (m.type === 'ask_timeout') { forms.expire(m.id); return; }
     if (m.type === 'ask_cancel' || m.type === 'ask_done') { forms.settle(m.id, m.type === 'ask_done' ? 'Answered' : 'Cancelled'); return; }
     if (m.type === 'rewound') {
@@ -1033,6 +1041,11 @@ export function SdkPanel({
     if (!wsSend({ type: 'set_permission_mode', mode: next })) { showToast('Not connected — mode not changed'); return; }
     setMode(next);
     showToast(`Mode: ${modeInfo(next).label}`);
+  }
+
+  function answerPermission(id: string, allow: boolean, remember = false) {
+    wsSend({ type: 'permission_response', id, allow, remember });
+    setPermAsks((cur) => cur.filter((a) => a.id !== id));
   }
 
   function answerPlan(approve: boolean) {
@@ -1269,6 +1282,24 @@ export function SdkPanel({
           );
         })}
         {forms.renderOrphans()}
+        {permAsks.map((a) => (
+          <div key={a.id} className="msg msg-perm-ask">
+            <div className="msg-perm-ask-head">
+              {permissionHeadline(a.request)}
+              {a.request.description && <span className="msg-perm-ask-desc"> — {a.request.description}</span>}
+            </div>
+            {a.request.detail && <pre className={`msg-perm-ask-detail ${a.request.detailKind}`}>{a.request.detail}</pre>}
+            {(a.request.reason || a.request.blockedPath) && (
+              <div className="msg-perm-ask-reason">{[a.request.reason, a.request.blockedPath ? `Path: ${a.request.blockedPath}` : ''].filter(Boolean).join(' · ')}</div>
+            )}
+            <div className="msg-plan-ask-actions">
+              <button type="button" className="primary" onClick={() => answerPermission(a.id, true)}>Allow</button>
+              {a.request.canRemember && <button type="button" onClick={() => answerPermission(a.id, true, true)} title="Allow this and the same kind of action for the rest of this session">Allow for this session</button>}
+              <button type="button" onClick={() => answerPermission(a.id, false)}>Deny</button>
+              <span className="msg-plan-ask-hint">or type below what to do instead</span>
+            </div>
+          </div>
+        ))}
         {planAsk && (
           <div className="msg msg-plan-ask">
             <div className="msg-plan-ask-head">Claude's plan — nothing has been changed yet</div>
