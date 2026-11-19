@@ -147,11 +147,14 @@ export function uploadFile(
   projectId: string,
   dir: string,
   file: File,
-  opts: { overwrite?: boolean; onProgress?: (sent: number, total: number) => void } = {},
+  // attach: a session attachment (server.SessionAttachments) — `dir` is
+  // ignored and the returned path is absolute.
+  opts: { overwrite?: boolean; attach?: boolean; onProgress?: (sent: number, total: number) => void } = {},
 ): Promise<FsUploadResult> {
   return new Promise((resolve, reject) => {
     const q = new URLSearchParams({ project: projectId, dir, name: file.name });
     if (opts.overwrite) q.set('overwrite', '1');
+    if (opts.attach) q.set('attach', '1');
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `/api/fs/upload?${q.toString()}`);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');

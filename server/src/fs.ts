@@ -10,6 +10,7 @@ import mime from 'mime-types';
 import { getProject } from './store.js';
 import { getUserId } from './auth.js';
 import type { FastifyRequest } from 'fastify';
+import { attachmentsRoot, planAttachment } from './attachments.js';
 
 // mime-types is a web-server table: `.ts` is an MPEG transport stream, `.rs`
 // is an XML dialect, and most source extensions are simply unknown. Editor
@@ -353,10 +354,13 @@ export function registerFsRoutes(app: FastifyInstance) {
   );
 
   // Model: server.UploadFile (auc-133). Raw-bytes body; one file per request.
-  app.post<{ Querystring: { project?: string; dir?: string; name?: string; overwrite?: string } }>(
+  // With attach=1 the file is a session attachment (server.SessionAttachments):
+  // it goes outside the project and the reply names it by absolute path.
+  app.post<{ Querystring: { project?: string; dir?: string; name?: string; overwrite?: string; attach?: string } }>(
     '/api/fs/upload',
     async (req, reply) => {
       const { project: projectId, dir, name, overwrite } = req.query;
+      const attach = req.query.attach === '1';
       if (!projectId || typeof name !== 'string') {
         return reply.code(400).send({ error: 'project and name required' });
       }
@@ -371,9 +375,15 @@ export function registerFsRoutes(app: FastifyInstance) {
       } catch (e: any) {
         return reply.code(e.code ?? 400).send({ error: e.message });
       }
-      let plan: ReturnType<typeof planUpload>;
+      let plan: { dirAbs: string; abs: string; rel: string };
       try {
-        plan = planUpload(root, dir ?? '', name);
+        if (attach) {
+          const a = planAttachment(attachmentsRoot(), getUserId(req) ?? '', name);
+          await fs.mkdir(a.dirAbs, { recursive: true });
+          plan = { ...a, rel: a.abs };
+        } else {
+          plan = planUpload(root, dir ?? '', name);
+        }
       } catch (e: any) {
         return reply.code(e.code ?? 400).send({ error: e.message });
       }
@@ -412,6 +422,7 @@ export function registerFsRoutes(app: FastifyInstance) {
         await fs.rename(tmp, plan.abs);
       } catch (e: any) {
         await fs.rm(tmp, { force: true }).catch(() => {});
+        if (attach) await fs.rm(plan.dirAbs, { recursive: true, force: true }).catch(() => {});
         return reply.code(e.code === 413 ? 413 : 500).send({ error: e.message ?? 'upload failed' });
       }
       // rule-452
