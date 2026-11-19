@@ -988,6 +988,23 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   white-space: pre-wrap;
   line-height: 1.45;
 }
+/* Model: Session.status — the reply above ended on a question for the user. */
+.msg-awaiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 6px;
+  font-size: 12px;
+  color: var(--fg-muted, var(--fg));
+  opacity: 0.85;
+}
+.msg-awaiting-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d97706;
+  flex: none;
+}
 .msg-thinking {
   align-self: flex-start;
   display: inline-flex;
@@ -3196,6 +3213,7 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .session-row-sub { font-size: 11px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-row.tone-awaiting .session-row-status { color: #d97706; }
 .session-row.tone-running .session-row-status { color: var(--accent); }
+.session-row.tone-ready .session-row-status { color: #16a34a; }
 /* Subagent tree: the caret sits in the row's left padding, so rows without
    subagents keep their layout. */
 .session-row { position: relative; }

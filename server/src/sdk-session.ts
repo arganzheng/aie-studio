@@ -35,6 +35,7 @@ import {
   MAX_RESULT_SCHEMA_CHARS, getChildTerms, getHeldReports, getOwedReports, putChildTerms, getProject, getSessionMeta, getSettings, listUserIds, putHeldReports, putOwedReports, putSessionMeta, setParent,
   type HeldReports, type OwedReports, type Settings,
   unarchiveOnUse,
+  setSessionStatus,
 } from './store.js';
 import { getUserId } from './auth.js';
 import { runBang, bangContextBlocks, type BangResult, type RunningBang } from './shell-exec.js';
@@ -43,6 +44,7 @@ import { askSummary, toSummary } from './inbox.js';
 import { isEffortLevel } from './models.js';
 import { markLive, unmarkLive, liveBridge, type LiveState } from './live-sessions.js';
 import { activityAfter } from './session-tool-activity.js';
+import { STATUS_INSTRUCTIONS, parseStatus } from './session-status.js';
 import { registerWireSession, wireBaseUrl } from './observe/wire-proxy.js';
 import { encodeCwd } from './observe/transcript.js';
 
@@ -370,7 +372,7 @@ function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: 
       pathToClaudeCodeExecutable: process.env.REMOTE_IDE_SDK_CLAUDE_PATH || undefined,
       stderr: (data) => broadcast(entry, { type: 'stderr', data }),
       canUseTool: makeCanUseTool(entry),
-      mcpServers: entry.childTools ? { aie: childToolsServer(entry) } : undefined,
+      mcpServers: { aie: childToolsServer(entry) },
       outputFormat: entry.resultSchema ? { type: 'json_schema', schema: entry.resultSchema } : undefined,
     },
   });
@@ -545,7 +547,14 @@ function onSdkMessage(entry: SdkEntry, m: any) {
     refreshContext(entry);
     scheduleTitleRefresh(entry);
     if (entry.clients.size === 0) scheduleKillIfIdle(entry);
-    if (entry.pendingAsks.size === 0) publishSessionEvent(entry.owner, 'done', entry.sessionId, entry.title, toSummary(m.result));
+    // Model: Session.status — what the agent said it is now waiting for.
+    const said = parseStatus(m.result);
+    const status = isTurnResult(m) && m.subtype === 'success' ? said.status : null;
+    if (entry.sessionId) void setSessionStatus(entry.owner.uid, `claude:${entry.sessionId}`, status);
+    if (entry.pendingAsks.size === 0) {
+      if (status?.tone === 'needs-you') publishSessionEvent(entry.owner, 'awaiting', entry.sessionId, entry.title, status.label);
+      else publishSessionEvent(entry.owner, 'done', entry.sessionId, entry.title, toSummary(said.text));
+    }
   }
   broadcast(entry, { type: 'message', data: m });
 }
@@ -701,7 +710,7 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
     const text = String(msg.text ?? '');
     const images = Array.isArray(msg.images) ? msg.images : [];
     if (!text && images.length === 0) return;
-    if (entry.sessionId) void unarchiveOnUse(entry.owner.uid, `claude:${entry.sessionId}`);
+    if (entry.sessionId) void unarchiveOnUse(entry.owner.uid, `claude:${entry.sessionId}`).then(() => setSessionStatus(entry.owner.uid, `claude:${entry.sessionId}`, null));
     const uuid = randomUUID();
     const bang = entry.pendingBang.splice(0).map((b) => b.result);
     const um = userMessage(uuid, text, images, bang);
@@ -1042,7 +1051,7 @@ async function reportToParent(child: SdkEntry, result: any, why: { requested: bo
       title: child.title || child.sessionId.slice(0, 8),
       sessionId: child.sessionId,
       ok,
-      result: typeof result?.result === 'string' ? result.result : '',
+      result: parseStatus(result?.result).text,
       errorKind: ok ? undefined : String(result?.subtype ?? 'error'),
       userNotes: why.notes,
       stopped: why.stopped,
@@ -1150,8 +1159,8 @@ function childToolsServer(parent: SdkEntry) {
   return createSdkMcpServer({
     name: 'aie',
     version: '1.0.0',
-    instructions: CHILD_TOOLS_INSTRUCTIONS,
-    tools: [
+    instructions: parent.childTools ? `${CHILD_TOOLS_INSTRUCTIONS}\n\n${STATUS_INSTRUCTIONS}` : STATUS_INSTRUCTIONS,
+    tools: !parent.childTools ? [] : [
       tool(
         'spawn_child_session',
         'Open a child session: a separate, full Claude session in this project that works on `prompt` in the background. The user sees it under this session in the Sessions tree and can open it and talk to it. Returns immediately with the child id; the child\'s answer arrives later as a message starting with "[Child session". The child knows nothing of this conversation: give it the context in `background` and the job in `prompt`.',

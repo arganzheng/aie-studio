@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { ensureUser } from './users.js';
+import { normalizeStatus, type SessionStatus } from './session-status.js';
 
 export type Project = {
   id: string;
@@ -451,10 +452,12 @@ export async function migrateLegacyIfNeeded(): Promise<void> {
 // the user opened by hand is unknown to the parent agent.
 // groups: child key → the label its parent's agent filed it under when it
 // opened several children as one batch (the Sessions tree nests them).
-export type SessionMeta = { archived: string[]; titles: Record<string, string>; parents: Record<string, string>; agentSpawned: string[]; groups: Record<string, string> };
+// status (model: Session.status): session key → the phrase its agent left
+// when its last turn ended (session-status.ts); gone once the user writes.
+export type SessionMeta = { archived: string[]; titles: Record<string, string>; parents: Record<string, string>; agentSpawned: string[]; groups: Record<string, string>; status: Record<string, SessionStatus> };
 
 export function normalizeSessionMeta(raw: unknown): SessionMeta {
-  const r = (raw && typeof raw === 'object' ? raw : {}) as { archived?: unknown; titles?: unknown; parents?: unknown; agentSpawned?: unknown; groups?: unknown };
+  const r = (raw && typeof raw === 'object' ? raw : {}) as { archived?: unknown; titles?: unknown; parents?: unknown; agentSpawned?: unknown; groups?: unknown; status?: unknown };
   const archived = Array.isArray(r.archived) ? [...new Set(r.archived.filter((k): k is string => typeof k === 'string'))] : [];
   const titles: Record<string, string> = {};
   if (r.titles && typeof r.titles === 'object') {
@@ -477,7 +480,14 @@ export function normalizeSessionMeta(raw: unknown): SessionMeta {
       if (typeof v === 'string' && v.trim() && k in parents) groups[k] = v.trim().slice(0, 60);
     }
   }
-  return { archived, titles, parents, agentSpawned, groups };
+  const status: Record<string, SessionStatus> = {};
+  if (r.status && typeof r.status === 'object') {
+    for (const [k, v] of Object.entries(r.status as Record<string, unknown>)) {
+      const st = normalizeStatus(v);
+      if (st) status[k] = st;
+    }
+  }
+  return { archived, titles, parents, agentSpawned, groups, status };
 }
 
 // Pure: the meta after `childKey` was opened as a child of session `parentId`.
@@ -597,6 +607,19 @@ export async function unarchiveOnUse(uid: string, key: string): Promise<boolean>
     await putSessionMeta(uid, { ...meta, archived: meta.archived.filter((k) => k !== key) });
     return true;
   } catch { return false; }
+}
+
+// Model: Session.status — record (or, with null, drop) what a session is
+// waiting for. No write when nothing changes.
+export async function setSessionStatus(uid: string, key: string, status: SessionStatus | null): Promise<void> {
+  try {
+    const meta = await getSessionMeta(uid);
+    const had = meta.status[key];
+    if (!status && !had) return;
+    if (status && had && had.tone === status.tone && had.label === status.label) return;
+    const { [key]: _gone, ...rest } = meta.status;
+    await putSessionMeta(uid, { ...meta, status: status ? { ...rest, [key]: status } : rest });
+  } catch {}
 }
 
 export async function putSessionMeta(uid: string, meta: SessionMeta): Promise<SessionMeta> {

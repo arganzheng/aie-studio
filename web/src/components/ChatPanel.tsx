@@ -25,6 +25,7 @@ import { useAieCommands } from '../useAieCommands';
 import { toCommandItems } from '../lib/commandPicker';
 import type { ClaudeCliCatalog } from '../lib/claudeCatalog';
 import { useClaudeModels, effortOptionsFor } from '../useClaudeModels';
+import { stripStatus } from '../lib/sessionStatus';
 
 // Lazy: the export pipeline (dialog, view, markdown serialiser) is only needed
 // when the user actually clicks ⤓. Splitting it out shaves the main bundle.
@@ -65,7 +66,7 @@ const MarkdownText = memo(function MarkdownText({ text, theme, projectPath, onOp
         },
       }}
     >
-      {text}
+      {stripStatus(text)}
     </ReactMarkdown>
   );
 });

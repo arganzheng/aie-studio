@@ -9,13 +9,13 @@ function row(over: Partial<SessionRow> = {}): Omit<SessionRow, 'archived'> {
 describe('applySessionMeta', () => {
   it('sorts newest first and marks archived rows', () => {
     const rows = [row(), row({ sessionId: 's2', updatedAt: 300 }), row({ kind: 'devin', sessionId: 'd1', updatedAt: 200 })];
-    const out = applySessionMeta(rows, { archived: ['devin:d1'], titles: {}, parents: {}, agentSpawned: [], groups: {} });
+    const out = applySessionMeta(rows, { archived: ['devin:d1'], titles: {}, parents: {}, agentSpawned: [], groups: {}, status: {} });
     expect(out.map((r) => r.sessionId)).toEqual(['s2', 'd1', 's1']);
     expect(out.map((r) => r.archived)).toEqual([false, true, false]);
   });
   it('lets a stored title override the session\'s own, per kind', () => {
     const rows = [row({ kind: 'devin', sessionId: 'x', title: 'purrfect-opinion' }), row({ sessionId: 'x', title: 'Claude one' })];
-    const out = applySessionMeta(rows, { archived: [], titles: { 'devin:x': 'Fix the build' }, parents: {}, agentSpawned: [], groups: {} });
+    const out = applySessionMeta(rows, { archived: [], titles: { 'devin:x': 'Fix the build' }, parents: {}, agentSpawned: [], groups: {}, status: {} });
     expect(out.find((r) => r.kind === 'devin')!.title).toBe('Fix the build');
     expect(out.find((r) => r.kind === 'claude')!.title).toBe('Claude one');
   });
@@ -24,24 +24,24 @@ describe('applySessionMeta', () => {
 describe('session meta edits', () => {
   it('archives and unarchives without duplicates', () => {
     const key = sessionKey('claude', 's1');
-    const a = setArchived({ archived: [], titles: {}, parents: {}, agentSpawned: [], groups: {} }, key, true);
+    const a = setArchived({ archived: [], titles: {}, parents: {}, agentSpawned: [], groups: {}, status: {} }, key, true);
     expect(setArchived(a, key, true).archived).toEqual([key]);
     expect(setArchived(a, key, false).archived).toEqual([]);
   });
   it('forgets a deleted session', () => {
-    const meta = { archived: ['claude:s1', 'devin:d1'], titles: { 'claude:s1': 'x', 'devin:d1': 'y' }, parents: {}, agentSpawned: [], groups: {} };
-    expect(forgetSession(meta, 'claude:s1')).toEqual({ archived: ['devin:d1'], titles: { 'devin:d1': 'y' }, parents: {}, agentSpawned: [], groups: {} });
+    const meta = { archived: ['claude:s1', 'devin:d1'], titles: { 'claude:s1': 'x', 'devin:d1': 'y' }, parents: {}, agentSpawned: [], groups: {}, status: {} };
+    expect(forgetSession(meta, 'claude:s1')).toEqual({ archived: ['devin:d1'], titles: { 'devin:d1': 'y' }, parents: {}, agentSpawned: [], groups: {}, status: {} });
   });
   it('normalizes whatever is on disk', () => {
-    expect(normalizeSessionMeta(null)).toEqual({ archived: [], titles: {}, parents: {}, agentSpawned: [], groups: {} });
-    expect(normalizeSessionMeta({ archived: ['a', 'a', 3], titles: { a: ' T ', b: '', c: 5 } })).toEqual({ archived: ['a'], titles: { a: 'T' }, parents: {}, agentSpawned: [], groups: {} });
+    expect(normalizeSessionMeta(null)).toEqual({ archived: [], titles: {}, parents: {}, agentSpawned: [], groups: {}, status: {} });
+    expect(normalizeSessionMeta({ archived: ['a', 'a', 3], titles: { a: ' T ', b: '', c: 5 } })).toEqual({ archived: ['a'], titles: { a: 'T' }, parents: {}, agentSpawned: [], groups: {}, status: {} });
     // parents: strings only, and never a session under itself
     expect(normalizeSessionMeta({ parents: { 'claude:c1': 'p1', 'claude:x': 'x', 'claude:n': 7 } }).parents).toEqual({ 'claude:c1': 'p1' });
   });
 });
 
 describe('child sessions', () => {
-  const empty = { archived: [], titles: {}, parents: {}, agentSpawned: [], groups: {} };
+  const empty = { archived: [], titles: {}, parents: {}, agentSpawned: [], groups: {}, status: {} };
   it('links a child to its parent and shows it on the row', () => {
     const meta = setParent(empty, 'claude:c1', 'p1');
     expect(meta.parents).toEqual({ 'claude:c1': 'p1' });
@@ -79,7 +79,7 @@ describe('stopping a session with its children', () => {
 });
 
 describe('child groups', () => {
-  const empty = { archived: [], titles: {}, parents: {}, agentSpawned: [], groups: {} };
+  const empty = { archived: [], titles: {}, parents: {}, agentSpawned: [], groups: {}, status: {} };
   it('shows the batch label on a child row, and only while it is linked', () => {
     const meta = { ...setParent(empty, 'claude:c1', 'p1'), groups: { 'claude:c1': 'Series review', 'claude:lost': 'x' } };
     expect(normalizeSessionMeta(meta).groups).toEqual({ 'claude:c1': 'Series review' });
