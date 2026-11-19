@@ -1294,9 +1294,20 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   background: var(--bg);
   align-self: stretch;
   max-width: 100%;
+  white-space: normal;
 }
 .msg-plan-ask-head { padding: 6px 12px; font-size: 12px; color: #d97706; border-bottom: 1px solid var(--border); }
-.msg-plan-ask-body { padding: 8px 12px; max-height: 50vh; overflow: auto; }
+/* The plan is markdown: it takes the reply's markdown styles (.msg-assistant)
+   but not its bubble. */
+.msg-plan-ask-body.msg-assistant {
+  padding: 8px 12px;
+  max-height: 60vh;
+  overflow: auto;
+  background: transparent;
+  max-width: none;
+  align-self: auto;
+  white-space: normal;
+}
 .msg-plan-ask-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--border); }
 .msg-plan-ask-actions button {
   border: 1px solid var(--border-strong);

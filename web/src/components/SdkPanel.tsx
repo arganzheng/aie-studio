@@ -1272,7 +1272,7 @@ export function SdkPanel({
         {planAsk && (
           <div className="msg msg-plan-ask">
             <div className="msg-plan-ask-head">Claude's plan — nothing has been changed yet</div>
-            <div className="msg-plan-ask-body"><MarkdownText text={planAsk.plan || '_(the plan is empty)_'} theme={theme} projectPath={projectPath} onOpenFile={openFile} /></div>
+            <div className="msg-plan-ask-body msg-assistant"><MarkdownText text={planAsk.plan || '_(the plan is empty)_'} theme={theme} projectPath={projectPath} onOpenFile={openFile} /></div>
             <div className="msg-plan-ask-actions">
               <button type="button" className="primary" onClick={() => answerPlan(true)} title="Leave plan mode and carry the plan out">Approve and start</button>
               <button type="button" onClick={() => answerPlan(false)} title="Send the plan back; Claude stays in plan mode">Keep planning</button>
