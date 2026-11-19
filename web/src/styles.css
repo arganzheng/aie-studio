@@ -1286,6 +1286,32 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .mode-picker-label { font-size: 13px; }
 .mode-picker-desc { font-size: 11px; color: var(--fg-muted); white-space: normal; }
 .mode-picker-check { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--accent); }
+/* A tool call waiting for the user's leave (acceptEdits / auto). */
+.msg-perm-ask {
+  border: 1px solid #d97706;
+  border-radius: 6px;
+  padding: 0;
+  background: var(--bg);
+  align-self: stretch;
+  max-width: 100%;
+  white-space: normal;
+}
+.msg-perm-ask-head { padding: 6px 12px; font-size: 12px; color: #d97706; }
+.msg-perm-ask-desc { color: var(--fg); }
+.msg-perm-ask-detail {
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--bg-deep);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: calc(11px * var(--font-scale));
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 30vh;
+  overflow: auto;
+}
+.msg-perm-ask-reason { padding: 0 12px 8px; font-size: 11px; color: var(--fg-muted); }
+.chat-status-mode.mode-auto, .chat-status-mode.mode-acceptEdits { color: var(--accent); border-color: var(--accent); }
 /* The plan the agent handed over, waiting for the user. */
 .msg-plan-ask {
   border: 1px solid #d97706;
