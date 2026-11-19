@@ -20,6 +20,8 @@ import { applyQuoteHighlights } from '../lib/quoteHighlight';
 import { RichCopyButton, useRichCopy } from './RichCopy';
 import type { ExportMessage } from '../lib/export/types';
 import { awaitingUser, stripStatus } from '../lib/sessionStatus';
+import { parseAttachedFiles, withAttachedFiles } from '../lib/fileAttachments';
+import { FileAttachmentStrip, SentFileChips, useFileAttachments } from './FileAttachments';
 
 // Lazy like ChatPanel: the export pipeline only loads when ⤓ is clicked.
 const ExportDialog = lazy(() => import('./ExportDialog').then((m) => ({ default: m.ExportDialog })));
@@ -939,6 +941,17 @@ export function SdkPanel({
   }
 
   // ----- sending (rule-371) ----------------------------------------------
+  // Model: web.FileAttachments — files picked with ＋ or pasted: images ride
+  // in the message itself, everything else is uploaded and named by path.
+  const fileAttachments = useFileAttachments(projectId, showToast);
+  function addAnyFiles(picked: FileList | File[]) {
+    const all = Array.from(picked);
+    const images = all.filter((f) => f.type.startsWith('image/'));
+    const others = all.filter((f) => !f.type.startsWith('image/'));
+    if (images.length) attachments.addFiles(images);
+    if (others.length) fileAttachments.addFiles(others);
+  }
+
   function sendPrompt(text: string, images: readonly ImageAttachment[]) {
     const msgId = shortId();
     append({ id: msgId, role: 'user', text, images: images.length ? images.map((p) => p.dataUrl) : undefined });
@@ -971,10 +984,13 @@ export function SdkPanel({
       if (cmd) runBangCommand(cmd);
       return;
     }
-    const text = raw.trim();
+    const files = fileAttachments.files.filter((f) => f.state === 'ready');
+    if (fileAttachments.files.some((f) => f.state === 'uploading')) { showToast('Still uploading the attached files'); return; }
+    const text = withAttachedFiles(raw.trim(), files);
     if (!text && pendingImages.length === 0) return;
     const images = pendingImages;
     attachments.clear();
+    fileAttachments.clear();
     // The first message of a hand-opened child carries the parent's summary.
     const go = () => {
       const pc = parentCtxRef.current;
@@ -1142,7 +1158,11 @@ export function SdkPanel({
                     {(() => {
                       // A hand-opened child's first message: fold the parent's summary away.
                       const pc = m.text ? parseParentContext(m.text) : null;
-                      if (!pc) return m.text ? <div>{m.text}</div> : null;
+                      if (!pc) {
+                        const sent = m.text ? parseAttachedFiles(m.text) : null;
+                        if (!sent) return null;
+                        return <>{sent.text && <div>{sent.text}</div>}<SentFileChips files={sent.files} /></>;
+                      }
                       return (
                         <>
                           <details className="msg-parent-ctx">
@@ -1338,10 +1358,13 @@ export function SdkPanel({
         </div>
       )}
       <ImageAttachmentStrip images={pendingImages} onRemove={attachments.remove} onOpen={setLightbox} />
+      <FileAttachmentStrip files={fileAttachments.files} onRemove={fileAttachments.remove} />
       <ChatInput
         status={status}
         sendKey={sendKey}
-        pendingImagesCount={pendingImages.length}
+        pendingImagesCount={pendingImages.length + fileAttachments.files.filter((f) => f.state === 'ready').length}
+        anyFile
+        uploading={fileAttachments.files.some((f) => f.state === 'uploading')}
         readyPlaceholder={sendKeyHint(sendKey)}
         thinkingPlaceholder="Claude is working — type to queue / send another"
         commands={commands}
@@ -1349,7 +1372,7 @@ export function SdkPanel({
         onSend={send}
         insertion={insertion}
         onBatchSent={onBatchSent}
-        onAddFiles={attachments.addFiles}
+        onAddFiles={addAnyFiles}
         onStop={stop}
         lock={forms.inputLock}
         bashMode

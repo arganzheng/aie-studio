@@ -30,8 +30,11 @@ export function useImageAttachments() {
 }
 
 // 📎 + hidden file input (rule-315).
-export function AttachImagesButton({ onFiles, disabled, className = 'chat-attach', title = 'Attach image' }: {
+// With anyFile the button is a ＋ that takes every kind of file (model:
+// web.FileAttachments); the host sorts images from the rest.
+export function AttachImagesButton({ onFiles, disabled, className = 'chat-attach', anyFile = false, title = anyFile ? 'Add files' : 'Attach image' }: {
   onFiles: (files: FileList) => void;
+  anyFile?: boolean;
   disabled?: boolean;
   className?: string;
   title?: string;
@@ -39,11 +42,11 @@ export function AttachImagesButton({ onFiles, disabled, className = 'chat-attach
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <>
-      <button type="button" className={className} onClick={() => inputRef.current?.click()} title={title} disabled={disabled}>📎</button>
+      <button type="button" className={className} onClick={() => inputRef.current?.click()} title={title} disabled={disabled} aria-label={title}>{anyFile ? '＋' : '📎'}</button>
       <input
         ref={inputRef}
         type="file"
-        accept="image/*"
+        accept={anyFile ? undefined : "image/*"}
         multiple
         style={{ display: 'none' }}
         onChange={(e) => {

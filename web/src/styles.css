@@ -1727,6 +1727,48 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 }
 .chat-input button.chat-attach:disabled { opacity: 0.4; cursor: not-allowed; background: transparent; color: var(--fg-muted); }
 
+/* Model: web.FileAttachments — files waiting above the input, and the files
+   a sent prompt carried. */
+.chat-pending-files {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-pending-area);
+}
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 6px 3px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.file-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; color: var(--fg); }
+.file-chip-meta { color: var(--fg-muted); font-variant-numeric: tabular-nums; flex: none; }
+.file-chip.uploading .file-chip-meta { color: var(--accent); }
+.file-chip.failed { border-color: #dc2626; }
+.file-chip.failed .file-chip-meta { color: #dc2626; }
+.file-chip-del {
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.file-chip-del:hover { color: var(--fg); }
+.msg-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.msg-files:first-child { margin-top: 0; }
+.file-chip.sent { padding-right: 8px; }
+
 .lightbox {
   position: fixed;
   inset: 0;
@@ -2128,6 +2170,21 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 
 /* "/" command picker (web.CommandPicker) — anchored above the chat input */
 .chat-input { position: relative; }
+/* Files dragged over the input (model: web.FileAttachments). */
+.chat-input-drop {
+  position: absolute;
+  inset: 4px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--accent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg) 88%, var(--accent));
+  color: var(--fg);
+  font-size: 13px;
+  pointer-events: none;
+}
 .cmd-popover {
   position: absolute;
   left: 8px;
