@@ -45,6 +45,7 @@ import { isEffortLevel } from './models.js';
 import { markLive, unmarkLive, liveBridge, type LiveState } from './live-sessions.js';
 import { activityAfter } from './session-tool-activity.js';
 import { STATUS_INSTRUCTIONS, parseStatus } from './session-status.js';
+import { DEFAULT_MODE, PLAN_MODE_DENIAL, PLAN_TOOL, isSessionMode, planOf, planRejection, type SessionMode } from './permission-mode.js';
 import { registerWireSession, wireBaseUrl } from './observe/wire-proxy.js';
 import { encodeCwd } from './observe/transcript.js';
 
@@ -79,6 +80,9 @@ function makeInputQueue(): InputQueue {
 // ----- entry ---------------------------------------------------------------
 
 type PendingAsk = {
+  // 'plan': the agent handed its plan over (ExitPlanMode) and waits for the
+  // user's approval (model: Session.mode).
+  kind: 'question' | 'plan';
   input: Record<string, unknown>;
   toolUseID: string;
   resolve: (r: PermissionResult) => void;
@@ -204,6 +208,8 @@ type SdkEntry = {
   // (null = free text). A query option, so it is applied each time the
   // process starts.
   resultSchema: Record<string, unknown> | null;
+  // Model: Session.mode.
+  mode: SessionMode;
   // Model: Session.activity — the tool call the running turn last made.
   activity: string;
   // Compacting its conversation right now (SDK status event).
@@ -297,10 +303,15 @@ function makeCanUseTool(entry: SdkEntry): CanUseTool {
   return async (toolName, input, opts) => {
     // bypassPermissions already auto-allows everything else; the SDK still
     // consults us for AskUserQuestion because it needs a human.
-    if (toolName !== 'AskUserQuestion') return { behavior: 'allow', updatedInput: input };
+    const kind = toolName === 'AskUserQuestion' ? 'question' : toolName === PLAN_TOOL ? 'plan' : null;
+    if (!kind) {
+      // Plan mode: what the SDK would have asked a human about is refused.
+      if (entry.mode === 'plan') return { behavior: 'deny', message: PLAN_MODE_DENIAL };
+      return { behavior: 'allow', updatedInput: input };
+    }
     const id = opts.requestId;
     return new Promise<PermissionResult>((resolve) => {
-      const ask: PendingAsk = { input, toolUseID: opts.toolUseID, resolve, timer: null };
+      const ask: PendingAsk = { kind, input, toolUseID: opts.toolUseID, resolve, timer: null };
       entry.pendingAsks.set(id, ask);
       if (entry.clients.size === 0) armAsk(entry, id);
       opts.signal.addEventListener('abort', () => {
@@ -310,8 +321,8 @@ function makeCanUseTool(entry: SdkEntry): CanUseTool {
           resolve({ behavior: 'deny', message: 'Interrupted' });
         }
       });
-      broadcast(entry, { type: 'ask', data: askEvent(id, ask) });
-      publishSessionEvent(entry.owner, 'awaiting', entry.sessionId, entry.title, askSummary(input));
+      broadcast(entry, askFrame(id, ask));
+      publishSessionEvent(entry.owner, 'awaiting', entry.sessionId, entry.title, kind === 'plan' ? 'Review the plan' : askSummary(input));
     });
   };
 }
@@ -324,6 +335,37 @@ function askEvent(id: string, ask: PendingAsk) {
     request_id: id,
     request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: ask.input, tool_use_id: ask.toolUseID },
   };
+}
+
+// What a client is sent for a pending ask: the question form, or the plan
+// to approve.
+function askFrame(id: string, ask: PendingAsk) {
+  return ask.kind === 'plan' ? { type: 'plan_ask', id, plan: planOf(ask.input) } : { type: 'ask', data: askEvent(id, ask) };
+}
+
+// The user settled a plan: approved (the session leaves plan mode and the
+// agent goes ahead) or sent back, with or without a word on what to change.
+function settlePlan(entry: SdkEntry, id: string, approve: boolean, feedback?: unknown): boolean {
+  const ask = entry.pendingAsks.get(id);
+  if (!ask || ask.kind !== 'plan') return false;
+  entry.pendingAsks.delete(id);
+  if (ask.timer) clearTimeout(ask.timer);
+  if (approve) {
+    setEntryMode(entry, DEFAULT_MODE);
+    ask.resolve({ behavior: 'allow', updatedInput: ask.input, updatedPermissions: [{ type: 'setMode', mode: DEFAULT_MODE, destination: 'session' }] });
+  } else {
+    ask.resolve({ behavior: 'deny', message: planRejection(feedback) });
+  }
+  broadcast(entry, { type: 'plan_done', id, approved: approve });
+  return true;
+}
+
+// Record the session's mode, tell the clients, keep it for the next resume.
+function setEntryMode(entry: SdkEntry, mode: SessionMode) {
+  if (entry.mode === mode) return;
+  entry.mode = mode;
+  broadcast(entry, { type: 'permission_mode', mode });
+  if (entry.sessionId) void saveTerms(entry);
 }
 
 function armAsk(entry: SdkEntry, id: string) {
@@ -365,7 +407,7 @@ function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: 
       resume: opts.resume,
       resumeSessionAt: opts.resumeSessionAt,
       includePartialMessages: true,
-      permissionMode: 'bypassPermissions',
+      permissionMode: entry.mode,
       allowDangerouslySkipPermissions: true,
       enableFileCheckpointing: true,
       env: sdkEnv(entry.observeWire),
@@ -474,7 +516,7 @@ function saveTerms(entry: SdkEntry, oldId?: string | null) {
   const id = entry.sessionId;
   if (!id) return;
   const uid = entry.owner.uid;
-  const terms = { ...(entry.resultSchema ? { resultSchema: entry.resultSchema } : {}) };
+  const terms = { ...(entry.resultSchema ? { resultSchema: entry.resultSchema } : {}), ...(entry.mode === 'plan' ? { mode: 'plan' as const } : {}) };
   const has = Object.keys(terms).length > 0;
   const next = (termsChains.get(uid) ?? Promise.resolve()).then(async () => {
     const all = await getChildTerms(uid);
@@ -529,7 +571,11 @@ function onSdkMessage(entry: SdkEntry, m: any) {
     }
     if (typeof m.model === 'string') entry.model = m.model;
   }
-  if (m?.type === 'system' && m?.subtype === 'status') entry.compacting = m.status === 'compacting';
+  if (m?.type === 'system' && m?.subtype === 'status') {
+    entry.compacting = m.status === 'compacting';
+    // The CLI reports a mode change it made itself (a plan was approved).
+    if (isSessionMode(m.permissionMode)) setEntryMode(entry, m.permissionMode);
+  }
   if (m?.type === 'result') {
     entry.thinking = false;
     entry.compacting = false;
@@ -710,6 +756,9 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
     const text = String(msg.text ?? '');
     const images = Array.isArray(msg.images) ? msg.images : [];
     if (!text && images.length === 0) return;
+    // Writing while a plan waits is the answer to it: the plan goes back and
+    // the message says why.
+    for (const [id, ask] of entry.pendingAsks) if (ask.kind === 'plan') settlePlan(entry, id, false);
     if (entry.sessionId) void unarchiveOnUse(entry.owner.uid, `claude:${entry.sessionId}`).then(() => setSessionStatus(entry.owner.uid, `claude:${entry.sessionId}`, null));
     const uuid = randomUUID();
     const bang = entry.pendingBang.splice(0).map((b) => b.result);
@@ -745,6 +794,21 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
     }
     return;
   }
+  if (msg.type === 'set_permission_mode') {
+    const mode = msg.mode;
+    if (!isSessionMode(mode)) { send(socket, { type: 'error', message: `unknown mode: ${String(mode)}` }); return; }
+    try {
+      await entry.q.setPermissionMode(mode);
+      setEntryMode(entry, mode);
+    } catch (e) {
+      send(socket, { type: 'error', message: `set_permission_mode failed: ${String(e)}` });
+    }
+    return;
+  }
+  if (msg.type === 'plan_response') {
+    settlePlan(entry, String(msg.id ?? ''), msg.approve === true, msg.feedback);
+    return;
+  }
   if (msg.type === 'set_effort') {
     // No setEffort in the SDK control protocol: re-create the query on the
     // same session (same approach as session.ts' respawn).
@@ -761,7 +825,7 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
   if (msg.type === 'elicitation_response') {
     const id = String(msg.id ?? '');
     const ask = entry.pendingAsks.get(id);
-    if (!ask) return;
+    if (!ask || ask.kind !== 'question') return;
     entry.pendingAsks.delete(id);
     if (ask.timer) clearTimeout(ask.timer);
     if (msg.action === 'accept' && msg.content && typeof msg.content === 'object') {
@@ -877,6 +941,7 @@ function startedFrame(entry: SdkEntry, attached: boolean) {
     thinking: entry.thinking,
     compacting: entry.compacting,
     model: entry.model,
+    mode: entry.mode,
     requestedModel: entry.requestedModel || null,
     effort: entry.effort,
     wire: entry.observeWire,
@@ -968,6 +1033,7 @@ function newEntry(o: {
     group: o.group ?? '',
     givenTitle: '',
     resultSchema: null,
+    mode: DEFAULT_MODE,
     activity: '',
     compacting: false,
     commands: [],
@@ -1031,6 +1097,12 @@ async function loadTreePosition(entry: SdkEntry) {
     entry.spawnedByAgent = meta.agentSpawned.includes(key);
     const terms = (await getChildTerms(entry.owner.uid))[entry.sessionId];
     entry.resultSchema = terms?.resultSchema ?? null;
+    if (terms?.mode === 'plan' && entry.mode !== 'plan') {
+      entry.mode = 'plan';
+      // The query may already be up with the default mode.
+      void entry.q?.setPermissionMode('plan').catch(() => {});
+      broadcast(entry, { type: 'permission_mode', mode: 'plan' });
+    }
   } catch {}
 }
 
@@ -1331,7 +1403,7 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
         attachClient(entry, socket);
         send(socket, startedFrame(entry, true));
         send(socket, bangStateFrame(entry));
-        for (const [id, ask] of entry.pendingAsks) send(socket, { type: 'ask', data: askEvent(id, ask) });
+        for (const [id, ask] of entry.pendingAsks) send(socket, askFrame(id, ask));
         return;
       }
 

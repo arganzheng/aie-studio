@@ -20,6 +20,7 @@ import { applyQuoteHighlights } from '../lib/quoteHighlight';
 import { RichCopyButton, useRichCopy } from './RichCopy';
 import type { ExportMessage } from '../lib/export/types';
 import { awaitingUser, stripStatus } from '../lib/sessionStatus';
+import { MODES, isSessionMode, modeInfo, type SessionMode } from '../lib/sessionMode';
 import { parseAttachedFiles, withAttachedFiles } from '../lib/fileAttachments';
 import { FileAttachmentStrip, SentFileChips, useFileAttachments } from './FileAttachments';
 
@@ -377,6 +378,10 @@ export function SdkPanel({
   const [model, setModel] = useState<string | null>(null);
   const [effort, setEffort] = useState('');
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  // Model: Session.mode — bypass or plan, and the plan waiting for approval.
+  const [mode, setMode] = useState<SessionMode>('bypassPermissions');
+  const [modePickerOpen, setModePickerOpen] = useState(false);
+  const [planAsk, setPlanAsk] = useState<{ id: string; plan: string } | null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [wireOn, setWireOn] = useState(false);
   // Context window reading, pushed by the server after each turn.
@@ -564,7 +569,7 @@ export function SdkPanel({
   });
 
   const generating = status === 'thinking';
-  const awaitingInput = forms.elicitations.some((e) => !e.recap);
+  const awaitingInput = forms.elicitations.some((e) => !e.recap) || planAsk !== null;
   useEffect(() => { onActivityRef.current?.({ generating, awaitingInput }); }, [generating, awaitingInput]);
   useEffect(() => () => onActivityRef.current?.(null), []);
 
@@ -741,6 +746,8 @@ export function SdkPanel({
         activeSessionIdRef.current = m.sessionId;
         onSessionIdRef.current?.(m.sessionId);
       }
+      if (isSessionMode(m.mode)) setMode(m.mode);
+      setPlanAsk(null); // a pending one is re-sent right after this frame
       if (m.model) setModel(m.model);
       else if (m.requestedModel) setModel((cur) => cur ?? m.requestedModel);
       if (typeof m.effort === 'string') setEffort(m.effort);
@@ -806,6 +813,10 @@ export function SdkPanel({
       if (req) forms.add(req);
       return;
     }
+    if (m.type === 'permission_mode') { if (isSessionMode(m.mode)) setMode(m.mode); return; }
+    if (m.type === 'plan_ask') { setPlanAsk({ id: String(m.id), plan: typeof m.plan === 'string' ? m.plan : '' }); return; }
+    if (m.type === 'plan_done') { setPlanAsk((cur) => (cur?.id === m.id ? null : cur)); return; }
+    if (m.type === 'ask_timeout' || m.type === 'ask_cancel') setPlanAsk((cur) => (cur?.id === m.id ? null : cur));
     if (m.type === 'ask_timeout') { forms.expire(m.id); return; }
     if (m.type === 'ask_cancel' || m.type === 'ask_done') { forms.settle(m.id, m.type === 'ask_done' ? 'Answered' : 'Cancelled'); return; }
     if (m.type === 'rewound') {
@@ -1015,6 +1026,20 @@ export function SdkPanel({
     onInitialPromptConsumed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
+
+  function switchMode(next: SessionMode) {
+    setModePickerOpen(false);
+    if (next === mode) return;
+    if (!wsSend({ type: 'set_permission_mode', mode: next })) { showToast('Not connected — mode not changed'); return; }
+    setMode(next);
+    showToast(`Mode: ${modeInfo(next).label}`);
+  }
+
+  function answerPlan(approve: boolean) {
+    if (!planAsk) return;
+    wsSend({ type: 'plan_response', id: planAsk.id, approve });
+    setPlanAsk(null);
+  }
 
   function switchModel(alias: string) {
     wsSend({ type: 'set_model', model: alias });
@@ -1244,6 +1269,17 @@ export function SdkPanel({
           );
         })}
         {forms.renderOrphans()}
+        {planAsk && (
+          <div className="msg msg-plan-ask">
+            <div className="msg-plan-ask-head">Claude's plan — nothing has been changed yet</div>
+            <div className="msg-plan-ask-body"><MarkdownText text={planAsk.plan || '_(the plan is empty)_'} theme={theme} projectPath={projectPath} onOpenFile={openFile} /></div>
+            <div className="msg-plan-ask-actions">
+              <button type="button" className="primary" onClick={() => answerPlan(true)} title="Leave plan mode and carry the plan out">Approve and start</button>
+              <button type="button" onClick={() => answerPlan(false)} title="Send the plan back; Claude stays in plan mode">Keep planning</button>
+              <span className="msg-plan-ask-hint">or type below what to change</span>
+            </div>
+          </div>
+        )}
         {status === 'thinking' && (
           <div className="msg msg-thinking" aria-label="Claude is thinking">
             <span className="thinking-dot" /><span className="thinking-dot" /><span className="thinking-dot" />
@@ -1270,6 +1306,28 @@ export function SdkPanel({
             <ContextBadge context={contextUsage} />
             {/* Always there: the model is only reported once the session has
                 started (or run a turn), and switching must not wait for that. */}
+            <div className="chat-status-model-wrap">
+              <button
+                className={`chat-status-mode mode-${mode}`}
+                title={`${modeInfo(mode).label}: ${modeInfo(mode).description} — click to switch`}
+                onClick={() => setModePickerOpen((v) => !v)}
+                type="button"
+              >{modeInfo(mode).short}</button>
+              {modePickerOpen && (
+                <>
+                  <div className="model-picker-backdrop" onClick={() => setModePickerOpen(false)} />
+                  <div className="model-picker mode-picker">
+                    {MODES.map((mm) => (
+                      <button key={mm.id} className={`mode-picker-item${mm.id === mode ? ' current' : ''}`} onClick={() => switchMode(mm.id)} type="button">
+                        <span className="mode-picker-label">{mm.label}</span>
+                        <span className="mode-picker-desc">{mm.description}</span>
+                        {mm.id === mode && <span className="mode-picker-check" aria-hidden="true">✓</span>}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
             {(
               <div className="chat-status-model-wrap">
                 <button
