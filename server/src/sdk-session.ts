@@ -372,7 +372,7 @@ function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: 
       pathToClaudeCodeExecutable: process.env.REMOTE_IDE_SDK_CLAUDE_PATH || undefined,
       stderr: (data) => broadcast(entry, { type: 'stderr', data }),
       canUseTool: makeCanUseTool(entry),
-      mcpServers: { aie: childToolsServer(entry) },
+      mcpServers: { ...(entry.childTools ? { aie: childToolsServer(entry) } : {}), aie_status: statusServer() },
       outputFormat: entry.resultSchema ? { type: 'json_schema', schema: entry.resultSchema } : undefined,
     },
   });
@@ -1149,6 +1149,16 @@ async function nameChildSession(child: SdkEntry, title: string) {
 
 const toolText = (text: string, isError = false) => ({ content: [{ type: 'text' as const, text }], ...(isError ? { isError: true } : {}) });
 
+// The status-line rule, as the instructions of a server with no tools. It has
+// a server of its own because the SDK tells the model a server's instructions
+// once per server *name*: a resumed session that had already been told about
+// `aie` never saw text added to it later. For the same reason, rename this
+// server (aie_status_2, ...) when STATUS_INSTRUCTIONS changes in a way open
+// sessions must pick up.
+function statusServer() {
+  return createSdkMcpServer({ name: 'aie_status', version: '1.0.0', instructions: STATUS_INSTRUCTIONS, tools: [] });
+}
+
 // The in-process MCP server that gives `parent`'s agent its child-session
 // tools. One per query: the handlers close over the entry.
 function childToolsServer(parent: SdkEntry) {
@@ -1159,8 +1169,8 @@ function childToolsServer(parent: SdkEntry) {
   return createSdkMcpServer({
     name: 'aie',
     version: '1.0.0',
-    instructions: parent.childTools ? `${CHILD_TOOLS_INSTRUCTIONS}\n\n${STATUS_INSTRUCTIONS}` : STATUS_INSTRUCTIONS,
-    tools: !parent.childTools ? [] : [
+    instructions: CHILD_TOOLS_INSTRUCTIONS,
+    tools: [
       tool(
         'spawn_child_session',
         'Open a child session: a separate, full Claude session in this project that works on `prompt` in the background. The user sees it under this session in the Sessions tree and can open it and talk to it. Returns immediately with the child id; the child\'s answer arrives later as a message starting with "[Child session". The child knows nothing of this conversation: give it the context in `background` and the job in `prompt`.',
