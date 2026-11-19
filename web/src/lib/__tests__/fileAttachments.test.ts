@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ATTACHED_HEAD, formatSize, parseAttachedFiles, withAttachedFiles } from '../fileAttachments';
+import { ATTACHED_HEAD, dragHasFiles, droppedFiles, formatSize, parseAttachedFiles, withAttachedFiles } from '../fileAttachments';
 
 describe('withAttachedFiles / parseAttachedFiles', () => {
   const files = [{ path: '/u/a1/spec.pdf' }, { path: '/u/b2/build log.txt' }];
@@ -25,5 +25,22 @@ describe('formatSize', () => {
     expect(formatSize(2048)).toBe('2.0 KB');
     expect(formatSize(300 * 1024)).toBe('300 KB');
     expect(formatSize(5 * 1024 * 1024)).toBe('5.0 MB');
+  });
+});
+
+describe('drag and drop', () => {
+  const file = (name: string, type: string) => ({ name, type }) as File;
+  const item = (f: File | null, dir = false, kind = 'file') => ({ kind, getAsFile: () => f, webkitGetAsEntry: () => ({ isDirectory: dir }) });
+  it('tells a file drag from a text drag', () => {
+    expect(dragHasFiles(['Files'])).toBe(true);
+    expect(dragHasFiles(['text/plain', 'text/uri-list'])).toBe(false);
+    expect(dragHasFiles(null)).toBe(false);
+  });
+  it('takes the files and leaves folders and text behind', () => {
+    const pdf = file('a.pdf', 'application/pdf'); const png = file('b.png', 'image/png');
+    const items = [item(pdf), item(png), item(file('dir', ''), true), item(null, false, 'string')];
+    expect(droppedFiles(items, true)).toEqual([pdf, png]);
+    expect(droppedFiles(items, false)).toEqual([png]);
+    expect(droppedFiles(null, true)).toEqual([]);
   });
 });

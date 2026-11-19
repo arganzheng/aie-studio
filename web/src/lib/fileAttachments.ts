@@ -47,3 +47,28 @@ export function parseAttachedFiles(text: string): { text: string; files: SentFil
   const files = lines.map((l) => { const p = l.slice(2); return { path: p, name: p.slice(p.lastIndexOf('/') + 1) }; });
   return { text: text.slice(0, at).trim(), files };
 }
+
+// ---- drag and drop ----
+
+// Is the thing being dragged over the input a set of files (not text, not a
+// link)? `types` is DataTransfer.types.
+export function dragHasFiles(types: ArrayLike<string> | null | undefined): boolean {
+  return !!types && Array.from(types).includes('Files');
+}
+
+// Pure: the files of a drop, without the folders (a dropped folder shows up
+// as an entry that can't be read as a file) and, for an input that only takes
+// images, without anything else.
+export function droppedFiles(
+  items: ArrayLike<{ kind: string; getAsFile: () => File | null; webkitGetAsEntry?: () => { isDirectory: boolean } | null }> | null | undefined,
+  anyFile: boolean,
+): File[] {
+  const out: File[] = [];
+  for (const item of Array.from(items ?? [])) {
+    if (item.kind !== 'file') continue;
+    if (item.webkitGetAsEntry?.()?.isDirectory) continue;
+    const f = item.getAsFile();
+    if (f && (anyFile || f.type.startsWith('image/'))) out.push(f);
+  }
+  return out;
+}

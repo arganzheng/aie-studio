@@ -6,6 +6,7 @@ import { isSendKeyTrigger } from '../lib/sendKey';
 import { AttachImagesButton } from './ImageAttachments';
 import { isBangInput } from '../lib/bang';
 import { addQuotes, composeQuotedPrompt, quoteCardLabel, quoteCardPreview, type ChatQuote } from '../lib/addToChat';
+import { dragHasFiles, droppedFiles } from '../lib/fileAttachments';
 
 export type ChatInputStatus =
   | 'connecting'
@@ -239,6 +240,12 @@ export const ChatInput = memo(function ChatInput({
     setQuery(null);
   }
 
+  // Model: web.FileAttachments — files dragged onto the input are attached
+  // like ones picked with the button.
+  const [dragOver, setDragOver] = useState(false);
+  const dragDepth = useRef(0);
+  const canDrop = status !== 'closed' && !lock;
+
   const canSend =
     !lock &&
     !uploading &&
@@ -298,7 +305,21 @@ export const ChatInput = memo(function ChatInput({
         </div>
       </div>
     )}
-    <div className={`chat-input${lock ? ' locked' : ''}${bashMode && isBangInput(text) ? ' bash-mode' : ''}`}>
+    <div
+      className={`chat-input${lock ? ' locked' : ''}${bashMode && isBangInput(text) ? ' bash-mode' : ''}${dragOver ? ' drag-over' : ''}`}
+      onDragEnter={(e) => { if (!canDrop || !dragHasFiles(e.dataTransfer?.types)) return; e.preventDefault(); dragDepth.current++; setDragOver(true); }}
+      onDragOver={(e) => { if (!canDrop || !dragHasFiles(e.dataTransfer?.types)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
+      onDragLeave={() => { if (dragDepth.current > 0 && --dragDepth.current === 0) setDragOver(false); }}
+      onDrop={(e) => {
+        dragDepth.current = 0;
+        setDragOver(false);
+        if (!canDrop || !dragHasFiles(e.dataTransfer?.types)) return;
+        e.preventDefault();
+        const files = droppedFiles(e.dataTransfer.items, anyFile);
+        if (files.length) onAddFiles(files);
+      }}
+    >
+      {dragOver && <div className="chat-input-drop" aria-hidden="true">{anyFile ? 'Drop files to attach' : 'Drop images to attach'}</div>}
       {bashMode && isBangInput(text) && <span className="chat-input-bash-badge" title="Runs in the project directory; output goes to Claude with your next message">! bash</span>}
       <div
         className="chat-input-resize"
