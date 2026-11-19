@@ -367,7 +367,6 @@ export function SessionList({
     // A search or filter shows every match, whatever is folded.
     const open = filtering || projectsOpen.has(s.projectId);
     const toggle = () => setProjectsOpen((prev) => { const next = new Set(prev); if (next.has(s.projectId)) next.delete(s.projectId); else next.add(s.projectId); return next; });
-    const busy = s.running + s.awaiting;
     const top = topLevel(s.rows);
     const mine = current ? pending : [];
     return (
@@ -387,7 +386,7 @@ export function SessionList({
           <span className="session-group-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
           <span className="session-project-name">{s.name}</span>
           <span className="session-project-count">{s.rows.length}</span>
-          {busy > 0 && <span className="session-row-subagents running">{busy} running</span>}
+          {s.running > 0 && <span className="session-row-subagents running">{s.running} running</span>}
           {s.awaiting > 0 ? <span className="session-row-dot awaiting" aria-hidden="true" />
             : s.unread > 0 ? <span className="session-row-dot" aria-hidden="true" /> : null}
         </div>

@@ -2,6 +2,8 @@
 // Devin), fed by server.ListAllSessions. Pure helpers only: filtering, the
 // status line, relative times.
 
+import type { SessionStatus } from './sessionStatus';
+
 export type SessionKind = 'claude' | 'devin';
 export type LiveState = 'running' | 'awaiting' | 'idle';
 
@@ -25,7 +27,15 @@ export type SessionRow = {
   group?: string;
   // Claude (SDK bridge): the tool call its running turn last made.
   activity?: string;
+  // What its agent said it is waiting for when its last turn ended.
+  status?: SessionStatus;
 };
+
+// Is the session stopped on the user: a form or prompt is open, or its agent
+// ended the turn on a question.
+export function needsUser(r: Pick<SessionRow, 'state' | 'status'>): boolean {
+  return r.state === 'awaiting' || (r.state !== 'running' && r.status?.tone === 'needs-you');
+}
 
 // Same shape as lib/sessionAlerts.alertKey, so a pending alert marks its row.
 export function sessionRowKey(r: Pick<SessionRow, 'projectId' | 'kind' | 'sessionId'>): string {
@@ -56,19 +66,21 @@ export function filterSessions(
   return rows.filter((r) => {
     if (r.archived !== f.archived) return false;
     if (f.kind !== 'all' && r.kind !== f.kind) return false;
-    if (f.status === 'active' && r.state !== 'running' && r.state !== 'awaiting' && !unread.has(sessionRowKey(r))) return false;
+    if (f.status === 'active' && r.state !== 'running' && !needsUser(r) && !unread.has(sessionRowKey(r))) return false;
     if (q && !r.title.toLowerCase().includes(q) && !r.sessionId.toLowerCase().startsWith(q)) return false;
     return true;
   });
 }
 
-export type SessionTone = 'awaiting' | 'running' | 'unread' | 'idle';
+export type SessionTone = 'awaiting' | 'running' | 'ready' | 'unread' | 'idle';
 
 // What the row's second line says. A question outranks a spinner, which
-// outranks "there is a result you haven't looked at".
+// outranks what the agent left when it stopped (its question, or what it has
+// ready), which outranks "there is a result you haven't looked at".
 export function sessionStatus(r: SessionRow, unread: boolean, now: number): { tone: SessionTone; label: string } {
   if (r.state === 'awaiting') return { tone: 'awaiting', label: 'Needs your input' };
   if (r.state === 'running') return { tone: 'running', label: r.activity || 'Running…' };
+  if (r.status) return { tone: r.status.tone === 'needs-you' ? 'awaiting' : 'ready', label: r.status.label };
   if (unread) return { tone: 'unread', label: `Finished · ${timeAgo(r.updatedAt, now)}` };
   return { tone: 'idle', label: timeAgo(r.updatedAt, now) };
 }
@@ -258,7 +270,7 @@ export function sessionsByProject(input: {
   for (const r of rows) {
     const s = section(r.projectId);
     s.rows.push(r);
-    if (r.state === 'awaiting') s.awaiting++;
+    if (needsUser(r)) s.awaiting++;
     else if (r.state === 'running') s.running++;
     if (unread.has(sessionRowKey(r))) s.unread++;
   }

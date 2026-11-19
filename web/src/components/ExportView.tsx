@@ -5,6 +5,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Theme } from '../types';
 import type { ExportMessage, ExportMeta } from '../lib/export/types';
+import { stripStatus } from '../lib/sessionStatus';
 
 // Shared rendering surface for PNG / PDF export. Mirrors ChatPanel / DevinPanel
 // visuals so the exported image is recognisably "the chat" — reuses the same
@@ -32,7 +33,7 @@ function MarkdownText({ text, theme }: { text: string; theme: Theme }) {
         },
       }}
     >
-      {text}
+      {stripStatus(text)}
     </ReactMarkdown>
   );
 }

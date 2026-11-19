@@ -8,6 +8,7 @@ import { cliLiveState, stopCliSession } from './session.js';
 import { sdkLiveDetail, sdkLiveState, stopSdkSession, userRenamedSdkSession } from './sdk-session.js';
 import { countSubagents } from './subagents.js';
 import { claudeLastActivity } from './session-activity.js';
+import type { SessionStatus } from './session-status.js';
 import { devinLiveState, listDevinSessionsInDb, stopDevinSession } from './devin.js';
 
 // Model: server.ListAllSessions — one list of every AI session, Claude and
@@ -40,6 +41,8 @@ export type SessionRow = {
   worktree?: string;
   // Claude on the SDK bridge: the tool call its running turn last made.
   activity?: string;
+  // What its agent said it is waiting for when its last turn ended.
+  status?: SessionStatus;
 };
 
 export const MAX_TITLE_LENGTH = 200;
@@ -50,14 +53,15 @@ export function sessionKey(kind: SessionKind, sessionId: string): string {
 
 // Pure: lay the user's archive flags and title overrides over the raw rows,
 // newest first.
-export function applySessionMeta(rows: readonly Omit<SessionRow, 'archived' | 'parentId' | 'group'>[], meta: SessionMeta): SessionRow[] {
+export function applySessionMeta(rows: readonly Omit<SessionRow, 'archived' | 'parentId' | 'group' | 'status'>[], meta: SessionMeta): SessionRow[] {
   const archived = new Set(meta.archived);
   return rows
     .map((r) => {
       const key = sessionKey(r.kind, r.sessionId);
       const parentId = meta.parents[key];
       const group = parentId ? meta.groups[key] : undefined;
-      return { ...r, title: meta.titles[key] ?? r.title, archived: archived.has(key), ...(parentId ? { parentId } : {}), ...(group ? { group } : {}) };
+      const status = meta.status[key];
+      return { ...r, title: meta.titles[key] ?? r.title, archived: archived.has(key), ...(parentId ? { parentId } : {}), ...(group ? { group } : {}), ...(status ? { status } : {}) };
     })
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
@@ -79,6 +83,7 @@ export function forgetSession(meta: SessionMeta, key: string): SessionMeta {
     archived: meta.archived.filter((k) => k !== key), titles, parents,
     agentSpawned: meta.agentSpawned.filter((k) => k in parents),
     groups: Object.fromEntries(Object.entries(meta.groups).filter(([k]) => k in parents)),
+    status: Object.fromEntries(Object.entries(meta.status).filter(([k]) => k !== key)),
   };
 }
 

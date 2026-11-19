@@ -19,6 +19,7 @@ import type { ChatQuote } from '../lib/addToChat';
 import { applyQuoteHighlights } from '../lib/quoteHighlight';
 import { RichCopyButton, useRichCopy } from './RichCopy';
 import type { ExportMessage } from '../lib/export/types';
+import { awaitingUser, stripStatus } from '../lib/sessionStatus';
 
 // Lazy like ChatPanel: the export pipeline only loads when ⤓ is clicked.
 const ExportDialog = lazy(() => import('./ExportDialog').then((m) => ({ default: m.ExportDialog })));
@@ -237,7 +238,7 @@ export const MarkdownText = memo(function MarkdownText({ text, theme, projectPat
         },
       }}
     >
-      {text}
+      {stripStatus(text)}
     </ReactMarkdown>
   );
 });
@@ -1227,6 +1228,9 @@ export function SdkPanel({
           <div className="msg msg-thinking" aria-label="Claude is thinking">
             <span className="thinking-dot" /><span className="thinking-dot" /><span className="thinking-dot" />
           </div>
+        )}
+        {status !== 'thinking' && status !== 'replaying' && awaitingUser(msgs) && (
+          <div className="msg-awaiting"><span className="msg-awaiting-dot" aria-hidden="true" />Claude is awaiting instructions</div>
         )}
       </div>
       {(() => {
