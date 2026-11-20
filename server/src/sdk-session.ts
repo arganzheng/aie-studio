@@ -52,6 +52,7 @@ import {
 } from './permission-mode.js';
 import { registerWireSession, wireBaseUrl } from './observe/wire-proxy.js';
 import { encodeCwd } from './observe/transcript.js';
+import { duplexRoute } from './duplex.js';
 
 // ----- input queue: one always-open async iterable per live query ---------
 
@@ -1431,9 +1432,9 @@ function childToolsServer(parent: SdkEntry) {
 // ----- routes --------------------------------------------------------------
 
 export function registerSdkSessionRoutes(app: FastifyInstance) {
-  app.get<{ Querystring: { project?: string; resume?: string; wire?: string; parent?: string; worktree?: string } }>(
+  duplexRoute<{ project?: string; resume?: string; wire?: string; parent?: string; worktree?: string }>(
+    app,
     '/ws/sdk-session',
-    { websocket: true },
     async (socket, req) => {
       const uid = getUserId(req as any);
       if (!uid) { send(socket, { type: 'error', message: 'unauthorized' }); try { socket.close(); } catch {} return; }

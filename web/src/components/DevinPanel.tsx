@@ -25,6 +25,7 @@ import { parseElicitationRequest } from '../lib/elicitation';
 import { acpCommandsToItems, type AcpAvailableCommand } from '../lib/commandPicker';
 import { logDebug } from '../lib/debugLog';
 import { getDevinSession } from '../api';
+import { openDuplex, type DuplexSocket } from '../lib/duplex';
 
 const TX = 'devin:transcript';
 
@@ -485,7 +486,7 @@ export function DevinPanel({
   const beforePrependRef = useRef<{ height: number; top: number } | null>(null);
 
   const toastTimer = useRef<number | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+  const wsRef = useRef<DuplexSocket | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const titleSetFromMsg = useRef(false);
   const initialResumeIdRef = useRef(resumeId);
@@ -774,11 +775,10 @@ export function DevinPanel({
 
     function openWs() {
       const resume = activeSessionIdRef.current ?? initialResumeIdRef.current;
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       const params = new URLSearchParams({ project: projectId });
       if (resume) params.set('resume', resume);
       logDebug(TX, `ws connecting: resume=${resume ?? '(fresh)'} activeRef=${activeSessionIdRef.current ?? '(none)'} initialRef=${initialResumeIdRef.current ?? '(none)'} attempt=${reconnectAttemptRef.current}`);
-      const ws = new WebSocket(`${proto}://${location.host}/ws/devin?${params}`);
+      const ws = openDuplex('devin', params);
       wsRef.current = ws;
       let opened = false;
       ws.onopen = () => {

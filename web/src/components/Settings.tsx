@@ -5,6 +5,7 @@ import { usePwaInstall } from '../usePwaInstall';
 import { sectionsForGroup, type SettingsGroupId } from '../registry';
 import { useClaudeModels, EFFORT_LEVELS } from '../useClaudeModels';
 import { listDevinVersions, type DevinVersion } from '../api';
+import { TRANSPORT_OPTIONS, lastTransport, readTransportPref, writeTransportPref, type TransportPref } from '../lib/duplex';
 
 type SelectOption = { value: string; label: string; hint?: string; group?: string };
 
@@ -199,6 +200,7 @@ export function Settings({
   const [savedFlash, setSavedFlash] = useState(false);
   const flashTimer = useRef<number | null>(null);
   const [group, setGroup] = useState<SettingsGroupId>('general');
+  const [transport, setTransport] = useState<TransportPref>(readTransportPref);
   // Browser permission for OS notifications (per device, not a stored setting).
   const [sysNotify, setSysNotify] = useState(systemNotifyState);
   const pwa = usePwaInstall();
@@ -278,6 +280,19 @@ export function Settings({
                 value={settings.sendKey}
                 options={SEND_KEY_OPTIONS}
                 onChange={(v) => commit({ ...settings, sendKey: v as SendKey })}
+              />
+              <SettingsSelect
+                label="Connection (this device)"
+                name="transport"
+                value={transport}
+                options={TRANSPORT_OPTIONS}
+                onChange={(v) => { const next = v as TransportPref; writeTransportPref(next); setTransport(next); flashSaved(); }}
+                footer={
+                  <div className="settings-option-hint">
+                    Use HTTP when a proxy blocks WebSockets (e.g. "403 WebSocketBlock"). Applies to sessions opened from now on; reload the page to switch open ones.
+                    {lastTransport() && <> This page is on <code className="settings-mono">{lastTransport()}</code>.</>}
+                  </div>
+                }
               />
               <div className="settings-section">
                 <div className="settings-label">Install as app</div>

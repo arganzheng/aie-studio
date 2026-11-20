@@ -3,6 +3,7 @@ import type { WebSocket } from '@fastify/websocket';
 import { randomUUID } from 'node:crypto';
 import { getUserId } from './auth.js';
 import { inbox, sessionKey } from './inbox.js';
+import { duplexRoute } from './duplex.js';
 
 // Model: server.SessionEvents — tells a user's open pages that one of their
 // AI sessions finished a turn or is waiting on them, whichever project / tab
@@ -140,7 +141,7 @@ export function registerNotifyRoutes(app: FastifyInstance) {
     return { changed };
   });
 
-  app.get<{ Querystring: { since?: string } }>('/ws/events', { websocket: true }, (socket, req) => {
+  duplexRoute<{ since?: string }>(app, '/ws/events', (socket, req) => {
     const uid = getUserId(req as any);
     if (!uid) {
       send(socket, { type: 'error', message: 'unauthorized' });
