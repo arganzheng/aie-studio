@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { SessionEvent } from './lib/sessionAlerts';
+import { openDuplex, type DuplexSocket } from './lib/duplex';
 
 // Model: web.SessionAlerts ← server.SessionEvents. One /ws/events socket per
 // page, kept open across project and tab switches. Reconnects with backoff
@@ -13,7 +14,7 @@ export function useSessionEvents(enabled: boolean, onEvent: (e: SessionEvent) =>
   onInboxRef.current = onInbox;
   useEffect(() => {
     if (!enabled) return;
-    let ws: WebSocket | null = null;
+    let ws: DuplexSocket | null = null;
     let closed = false;
     let retry = 0;
     let retryTimer: number | null = null;
@@ -25,8 +26,7 @@ export function useSessionEvents(enabled: boolean, onEvent: (e: SessionEvent) =>
 
     function connect() {
       if (closed) return;
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const sock = new WebSocket(`${proto}://${location.host}/ws/events${since === null ? '' : `?since=${since}`}`);
+      const sock = openDuplex('events', since === null ? '' : `since=${since}`);
       ws = sock;
       sock.onopen = () => {
         retry = 0;

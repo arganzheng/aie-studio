@@ -26,6 +26,7 @@ import { toCommandItems } from '../lib/commandPicker';
 import type { ClaudeCliCatalog } from '../lib/claudeCatalog';
 import { useClaudeModels, effortOptionsFor } from '../useClaudeModels';
 import { stripStatus } from '../lib/sessionStatus';
+import { openDuplex, type DuplexSocket } from '../lib/duplex';
 
 // Lazy: the export pipeline (dialog, view, markdown serialiser) is only needed
 // when the user actually clicks ⤓. Splitting it out shaves the main bundle.
@@ -474,7 +475,7 @@ export function ChatPanel({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [lightbox, toolPopout]);
-  const wsRef = useRef<WebSocket | null>(null);
+  const wsRef = useRef<DuplexSocket | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const titleSetFromMsg = useRef(false);
   const initialResumeIdRef = useRef(resumeId);
@@ -625,11 +626,10 @@ export function ChatPanel({
 
     function openWs() {
       const resume = activeSessionIdRef.current ?? initialResumeIdRef.current;
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       const params = new URLSearchParams({ project: projectId });
       if (resume) params.set('resume', resume);
       if (wireRef.current) params.set('wire', '1');
-      const ws = new WebSocket(`${proto}://${location.host}/ws/session?${params}`);
+      const ws = openDuplex('session', params);
       wsRef.current = ws;
       let opened = false;
 

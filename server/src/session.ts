@@ -14,6 +14,7 @@ import { registerWireSession, wireBaseUrl } from './observe/wire-proxy.js';
 import { isEffortLevel } from './models.js';
 import { markLive, unmarkLive, liveBridge, type LiveState } from './live-sessions.js';
 import { getSessionInfo } from '@anthropic-ai/claude-agent-sdk';
+import { duplexRoute } from './duplex.js';
 
 export type CliCatalog = {
   slashCommands: string[];
@@ -830,9 +831,9 @@ export function stopCliSession(sessionId: string, uid: string): boolean {
 }
 
 export function registerSessionRoutes(app: FastifyInstance) {
-  app.get<{ Querystring: { project?: string; resume?: string; wire?: string } }>(
+  duplexRoute<{ project?: string; resume?: string; wire?: string }>(
+    app,
     '/ws/session',
-    { websocket: true },
     async (socket, req) => {
       const uid = getUserId(req as any);
       if (!uid) {

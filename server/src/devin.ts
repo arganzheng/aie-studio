@@ -13,6 +13,7 @@ import { publishSessionEvent, type SessionOwner } from './notify.js';
 import { toSummary } from './inbox.js';
 import type { LiveState } from './live-sessions.js';
 import { resolveDevinBinForUser } from './devin-versions.js';
+import { duplexRoute } from './duplex.js';
 
 // Devin ACP integration. Kept fully independent of session.ts (Claude
 // stream-json) so the two agents don't share state or code paths — a bug in
@@ -1158,9 +1159,9 @@ export function registerDevinRoutes(app: FastifyInstance) {
     },
   );
 
-  app.get<{ Querystring: { project?: string; resume?: string } }>(
+  duplexRoute<{ project?: string; resume?: string }>(
+    app,
     '/ws/devin',
-    { websocket: true },
     async (socket, req) => {
       const uid = getUserId(req as any);
       if (!uid) {

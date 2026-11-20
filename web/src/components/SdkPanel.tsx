@@ -46,6 +46,7 @@ import { toCommandItems } from '../lib/commandPicker';
 import type { ClaudeCliCatalog } from '../lib/claudeCatalog';
 import { useAieCommands } from '../useAieCommands';
 import { useClaudeModels, effortOptionsFor } from '../useClaudeModels';
+import { openDuplex, type DuplexSocket } from '../lib/duplex';
 
 // ----- message model ------------------------------------------------------
 
@@ -430,7 +431,7 @@ export function SdkPanel({
   oldestIdxRef.current = oldestIdx;
   statusRef.current = status;
 
-  const wsRef = useRef<WebSocket | null>(null);
+  const wsRef = useRef<DuplexSocket | null>(null);
   const activeSessionIdRef = useRef<string | null>(resumeId ?? null);
   const closedByUsRef = useRef(false);
   const sessionExitedRef = useRef(false);
@@ -649,8 +650,7 @@ export function SdkPanel({
         if (worktreeRef.current) params.set('worktree', worktreeRef.current);
       }
       if (wireRef.current) params.set('wire', '1');
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(`${proto}://${location.host}/ws/sdk-session?${params.toString()}`);
+      const ws = openDuplex('sdk-session', params);
       wsRef.current = ws;
       gotStartedRef.current = false;
       ws.onopen = () => {
