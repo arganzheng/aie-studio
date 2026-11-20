@@ -6,6 +6,7 @@ import { useElicitationHost } from './ElicitationHost';
 import { claudeAnswersFrom, parseAskUserQuestion } from '../lib/elicitation';
 import { isSendKeyTrigger } from '../lib/sendKey';
 import { toWireImages } from '../lib/imageAttachments';
+import { isImageSizeNote, parseToolResultContent, type ToolOutput } from '../lib/toolResult';
 import { composeComment, type CommentMark, bookmarkLabel } from '../lib/review';
 import type { ChatQuote } from '../lib/addToChat';
 import { applyQuoteHighlights } from '../lib/quoteHighlight';
@@ -136,7 +137,8 @@ type Msg =
   // comment anchor (model: Comment.anchor = a:<uuid>:<blockIdx>).
   | { id: string; role: 'assistant'; text: string; uuid?: string; blockIdx?: number }
   | { id: string; role: 'system'; text: string }
-  | { id: string; role: 'tool'; name: string; input: any; toolUseId?: string; output?: string };
+  // outputImages: images the tool returned (e.g. Read on a .png).
+  | { id: string; role: 'tool'; name: string; input: any; toolUseId?: string; output?: string; outputImages?: string[] };
 
 // Stable per-message anchor for Review comments (model: entity Comment.anchor). null
 // while the message has no persisted identity yet: a just-sent user message
@@ -167,8 +169,8 @@ function sendKeyHint(k: SendKey): string {
 
 // Pure: convert a single claude stream-json / JSONL event into Msg deltas.
 // Returns either a list of new messages, or a tool_result patch by toolUseId.
-function renderEvent(ev: any): Array<{ kind: 'append'; msg: Msg } | { kind: 'tool_result'; toolUseId: string; output: string }> {
-  const out: Array<{ kind: 'append'; msg: Msg } | { kind: 'tool_result'; toolUseId: string; output: string }> = [];
+function renderEvent(ev: any): Array<{ kind: 'append'; msg: Msg } | { kind: 'tool_result'; toolUseId: string; output: string; images?: string[] }> {
+  const out: Array<{ kind: 'append'; msg: Msg } | { kind: 'tool_result'; toolUseId: string; output: string; images?: string[] }> = [];
   if (ev?.type === 'assistant' && ev.message) {
     const uuid = typeof ev.uuid === 'string' ? ev.uuid : undefined;
     (ev.message.content || []).forEach((block: any, blockIdx: number) => {
@@ -178,7 +180,7 @@ function renderEvent(ev: any): Array<{ kind: 'append'; msg: Msg } | { kind: 'too
         out.push({ kind: 'append', msg: { id: shortId(), role: 'tool', name: block.name, input: block.input, toolUseId: block.id } });
       }
     });
-  } else if (ev?.type === 'user' && ev.message) {
+  } else if (ev?.type === 'user' && ev.message && !isImageSizeNote(ev)) {
     const texts: string[] = [];
     const images: string[] = [];
     const rawContent = ev.message.content;
@@ -198,13 +200,8 @@ function renderEvent(ev: any): Array<{ kind: 'append'; msg: Msg } | { kind: 'too
           images.push(`data:${src.media_type};base64,${src.data}`);
         }
       } else if (block.type === 'tool_result') {
-        const text =
-          typeof block.content === 'string'
-            ? block.content
-            : Array.isArray(block.content)
-              ? block.content.map((c: any) => c.text || '').join('\n')
-              : JSON.stringify(block.content);
-        out.push({ kind: 'tool_result', toolUseId: block.tool_use_id, output: text });
+        const r = parseToolResultContent(block.content);
+        out.push({ kind: 'tool_result', toolUseId: block.tool_use_id, output: r.text, images: r.images });
       }
     }
     if (texts.length || images.length) {
@@ -234,7 +231,7 @@ function applyDeltas(prev: Msg[], deltas: ReturnType<typeof renderEvent>): Msg[]
       arr = [...arr, d.msg];
     } else {
       arr = arr.map((m) =>
-        m.role === 'tool' && m.toolUseId === d.toolUseId && !m.output ? { ...m, output: d.output } : m,
+        m.role === 'tool' && m.toolUseId === d.toolUseId && !m.output ? { ...m, output: d.output, outputImages: d.images } : m,
       );
     }
   }
@@ -247,7 +244,7 @@ function applyDeltas(prev: Msg[], deltas: ReturnType<typeof renderEvent>): Msg[]
 // the older slice (containing a tool_use) may be loaded after the newer slice
 // (containing its tool_result), so the result is stashed by toolUseId and
 // applied when the matching tool_use arrives in a later batch.
-function buildFromEvents(events: any[], orphanResults: Map<string, string>): Msg[] {
+function buildFromEvents(events: any[], orphanResults: Map<string, ToolOutput>): Msg[] {
   const msgs: Msg[] = [];
   const pendingByToolUseId = new Map<string, Msg & { role: 'tool' }>();
   for (const ev of events) {
@@ -256,7 +253,8 @@ function buildFromEvents(events: any[], orphanResults: Map<string, string>): Msg
         if (d.msg.role === 'tool' && d.msg.toolUseId) {
           const cached = orphanResults.get(d.msg.toolUseId);
           if (cached !== undefined) {
-            d.msg.output = cached;
+            d.msg.output = cached.text;
+            d.msg.outputImages = cached.images;
             orphanResults.delete(d.msg.toolUseId);
           } else {
             pendingByToolUseId.set(d.msg.toolUseId, d.msg);
@@ -267,9 +265,10 @@ function buildFromEvents(events: any[], orphanResults: Map<string, string>): Msg
         const target = pendingByToolUseId.get(d.toolUseId);
         if (target && target.output === undefined) {
           target.output = d.output;
+          target.outputImages = d.images;
           pendingByToolUseId.delete(d.toolUseId);
         } else {
-          orphanResults.set(d.toolUseId, d.output);
+          orphanResults.set(d.toolUseId, { text: d.output, images: d.images });
         }
       }
     }
@@ -438,7 +437,7 @@ export function ChatPanel({
   // Tool outputs whose tool_use lives in a not-yet-loaded older slice.
   // Carried across pagination loads so the result gets stitched in when the
   // matching tool_use eventually arrives.
-  const orphanResultsRef = useRef<Map<string, string>>(new Map());
+  const orphanResultsRef = useRef<Map<string, ToolOutput>>(new Map());
   // Captures scroll state before a prepend so we can restore the user's
   // viewport position after older messages render at the top.
   const beforePrependRef = useRef<{ height: number; top: number } | null>(null);
@@ -1326,6 +1325,13 @@ export function ChatPanel({
                       <pre className="tool-field-value">{rel(m.output)}</pre>
                     </div>
                   )}
+                </div>
+              )}
+              {m.outputImages && m.outputImages.length > 0 && (
+                <div className="tool-images">
+                  {m.outputImages.map((src, i) => (
+                    <img key={i} src={src} className="tool-image" alt="" loading="lazy" onClick={() => setLightbox(src)} />
+                  ))}
                 </div>
               )}
               {forms.renderFor(m.toolUseId)}

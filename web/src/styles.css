@@ -1649,6 +1649,17 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   object-fit: contain;
 }
 
+/* Images a tool returned (Read on a .png …): visible without expanding the card. */
+.tool-images { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 10px 8px; }
+.tool-image {
+  max-width: min(100%, 320px);
+  max-height: 160px;
+  border-radius: 4px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
+  cursor: zoom-in;
+  object-fit: contain;
+}
+
 .chat-pending-images {
   flex: 0 0 auto;
   display: flex;
