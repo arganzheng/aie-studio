@@ -1531,6 +1531,6 @@ function claudeMsgsToExport(msgs: Msg[]): ExportMessage[] {
     if (m.role === 'user') return { kind: 'user', text: m.text, images: m.images };
     if (m.role === 'assistant') return { kind: 'assistant', text: m.text };
     if (m.role === 'system') return { kind: 'system', text: m.text };
-    return { kind: 'tool', name: m.name, input: m.input, output: m.output };
+    return { kind: 'tool', name: m.name, input: m.input, output: m.output, images: m.outputImages };
   });
 }

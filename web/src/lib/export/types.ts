@@ -13,6 +13,8 @@ export type ExportMessage =
       title?: string;
       input: unknown;
       output?: string;
+      // Images the tool returned (e.g. Read on a .png), as data: or http URLs.
+      images?: string[];
     };
 
 export type ExportSource = 'claude' | 'devin';
