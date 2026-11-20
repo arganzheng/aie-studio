@@ -95,7 +95,7 @@ function toExport(msgs: Msg[]): ExportMessage[] {
       const out = [m.result?.stdout, m.result?.stderr, m.result?.blocked && `Blocked: ${m.result.blocked}`].filter(Boolean).join('\n');
       return { kind: 'tool', name: 'Bash (!)', input: { command: m.command }, output: out };
     }
-    return { kind: 'tool', name: m.name, input: m.input, output: m.output };
+    return { kind: 'tool', name: m.name, input: m.input, output: m.output, images: m.outputImages };
   });
 }
 

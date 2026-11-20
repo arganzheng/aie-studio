@@ -141,13 +141,20 @@ export const ExportView = forwardRef<HTMLDivElement, ExportViewProps>(function E
               </div>
               <div className="tool-detail">
                 <ToolFields input={m.input} />
-                {m.output !== undefined && (
+                {m.output !== undefined && !(m.output === '' && m.images?.length) && (
                   <div className="tool-field">
                     <div className="tool-field-key">output</div>
                     <pre className="tool-field-value" style={{ whiteSpace: 'pre-wrap' }}>{m.output}</pre>
                   </div>
                 )}
               </div>
+              {m.images && m.images.length > 0 && (
+                <div className="tool-images">
+                  {m.images.map((src, j) => (
+                    <img key={j} src={src} className="export-tool-image" alt="" crossOrigin="anonymous" />
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}

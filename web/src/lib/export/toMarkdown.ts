@@ -26,29 +26,28 @@ function stringifyInput(input: unknown): string {
   }
 }
 
+// data: URLs are inlined only when embedImages is on; other URLs always link.
+function imageLines(images: string[] | undefined, embedImages: boolean): string[] {
+  return (images ?? []).map((src) =>
+    src.startsWith('data:') && !embedImages ? '_[image omitted]_' : `![](${src})`,
+  );
+}
+
 function userBlock(m: Extract<ExportMessage, { kind: 'user' }>, opts: { embedImages: boolean }): string {
   const parts: string[] = [ROLE_HEADER.user];
   if (m.text) parts.push(m.text);
-  if (m.images && m.images.length) {
-    for (const src of m.images) {
-      if (opts.embedImages && src.startsWith('data:')) {
-        parts.push(`![](${src})`);
-      } else if (src.startsWith('data:')) {
-        parts.push('_[image omitted]_');
-      } else {
-        parts.push(`![](${src})`);
-      }
-    }
-  }
+  parts.push(...imageLines(m.images, opts.embedImages));
   return parts.join('\n\n');
 }
 
-function toolBlock(m: Extract<ExportMessage, { kind: 'tool' }>): string {
+function toolBlock(m: Extract<ExportMessage, { kind: 'tool' }>, opts: { embedImages: boolean }): string {
   const head = `#### 🛠 ${m.name}${m.title ? ` — ${m.title}` : ''}`;
   const inputStr = stringifyInput(m.input);
   const inputBlock = inputStr ? `\n**input**\n${fenceOutput(inputStr)}` : '';
   const outputBlock = m.output ? `\n**output**\n${fenceOutput(m.output)}` : '';
-  return `${head}${inputBlock}${outputBlock}`;
+  const images = imageLines(m.images, opts.embedImages);
+  const imageBlock = images.length ? `\n\n${images.join('\n\n')}` : '';
+  return `${head}${inputBlock}${outputBlock}${imageBlock}`;
 }
 
 export function toMarkdown(
@@ -75,7 +74,7 @@ export function toMarkdown(
         case 'system':
           return `${ROLE_HEADER.system}\n\n> ${m.text.replace(/\n/g, '\n> ')}`;
         case 'tool':
-          return toolBlock(m);
+          return toolBlock(m, { embedImages });
       }
     })
     .join('\n\n---\n\n');
