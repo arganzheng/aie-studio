@@ -41,6 +41,7 @@ import { MarkdownLink } from './MarkdownLink';
 import { claudeAnswersFrom, parseAskUserQuestion } from '../lib/elicitation';
 import { isSendKeyTrigger } from '../lib/sendKey';
 import { toWireImages } from '../lib/imageAttachments';
+import { isImageSizeNote, parseToolResultContent, type ToolOutput } from '../lib/toolResult';
 import { makeRelPath } from '../lib/relPath';
 import { toCommandItems } from '../lib/commandPicker';
 import type { ClaudeCliCatalog } from '../lib/claudeCatalog';
@@ -55,7 +56,8 @@ export type Msg =
   // the comment anchor (model: Comment.anchor = a:<uuid>:<blockIdx>).
   | { id: string; role: 'assistant'; text: string; uuid?: string; blockIdx?: number }
   | { id: string; role: 'system'; text: string }
-  | { id: string; role: 'tool'; name: string; input: any; toolUseId?: string; output?: string }
+  // outputImages: images the tool returned (e.g. Read on a .png).
+  | { id: string; role: 'tool'; name: string; input: any; toolUseId?: string; output?: string; outputImages?: string[] }
   // Model: web.BangCommand. bangId: the live command's id (absent when read
   // back from the transcript). pending: ran, but the model hasn't seen it yet
   // — it goes out with the next prompt.
@@ -98,7 +100,7 @@ function toExport(msgs: Msg[]): ExportMessage[] {
 
 type Delta =
   | { kind: 'append'; msg: Msg }
-  | { kind: 'tool_result'; toolUseId: string; output: string }
+  | { kind: 'tool_result'; toolUseId: string; output: string; images?: string[] }
   // Claude Code writes a `!` command's output as its own user record.
   | { kind: 'bang_output'; stdout: string; stderr: string };
 
@@ -115,7 +117,7 @@ function renderEvent(ev: any): Delta[] {
         out.push({ kind: 'append', msg: { id: shortId(), role: 'tool', name: block.name, input: block.input, toolUseId: block.id } });
       }
     });
-  } else if (ev?.type === 'user' && ev.message) {
+  } else if (ev?.type === 'user' && ev.message && !isImageSizeNote(ev)) {
     const texts: string[] = [];
     const images: string[] = [];
     const raw = ev.message.content;
@@ -126,10 +128,8 @@ function renderEvent(ev: any): Delta[] {
         const src = block.source;
         if (src?.type === 'base64' && src.data && src.media_type) images.push(`data:${src.media_type};base64,${src.data}`);
       } else if (block?.type === 'tool_result') {
-        const text = typeof block.content === 'string'
-          ? block.content
-          : Array.isArray(block.content) ? block.content.map((c: any) => c?.text || '').join('\n') : JSON.stringify(block.content);
-        out.push({ kind: 'tool_result', toolUseId: block.tool_use_id, output: text });
+        const r = parseToolResultContent(block.content);
+        out.push({ kind: 'tool_result', toolUseId: block.tool_use_id, output: r.text, images: r.images });
       }
     }
     const prompt: string[] = [];
@@ -145,7 +145,7 @@ function renderEvent(ev: any): Delta[] {
   return out;
 }
 
-export function buildFromEvents(events: any[], orphanResults: Map<string, string>): Msg[] {
+export function buildFromEvents(events: any[], orphanResults: Map<string, ToolOutput>): Msg[] {
   const msgs: Msg[] = [];
   const pendingTools = new Map<string, Msg & { role: 'tool' }>();
   for (const ev of events) {
@@ -153,7 +153,7 @@ export function buildFromEvents(events: any[], orphanResults: Map<string, string
       if (d.kind === 'append') {
         if (d.msg.role === 'tool' && d.msg.toolUseId) {
           const cached = orphanResults.get(d.msg.toolUseId);
-          if (cached !== undefined) { d.msg.output = cached; orphanResults.delete(d.msg.toolUseId); }
+          if (cached !== undefined) { d.msg.output = cached.text; d.msg.outputImages = cached.images; orphanResults.delete(d.msg.toolUseId); }
           else pendingTools.set(d.msg.toolUseId, d.msg);
         }
         msgs.push(d.msg);
@@ -161,8 +161,8 @@ export function buildFromEvents(events: any[], orphanResults: Map<string, string
         attachBangOutput(msgs, d);
       } else {
         const target = pendingTools.get(d.toolUseId);
-        if (target && target.output === undefined) { target.output = d.output; pendingTools.delete(d.toolUseId); }
-        else orphanResults.set(d.toolUseId, d.output);
+        if (target && target.output === undefined) { target.output = d.output; target.outputImages = d.images; pendingTools.delete(d.toolUseId); }
+        else orphanResults.set(d.toolUseId, { text: d.output, images: d.images });
       }
     }
   }
@@ -182,7 +182,7 @@ function applyDeltas(prev: Msg[], deltas: Delta[]): Msg[] {
   for (const d of deltas) {
     if (d.kind === 'append') arr = [...arr, d.msg];
     else if (d.kind === 'bang_output') { arr = [...arr]; attachBangOutput(arr, d); }
-    else arr = arr.map((m) => (m.role === 'tool' && m.toolUseId === d.toolUseId && m.output === undefined ? { ...m, output: d.output } : m));
+    else arr = arr.map((m) => (m.role === 'tool' && m.toolUseId === d.toolUseId && m.output === undefined ? { ...m, output: d.output, outputImages: d.images } : m));
   }
   return arr;
 }
@@ -449,7 +449,7 @@ export function SdkPanel({
 
   // Streaming bookkeeping (rule-369): text/tool blocks created from
   // stream_event, matched to the complete `assistant` echo by message.id.
-  const orphanResultsRef = useRef(new Map<string, string>());
+  const orphanResultsRef = useRef(new Map<string, ToolOutput>());
   const currentAssistantIdRef = useRef<string | null>(null);
   const streamedAssistantIdsRef = useRef(new Set<string>());
   const streamBlocksRef = useRef(new Map<string, { ourMsgId: string; kind: 'text' | 'tool_use'; jsonBuf?: string; uuidAssigned?: boolean }>());
@@ -1275,6 +1275,13 @@ export function SdkPanel({
                       <pre className="tool-field-value">{rel(m.output)}</pre>
                     </div>
                   )}
+                </div>
+              )}
+              {m.outputImages && m.outputImages.length > 0 && (
+                <div className="tool-images">
+                  {m.outputImages.map((src, i) => (
+                    <img key={i} src={src} className="tool-image" alt="" loading="lazy" onClick={() => setLightbox(src)} />
+                  ))}
                 </div>
               )}
               {forms.renderFor(m.toolUseId)}
