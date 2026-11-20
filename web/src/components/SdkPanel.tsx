@@ -1369,7 +1369,7 @@ export function SdkPanel({
                   onClick={() => setModelPickerOpen((v) => !v)}
                   type="button"
                 >{model ?? 'default'}{effort ? ` · ${effort}` : ''}</button>
-                <span className="chat-status-wire" title="This tab drives Claude through the Agent SDK bridge">sdk</span>
+                <span className="chat-status-wire" title={"This tab drives Claude through the Agent SDK bridge. It is fixed for the tab; New / Resume use the bridge set in Settings → Claude → Claude bridge (this device)."}>sdk</span>
                 {worktreeName && (
                   <span className="chat-status-wire chat-status-worktree" title={`This session works in its own git worktree: .claude/worktrees/${worktreeName} (branch child/${worktreeName}). Its file changes are not in the project's main checkout until merged.`}>⎇ {worktreeName}</span>
                 )}
