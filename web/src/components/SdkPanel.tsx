@@ -6,6 +6,8 @@
 // (projects/claude-sdk-session/design.md).
 import { Fragment, Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { PlanStrip } from './PlanStrip';
+import { foldPlan, isPlanTool, planToolSummary, type PlanToolCall } from '../lib/plan';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -277,6 +279,7 @@ export function summarizeTool(name: string, input: any, rel: (s: string) => stri
     case 'WebFetch': s = pick(['url']); break;
     case 'WebSearch': s = pick(['query']); break;
     case 'Task': case 'Agent': s = pick(['description', 'prompt']); break;
+    case 'TodoWrite': case 'TaskCreate': case 'TaskUpdate': s = planToolSummary(name, input); break;
     case 'AskUserQuestion': s = Array.isArray(input.questions) ? input.questions.map((q: any) => q?.header || '').filter(Boolean).join(', ') : ''; break;
     default: s = pick(['description', 'command', 'file_path', 'path', 'pattern', 'query', 'url', 'prompt']);
   }
@@ -375,6 +378,12 @@ export function SdkPanel({
   const [compacting, setCompacting] = useState(false);
   const compactedRef = useRef(false);
   const [oldestIdx, setOldestIdx] = useState(0);
+  // Model: web.PlanStrip — plan tool calls from the transcript before oldestIdx.
+  const [planBefore, setPlanBefore] = useState<PlanToolCall[]>([]);
+  const plan = useMemo(
+    () => foldPlan([...planBefore, ...msgs.flatMap((m) => m.role === 'tool' && isPlanTool(m.name) ? [{ name: m.name, input: m.input, output: m.output }] : [])]),
+    [planBefore, msgs],
+  );
   const [loadingMore, setLoadingMore] = useState(false);
   const [model, setModel] = useState<string | null>(null);
   const [effort, setEffort] = useState('');
@@ -581,10 +590,11 @@ export function SdkPanel({
     try {
       const r = await fetch(`/api/projects/${projectId}/sdk-sessions/${sid}/transcript?limit=20`);
       if (!r.ok) return;
-      const { events, startIndex } = await r.json();
+      const { events, startIndex, planTools } = await r.json();
       orphanResultsRef.current = new Map();
       setMsgs(buildFromEvents(events, orphanResultsRef.current));
       setOldestIdx(startIndex ?? 0);
+      setPlanBefore(Array.isArray(planTools) ? planTools : []);
     } catch {}
   }
 
@@ -598,12 +608,13 @@ export function SdkPanel({
     try {
       const r = await fetch(`/api/projects/${projectId}/sdk-sessions/${sid}/transcript?before=${before}&limit=20`);
       if (!r.ok) return;
-      const { events, startIndex } = await r.json();
+      const { events, startIndex, planTools } = await r.json();
       const el = scrollRef.current;
       if (el) beforePrependRef.current = { height: el.scrollHeight, top: el.scrollTop };
       const older = buildFromEvents(events, orphanResultsRef.current);
       setMsgs((prev) => [...older, ...prev]);
       setOldestIdx(startIndex ?? 0);
+      setPlanBefore(Array.isArray(planTools) ? planTools : []);
     } finally {
       loadingMoreRef.current = false;
       setLoadingMore(false);
@@ -1118,6 +1129,7 @@ export function SdkPanel({
   // ----- render ----------------------------------------------------------
   return (
     <div className="chat">
+      <PlanStrip plan={plan} />
       <div className="chat-messages" ref={scrollRef} onScroll={onMessagesScroll}>
         {oldestIdx > 0 && (
           <button ref={loadOlderRef} className="load-older" onClick={() => void loadOlder()} disabled={loadingMore} type="button">

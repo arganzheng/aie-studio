@@ -377,6 +377,13 @@ export function Settings({
                 onChange={(v) => { onLocalChange({ ...local, claudeBridge: v === 'cli' ? 'cli' : 'sdk' }); flashSaved(); }}
               />
               <Toggle
+                label="Task list"
+                checked={settings.taskListTools ?? true}
+                onChange={(v) => commit({ ...settings, taskListTools: v })}
+                text="Let Claude keep a task list"
+                hint="Claude sessions get the task-list tools (TaskCreate / TaskUpdate), which recent claude CLIs leave off. On a multi-step job Claude writes its plan there and ticks steps off; the line above the chat shows it. Applies to sessions started or resumed after the change."
+              />
+              <Toggle
                 label="Wire capture (this device)"
                 checked={local.showWireMenu}
                 onChange={(v) => { onLocalChange({ ...local, showWireMenu: v }); flashSaved(); }}

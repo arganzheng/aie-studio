@@ -804,6 +804,47 @@ pre {
 
 /* chat */
 .chat { display: flex; flex-direction: column; height: 100%; }
+/* Model: web.PlanStrip — the agent's task list pinned above the messages. */
+.plan-strip {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  font-size: 0.85em;
+}
+.plan-strip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.plan-strip-head:hover { background: var(--bg-hover); }
+.plan-strip-label { color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.85em; }
+.plan-strip-count { font-variant-numeric: tabular-nums; color: var(--fg-strong); }
+.plan-strip-bar { flex: 0 0 56px; height: 4px; border-radius: 2px; background: var(--border-strong); overflow: hidden; }
+.plan-strip-bar > span { display: block; height: 100%; background: var(--accent); transition: width 0.3s; }
+.plan-strip-now { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-strip.all-done .plan-strip-now { color: var(--fg-muted); }
+.plan-strip-caret { color: var(--fg-muted); }
+.plan-strip-list {
+  list-style: none;
+  margin: 0;
+  padding: 2px 10px 8px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.plan-item { display: flex; gap: 8px; padding: 2px 0; line-height: 1.45; }
+.plan-item-mark { flex: 0 0 1em; text-align: center; color: var(--fg-muted); }
+.plan-item.completed .plan-item-text { color: var(--fg-muted); text-decoration: line-through; }
+.plan-item.completed .plan-item-mark { color: var(--accent); }
+.plan-item.in_progress .plan-item-mark,
+.plan-item.in_progress .plan-item-text { color: var(--fg-strong); font-weight: 600; }
 .chat-messages {
   flex: 1 1 auto;
   overflow-y: auto;

@@ -1,3 +1,4 @@
+import { showsTurnRunning } from './session-tool-activity.js';
 import type { FastifyInstance } from 'fastify';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import readline from 'node:readline';
@@ -15,6 +16,7 @@ import { isEffortLevel } from './models.js';
 import { markLive, unmarkLive, liveBridge, type LiveState } from './live-sessions.js';
 import { getSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 import { duplexRoute } from './duplex.js';
+import { taskToolsEnv, taskToolsOn } from './task-tools.js';
 
 export type CliCatalog = {
   slashCommands: string[];
@@ -106,6 +108,9 @@ type SessionEntry = {
   // This proc was spawned with ANTHROPIC_BASE_URL pointing at the wire proxy
   // (model: Claude Session.observeWire). Carried over on re-spawns.
   observeWire: boolean;
+  // Model: web.PlanStrip — started with the task-list tools
+  // (Settings.taskListTools). Carried over on re-spawns.
+  taskTools: boolean;
   // Slash commands / skills / agents the CLI reported in `system.init`.
   // init fires once per spawn, so a client that attaches later (page
   // refresh) would never see it — replayed in `started`. Feeds the "/"
@@ -222,7 +227,7 @@ const CLAUDE_ENV = { ...process.env, CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: 
 // observeWire (model: server.ObserveWireSession): route this process's API
 // calls through the built-in wire proxy. Only honoured while the proxy is up;
 // otherwise the session talks to api.anthropic.com directly.
-function spawnClaude(cwd: string, resumeId?: string, model?: string, effort?: string, observeWire = false): ChildProcessWithoutNullStreams {
+function spawnClaude(cwd: string, resumeId?: string, model?: string, effort?: string, observeWire = false, taskTools = true): ChildProcessWithoutNullStreams {
   const args = [
     '-p',
     '--input-format', 'stream-json',
@@ -243,7 +248,7 @@ function spawnClaude(cwd: string, resumeId?: string, model?: string, effort?: st
   const wireUrl = observeWire ? wireBaseUrl() : null;
   return spawn('claude', args, {
     cwd,
-    env: wireUrl ? { ...CLAUDE_ENV, ANTHROPIC_BASE_URL: wireUrl } : CLAUDE_ENV,
+    env: { ...CLAUDE_ENV, ...(wireUrl ? { ANTHROPIC_BASE_URL: wireUrl } : {}), ...taskToolsEnv(taskTools) },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 }
@@ -473,7 +478,7 @@ function attachClientHandlers(entry: SessionEntry, socket: WebSocket) {
         try { oldProc.kill('SIGTERM'); } catch {}
         await awaitProcExit(oldProc);
         entry.effort = effort;
-        entry.proc = spawnClaude(entry.cwd, sid, undefined, effort, entry.observeWire);
+        entry.proc = spawnClaude(entry.cwd, sid, undefined, effort, entry.observeWire, entry.taskTools);
         entry.pendingUuids = [];
         entry.thinking = false;
         entry.lastSelfWrite = Date.now();
@@ -566,6 +571,8 @@ function wireProcess(entry: SessionEntry) {
       handleControlRequest(entry, event);
       return;
     }
+    // A turn the CLI started on its own (a background task finished).
+    if (showsTurnRunning(event)) entry.thinking = true;
     if (event?.type === 'result') {
       entry.thinking = false;
       scheduleTitleRefresh(entry);
@@ -889,7 +896,8 @@ export function registerSessionRoutes(app: FastifyInstance) {
       // only while the proxy is listening; `started.wire` tells the client.
       const observeWire = req.query.wire === '1' && wireBaseUrl() !== null;
       if (observeWire && resumeId) registerWireSession(resumeId, project.path);
-      const proc = spawnClaude(project.path, resumeId, settings.model, effort, observeWire);
+      const taskTools = taskToolsOn(settings);
+      const proc = spawnClaude(project.path, resumeId, settings.model, effort, observeWire, taskTools);
       const entry: SessionEntry = {
         proc,
         cwd: project.path,
@@ -903,6 +911,7 @@ export function registerSessionRoutes(app: FastifyInstance) {
         model: null,
         effort,
         observeWire,
+        taskTools,
         cliCatalog: null,
         title: null,
         titleTimers: [],
@@ -990,7 +999,7 @@ export function registerSessionRoutes(app: FastifyInstance) {
       // returning — otherwise WS clients sit on a zombie that can't accept
       // new user input. Use this helper for any failure exit.
       const recoverWithoutRewind = (statusCode: number, error: string) => {
-        const recoveryProc = spawnClaude(project.path, sid, undefined, entry.effort, entry.observeWire);
+        const recoveryProc = spawnClaude(project.path, sid, undefined, entry.effort, entry.observeWire, entry.taskTools);
         entry.proc = recoveryProc;
         entry.thinking = false;
         entry.lastSelfWrite = Date.now();
@@ -1017,7 +1026,7 @@ export function registerSessionRoutes(app: FastifyInstance) {
       // Step 3 — re-spawn the long-running claude proc on the now-shorter
       // transcript and rewire it into the existing entry so the WS clients
       // stay attached.
-      const newProc = spawnClaude(project.path, sid, undefined, entry.effort, entry.observeWire);
+      const newProc = spawnClaude(project.path, sid, undefined, entry.effort, entry.observeWire, entry.taskTools);
       entry.proc = newProc;
       entry.thinking = false;
       entry.lastSelfWrite = Date.now();
