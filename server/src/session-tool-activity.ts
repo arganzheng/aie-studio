@@ -41,3 +41,12 @@ export function activityAfter(m: any, cwd = ''): string | null {
   const last = tools[tools.length - 1];
   return toolActivity(last.name, last.input, cwd);
 }
+
+// Does this SDK message show that a main-thread turn is under way? A turn
+// can start without a prompt from us (a background task finishing wakes the
+// agent), so the bridge cannot learn of it from what it sent. Only the main
+// thread counts: a background subagent keeps writing after the turn ended.
+export function showsTurnRunning(m: any): boolean {
+  if (m?.parent_tool_use_id) return false;
+  return m?.type === 'assistant' || m?.type === 'stream_event';
+}

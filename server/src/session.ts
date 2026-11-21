@@ -1,3 +1,4 @@
+import { showsTurnRunning } from './session-tool-activity.js';
 import type { FastifyInstance } from 'fastify';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import readline from 'node:readline';
@@ -566,6 +567,8 @@ function wireProcess(entry: SessionEntry) {
       handleControlRequest(entry, event);
       return;
     }
+    // A turn the CLI started on its own (a background task finished).
+    if (showsTurnRunning(event)) entry.thinking = true;
     if (event?.type === 'result') {
       entry.thinking = false;
       scheduleTitleRefresh(entry);

@@ -44,7 +44,7 @@ import { publishSessionEvent, type SessionOwner } from './notify.js';
 import { askSummary, toSummary } from './inbox.js';
 import { isEffortLevel } from './models.js';
 import { markLive, unmarkLive, liveBridge, type LiveState } from './live-sessions.js';
-import { activityAfter } from './session-tool-activity.js';
+import { activityAfter, showsTurnRunning } from './session-tool-activity.js';
 import { STATUS_INSTRUCTIONS, parseStatus } from './session-status.js';
 import {
   DEFAULT_MODE, PLAN_MODE_DENIAL, PLAN_TOOL, describePermission, isOwnTool, isSessionMode, permissionDenial, permissionSummary, planOf, planRejection, sessionRules,
@@ -591,6 +591,9 @@ function onSdkMessage(entry: SdkEntry, m: any) {
   applyTaskEvent(entry.tasks, m);
   const activity = activityAfter(m, entry.cwd);
   if (activity !== null) entry.activity = activity;
+  // A turn the CLI started on its own (a background task finished) is still
+  // a running turn: the Sessions list and the idle kill must see it.
+  if (showsTurnRunning(m)) entry.thinking = true;
   if (m?.type === 'system' && m?.subtype === 'init') {
     const sid: string | undefined = m.session_id;
     if (sid && entry.sessionId !== sid) {
