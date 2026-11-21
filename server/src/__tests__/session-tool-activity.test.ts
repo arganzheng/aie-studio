@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activityAfter, toolActivity, MAX_ACTIVITY_CHARS } from '../session-tool-activity.js';
+import { activityAfter, showsTurnRunning, toolActivity, MAX_ACTIVITY_CHARS } from '../session-tool-activity.js';
 
 describe('toolActivity', () => {
   it('names the tool and what it is working on', () => {
@@ -30,5 +30,18 @@ describe('activityAfter', () => {
     expect(activityAfter({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } })).toBeNull();
     expect(activityAfter({ type: 'assistant', parent_tool_use_id: 't1', message: { content: [tool('Read', { file_path: 'a' })] } })).toBeNull();
     expect(activityAfter({ type: 'stream_event' })).toBeNull();
+  });
+});
+
+describe('showsTurnRunning', () => {
+  it('sees a turn the agent started on its own', () => {
+    expect(showsTurnRunning({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start' } })).toBe(true);
+    expect(showsTurnRunning({ type: 'assistant', parent_tool_use_id: null, message: { content: [] } })).toBe(true);
+  });
+  it('ignores what can arrive while the session is idle', () => {
+    expect(showsTurnRunning({ type: 'result', subtype: 'success' })).toBe(false);
+    expect(showsTurnRunning({ type: 'system', subtype: 'task_notification' })).toBe(false);
+    expect(showsTurnRunning({ type: 'assistant', parent_tool_use_id: 'toolu_1', message: { content: [] } })).toBe(false);
+    expect(showsTurnRunning(null)).toBe(false);
   });
 });
