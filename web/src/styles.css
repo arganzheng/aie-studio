@@ -4022,3 +4022,25 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   cursor: pointer;
 }
 .history-notice button:hover { background: var(--bg-hover); }
+
+/* Model: server.WebPush — Settings → Push notifications. */
+.push-settings .push-test {
+  width: auto;
+  align-self: flex-start;
+  flex: 0 0 auto;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.push-settings .push-test:hover { background: var(--bg-hover); }
+.push-note { margin: 6px 0 0 26px; }
+.push-devices { list-style: none; margin: 8px 0 0 26px; padding: 0; font-size: 13px; }
+.push-devices li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.push-device-when { color: var(--fg-muted); font-size: 12px; margin-left: auto; }
+.push-devices button { border: none; background: transparent; color: var(--fg-muted); cursor: pointer; font-size: 15px; padding: 0 4px; }
+.push-devices button:hover { color: var(--danger); }

@@ -11,6 +11,7 @@ import * as review from './lib/review';
 import type { ChatQuote } from './lib/addToChat';
 import { alertHeadline, alertKey, alertSessionTitle, dropSeen, isViewing, titleWithUnread, upsertAlert, type SessionEvent, type ViewState } from './lib/sessionAlerts';
 import { playChime, showSystemNotification } from './lib/sessionAlertEffects';
+import { alertFromHash } from './lib/push';
 import { useSessionEvents } from './useSessionEvents';
 import { SessionAlerts } from './components/SessionAlerts';
 import { InboxButton, InboxPanel } from './components/InboxPanel';
@@ -924,6 +925,15 @@ export default function App() {
     navigator.serviceWorker.addEventListener('message', onMessage);
     return () => navigator.serviceWorker.removeEventListener('message', onMessage);
   }, []);
+  // Model: server.WebPush — a notification clicked while the app was closed
+  // opens it at /#alert=<event> (sw.js): go to that session once loaded.
+  useEffect(() => {
+    if (!loaded) return;
+    const e = alertFromHash(window.location.hash) as SessionEvent | null;
+    if (!e?.projectId) return;
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+    openSessionAlertRef.current(e);
+  }, [loaded]);
 
   // Model: web.AddToChat — the session tab the user was last in, per project:
   // where a passage quoted from a file goes.
