@@ -2,6 +2,8 @@ import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileTree } from './components/FileTree';
 import { ReviewPanel } from './components/ReviewPanel';
+import { SidePanel, type SideRequest } from './components/SidePanel';
+import type { FollowInfo } from './components/ChangesView';
 import type { NewComment } from './components/CommentComposer';
 import type { NewBookmark } from './components/BookmarkButton';
 import type { Bookmark } from './types';
@@ -92,8 +94,11 @@ const SIDEBAR_MAX_WIDTH = 600;
 // Desktop Review column (model: web.ResizeReviewPanel / web.ToggleReviewPanel).
 const REVIEW_WIDTH_LS_KEY = `${LS_PREFIX}reviewWidth`;
 const REVIEW_COLLAPSED_LS_KEY = `${LS_PREFIX}reviewCollapsed`;
+// Model: web.SidePanel — the side panel covers the chat area (Maximize).
+const SIDE_MAX_LS_KEY = `${LS_PREFIX}sideMaximized`;
 const REVIEW_MIN_WIDTH = 200;
-const REVIEW_MAX_WIDTH = 600;
+// Wide enough for side-by-side reading of a diff; Maximize goes further.
+const REVIEW_MAX_WIDTH = 1400;
 const REVIEW_COLLAPSED_WIDTH = 32;
 // Which draft Batch new comments go to, per project (model:
 // web.SetCurrentBatch). Per-device, like the active tab.
@@ -429,6 +434,28 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem(REVIEW_COLLAPSED_LS_KEY, reviewCollapsed ? '1' : '0'); } catch {}
   }, [reviewCollapsed]);
+  // Model: web.SidePanel — Maximize, and asks to show a tab (Review / a new launcher).
+  const [sideMax, setSideMax] = useState<boolean>(() => { try { return localStorage.getItem(SIDE_MAX_LS_KEY) === '1'; } catch { return false; } });
+  useEffect(() => {
+    try { localStorage.setItem(SIDE_MAX_LS_KEY, sideMax ? '1' : '0'); } catch {}
+  }, [sideMax]);
+  const [sideRequest, setSideRequest] = useState<SideRequest | null>(null);
+  const askSide = (kind: SideRequest['kind']) => setSideRequest((prev) => ({ kind, seq: (prev?.seq ?? 0) + 1 }));
+  // Comments and bookmarks land in Review: bring its tab forward.
+  const showReview = () => { setReviewCollapsed(false); askSide('review'); };
+  // Model: web.SidePanel — Option+T: a new launcher tab in the side panel.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.metaKey || e.ctrlKey || e.code !== 'KeyT') return;
+      e.preventDefault();
+      setReviewCollapsed(false);
+      setDrawerOpen(false);
+      setReviewDrawerOpen(true);
+      askSide('launcher');
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
   const [currentBatches, setCurrentBatches] = useState<Record<string, string>>(() => loadCurrentBatches());
   useEffect(() => {
     try { localStorage.setItem(REVIEW_CURRENT_BATCH_LS_KEY, JSON.stringify(currentBatches)); } catch {}
@@ -904,6 +931,22 @@ export default function App() {
   useEffect(() => {
     if (activeProjectId && activeTab && isSessionTab(activeTab)) lastSessionTabRef.current.set(activeProjectId, activeTab.id);
   }, [activeProjectId, activeTab]);
+
+  // Model: web.SidePanel — the session a "follow" Changes tab shows: the one
+  // in front, else the one the user was last in. Claude sessions are looked
+  // up by id (the server knows which worktree each runs in); a fresh child
+  // tab names its worktree before it has an id. Devin runs in the project.
+  const lastSessionId = activeProjectId ? lastSessionTabRef.current.get(activeProjectId) : undefined;
+  const followCandidate = activeTab && isSessionTab(activeTab) ? activeTab : tabs.find((t) => t.id === lastSessionId) ?? null;
+  const followTab = followCandidate && isSessionTab(followCandidate) ? followCandidate : null;
+  const followTitle = followTab ? (('title' in followTab && followTab.title) || tabTitle(followTab)) : '';
+  const followSessionId = followTab && followTab.type !== 'devin' ? followTab.resumeId : undefined;
+  const followWorktree = followTab?.type === 'claude-sdk' ? followTab.worktree : undefined;
+  const follow: FollowInfo | null = useMemo(
+    () => (followTab ? { sessionId: followSessionId, worktree: followWorktree, label: followTitle } : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [followTab?.id, followSessionId, followWorktree, followTitle],
+  );
 
   // Record that a tab was visited so lazy-mount keeps it alive after the
   // first switch away. Fires whenever the active tab id changes.
@@ -1416,7 +1459,7 @@ export default function App() {
     updateProjectBatches(activeProjectId, review.addComment(withBatch, batch.id, comment));
     // A collapsed panel would hide the new row — open it so the user sees
     // where the comment went (model: web.ToggleReviewPanel).
-    setReviewCollapsed(false);
+    showReview();
     return `Added to ${batch.name}`;
   }
 
@@ -1448,7 +1491,7 @@ export default function App() {
   // make sure the panel is showing, then have it scroll to / flash the row.
   const [focusedComment, setFocusedComment] = useState<{ id: string; seq: number } | null>(null);
   function focusComment(commentId: string) {
-    setReviewCollapsed(false);
+    showReview();
     setDrawerOpen(false);
     setReviewDrawerOpen(true);
     setFocusedComment((prev) => ({ id: commentId, seq: (prev?.seq ?? 0) + 1 }));
@@ -1486,7 +1529,7 @@ export default function App() {
     logDebug('review', `${added ? 'bookmark' : 'unbookmark'} ${b.anchor} in ${origin.type} ${origin.key}`);
     updateProjectBookmarks(activeProjectId, next);
     // Same as a new comment: a collapsed panel would hide the new row.
-    if (added) setReviewCollapsed(false);
+    if (added) showReview();
     return added ? 'Bookmarked' : 'Bookmark removed';
   }
 
@@ -1796,7 +1839,7 @@ export default function App() {
 
   return (
     <div
-      className={`app${reviewOn ? '' : ' no-review'}`}
+      className={`app${sideMax && !reviewCollapsed ? ' side-max' : ''}`}
       style={{
         ...(sidebarWidth != null ? { '--sidebar-width': `${sidebarWidth}px` } : {}),
         ...(reviewCollapsed
@@ -1805,7 +1848,7 @@ export default function App() {
       } as React.CSSProperties}
     >
       {drawerOpen && <div className="drawer-backdrop" onClick={() => setDrawerOpen(false)} />}
-      {reviewOn && reviewDrawerOpen && <div className="review-drawer-backdrop" onClick={() => setReviewDrawerOpen(false)} />}
+      {reviewDrawerOpen && <div className="review-drawer-backdrop" onClick={() => setReviewDrawerOpen(false)} />}
 
       <div className={`drawer ${drawerOpen ? 'open' : ''}`}>
         <div className="panel files-panel">
@@ -1936,7 +1979,7 @@ export default function App() {
         <TabBar
           onMenuClick={() => { setReviewDrawerOpen(false); setDrawerOpen((v) => !v); }}
           reviewCount={draftComments}
-          onReviewClick={reviewOn ? () => { setDrawerOpen(false); setReviewDrawerOpen((v) => !v); } : undefined}
+          onReviewClick={() => { setDrawerOpen(false); setReviewDrawerOpen((v) => !v); }}
           activeProjectName={activeProject?.name ?? null}
           onRefresh={
             activeTab
@@ -2046,9 +2089,9 @@ export default function App() {
         </div>
       </div>
 
-      {reviewOn && (
+      {/* Model: web.SidePanel — tabs (Changes, Review, …), Maximize, Collapse. */}
       <div className={`review-drawer ${reviewDrawerOpen ? 'open' : ''}`}>
-        <div className={`panel review-panel ${reviewCollapsed ? 'collapsed' : ''}`}>
+        <div className={`panel review-panel side-panel ${reviewCollapsed ? 'collapsed' : ''}`}>
           <div
             className="review-resize"
             title="Drag to resize; double-click to reset"
@@ -2058,45 +2101,49 @@ export default function App() {
             onPointerCancel={onReviewResizeUp}
             onDoubleClick={() => setReviewWidth(null)}
           />
-          <div className="panel-header">
-            {!reviewCollapsed && <span>Review</span>}
-            <button
-              className="review-collapse"
-              onClick={() => setReviewCollapsed((v) => !v)}
-              title={reviewCollapsed ? 'Expand Review' : 'Collapse Review'}
-              aria-label={reviewCollapsed ? 'Expand Review' : 'Collapse Review'}
-            >{reviewCollapsed ? '«' : '»'}</button>
-            <button className="review-panel-close" onClick={() => setReviewDrawerOpen(false)} aria-label="Close">×</button>
-          </div>
-          <div className="panel-body">
-            {activeProject ? (
-              <ReviewPanel
-                batches={batches}
-                bookmarks={bookmarks}
-                onJumpBookmark={jumpToBookmark}
-                onDeleteBookmark={removeBookmark}
-                currentBatchId={currentBatch?.id ?? null}
-                focused={focusedComment}
-                onAddComment={addPlainComment}
-                onEditComment={editComment}
-                onDeleteComment={deleteComment}
-                onPlaceComment={placeComment}
-                onMoveToNewBatch={moveCommentToNewBatch}
-                onJump={jumpToComment}
-                onCreateBatch={createBatch}
-                onRenameBatch={renameBatch}
-                onDeleteBatch={deleteBatch}
-                onSetCurrent={setCurrentBatch}
-                onSendBatch={sendBatch}
-                onReopenBatch={reopenBatch}
-              />
-            ) : (
-              <div className="empty">Select a project</div>
-            )}
-          </div>
+          {activeProject ? (
+            <SidePanel
+              lsPrefix={LS_PREFIX}
+              projectId={activeProject.id}
+              projectName={activeProject.name}
+              reviewOn={reviewOn}
+              reviewCount={draftComments}
+              follow={follow}
+              onAddToChat={addQuoteToChat}
+              collapsed={reviewCollapsed}
+              maximized={sideMax}
+              onToggleCollapse={() => setReviewCollapsed((v) => !v)}
+              onToggleMax={() => setSideMax((v) => !v)}
+              onCloseDrawer={() => setReviewDrawerOpen(false)}
+              request={sideRequest}
+              renderReview={() => (
+                  <ReviewPanel
+                    batches={batches}
+                    bookmarks={bookmarks}
+                    onJumpBookmark={jumpToBookmark}
+                    onDeleteBookmark={removeBookmark}
+                    currentBatchId={currentBatch?.id ?? null}
+                    focused={focusedComment}
+                    onAddComment={addPlainComment}
+                    onEditComment={editComment}
+                    onDeleteComment={deleteComment}
+                    onPlaceComment={placeComment}
+                    onMoveToNewBatch={moveCommentToNewBatch}
+                    onJump={jumpToComment}
+                    onCreateBatch={createBatch}
+                    onRenameBatch={renameBatch}
+                    onDeleteBatch={deleteBatch}
+                    onSetCurrent={setCurrentBatch}
+                    onSendBatch={sendBatch}
+                    onReopenBatch={reopenBatch}
+                  />
+              )}
+            />
+          ) : (
+            <div className="panel-body"><div className="empty">Select a project</div></div>
+          )}
         </div>
       </div>
-      )}
 
       {inboxOpen && (
         <InboxPanel

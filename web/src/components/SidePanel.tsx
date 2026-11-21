@@ -1,0 +1,149 @@
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import type { ChatQuote } from '../lib/addToChat';
+import {
+  FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, openTab, parseSideState, pick, visibleTabs,
+  type SideState, type SideTab, type SideWant,
+} from '../lib/sidePanel';
+import { ChangesView, type FollowInfo } from './ChangesView';
+import { SideLauncher } from './SideLauncher';
+
+// Model: web.SidePanel — the right-hand column (formerly only Review): its
+// own strip of tabs with "+", and on the right Maximize (take over the chat
+// area) and Collapse. Desktop: third grid column, resizable from its left
+// edge. Mobile: right-side drawer. One set of tabs per project, on this device.
+
+// Asks the panel to show a tab: Review (a comment was just added) or a new
+// launcher (Option+T). `seq` makes repeated asks distinct.
+export type SideRequest = { kind: 'review' | 'launcher'; seq: number };
+
+export function PanelIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+      <path d="M10 2.5v11" />
+    </svg>
+  );
+}
+function MaximizeIcon({ on }: { on: boolean }) {
+  return on ? (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
+      <path d="M9.5 2.5v4h4M6.5 13.5v-4h-4M9.5 6.5l4.5-4.5M6.5 9.5L2 14" />
+    </svg>
+  ) : (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
+      <path d="M10 2h4v4M6 14H2v-4M14 2L9 7M2 14l5-5" />
+    </svg>
+  );
+}
+
+function tabTitle(t: SideTab, projectName: string, reviewCount: number): string {
+  if (t.kind === 'review') return reviewCount ? `Review (${reviewCount})` : 'Review';
+  if (t.kind === 'launcher') return 'New tab';
+  if (t.target === FOLLOW) return 'Changes';
+  return `Changes · ${t.target === ROOT ? projectName : t.target}`;
+}
+
+function storageKey(prefix: string, projectId: string) { return `${prefix}side:${projectId}`; }
+
+export function SidePanel({
+  lsPrefix, projectId, projectName, reviewOn, reviewCount, renderReview, follow, onAddToChat,
+  collapsed, maximized, onToggleCollapse, onToggleMax, onCloseDrawer, request,
+}: {
+  lsPrefix: string;
+  projectId: string;
+  projectName: string;
+  reviewOn: boolean;
+  reviewCount: number;
+  renderReview: () => ReactNode;
+  follow: FollowInfo | null;
+  onAddToChat?: (quote: ChatQuote) => void;
+  collapsed: boolean;
+  maximized: boolean;
+  onToggleCollapse: () => void;
+  onToggleMax: () => void;
+  // Mobile drawer's ×.
+  onCloseDrawer: () => void;
+  request: SideRequest | null;
+}) {
+  const load = (pid: string) => parseSideState(localStorage.getItem(storageKey(lsPrefix, pid)), reviewOn);
+  const [state, setState] = useState<SideState>(() => load(projectId));
+  const loadedFor = useRef(projectId);
+  useEffect(() => {
+    if (loadedFor.current === projectId) return;
+    loadedFor.current = projectId;
+    setState(load(projectId));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+  useEffect(() => {
+    if (loadedFor.current !== projectId) return;
+    try { localStorage.setItem(storageKey(lsPrefix, projectId), JSON.stringify(state)); } catch {}
+  }, [state, projectId, lsPrefix]);
+
+  const lastSeq = useRef(request?.seq ?? 0);
+  useEffect(() => {
+    if (!request || request.seq === lastSeq.current) return;
+    lastSeq.current = request.seq;
+    if (request.kind === 'review' && reviewOn) setState((s) => openTab(s, { kind: 'review' }));
+    else if (request.kind === 'launcher') setState((s) => addLauncher(s));
+  }, [request, reviewOn]);
+
+  const tabs = visibleTabs(state, reviewOn);
+  const current = activeTab(state, reviewOn);
+
+  let body: ReactNode;
+  if (!current) {
+    body = <SideLauncher projectId={projectId} projectName={projectName} reviewOn={reviewOn} followLabel={follow?.label ?? null} onPick={(want) => setState((s) => openTab(s, want))} />;
+  } else if (current.kind === 'launcher') {
+    body = <SideLauncher key={current.id} projectId={projectId} projectName={projectName} reviewOn={reviewOn} followLabel={follow?.label ?? null} onPick={(want) => setState((s) => pick(s, current.id, want))} />;
+  } else if (current.kind === 'review') {
+    body = renderReview();
+  } else {
+    body = <ChangesView key={current.id} projectId={projectId} projectName={projectName} target={current.target} follow={follow} active={!collapsed} onAddToChat={onAddToChat} />;
+  }
+
+  return (
+    <>
+      <div className="panel-header side-head">
+        {!collapsed && (
+          <div className="side-tabs" role="tablist" aria-label="Side panel tabs">
+            {tabs.map((t) => (
+              <div
+                key={t.id}
+                role="tab"
+                aria-selected={t.id === current?.id}
+                className={`side-tab${t.id === current?.id ? ' active' : ''}`}
+                onClick={() => setState((s) => activate(s, t.id))}
+                title={tabTitle(t, projectName, reviewCount)}
+              >
+                <span className="side-tab-label">{tabTitle(t, projectName, reviewCount)}</span>
+                <button
+                  type="button"
+                  className="side-tab-close"
+                  aria-label="Close tab"
+                  onClick={(e) => { e.stopPropagation(); setState((s) => closeTab(s, t.id)); }}
+                >×</button>
+              </div>
+            ))}
+            <button type="button" className="side-add" onClick={() => setState((s) => addLauncher(s))} title="New tab (⌥T)" aria-label="New tab">+</button>
+          </div>
+        )}
+        <div className="side-actions">
+          {!collapsed && (
+            <button type="button" className="side-icon side-max" onClick={onToggleMax} title={maximized ? 'Restore (show the chat again)' : 'Maximize over the chat area'} aria-label={maximized ? 'Restore' : 'Maximize'}>
+              <MaximizeIcon on={maximized} />
+            </button>
+          )}
+          <button
+            type="button"
+            className={`side-icon review-collapse${collapsed ? '' : ' on'}`}
+            onClick={onToggleCollapse}
+            title={collapsed ? 'Show the side panel' : 'Hide the side panel'}
+            aria-label={collapsed ? 'Show the side panel' : 'Hide the side panel'}
+          ><PanelIcon /></button>
+          <button type="button" className="review-panel-close" onClick={onCloseDrawer} aria-label="Close">×</button>
+        </div>
+      </div>
+      <div className="panel-body side-body">{body}</div>
+    </>
+  );
+}

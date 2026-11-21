@@ -687,3 +687,48 @@ export async function markNotificationsRead(target: { ids?: string[]; sessions?:
 export async function deleteNotifications(target: { ids?: string[]; all?: boolean }): Promise<void> {
   await jsonOrThrow(await fetch('/api/notifications/delete', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(target) }));
 }
+
+// Model: web.ChangesView (server/src/changes.ts) — what a checkout changed
+// since its branch left the main branch (scope 'base') or since HEAD.
+export type DiffLine = { t: '+' | '-' | ' ' | '\\'; text: string; oldNo?: number; newNo?: number };
+export type DiffHunk = { header: string; lines: DiffLine[] };
+export type DiffFile = {
+  path: string;
+  oldPath?: string;
+  status: 'added' | 'deleted' | 'modified' | 'renamed' | 'untracked';
+  binary: boolean;
+  additions: number;
+  deletions: number;
+  hunks: DiffHunk[];
+  truncated?: boolean;
+};
+export type CheckoutSummary = {
+  worktree: string | null;
+  branch: string;
+  base: string | null;
+  mergeBase: string | null;
+  ahead: number;
+  dirty: number;
+};
+export type ChangesScope = 'base' | 'uncommitted';
+export type ChangesResult =
+  | { git: false; worktree: string | null }
+  | ({ git: true; scope: ChangesScope; files: DiffFile[] } & CheckoutSummary);
+
+// Which checkout: a worktree by name, else the one a session runs in, else the project.
+export async function fetchChanges(projectId: string, q: { worktree?: string | null; session?: string | null; scope: ChangesScope }, signal?: AbortSignal): Promise<ChangesResult> {
+  const p = new URLSearchParams({ scope: q.scope });
+  if (q.worktree) p.set('worktree', q.worktree);
+  if (q.session) p.set('session', q.session);
+  const r = await fetch(`/api/projects/${encodeURIComponent(projectId)}/changes?${p}`, { signal });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+
+export async function fetchChangeTargets(projectId: string): Promise<{ git: boolean; targets: CheckoutSummary[] }> {
+  const r = await fetch(`/api/projects/${encodeURIComponent(projectId)}/changes/targets`);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
