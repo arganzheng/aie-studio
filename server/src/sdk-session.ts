@@ -53,6 +53,7 @@ import {
 import { registerWireSession, wireBaseUrl } from './observe/wire-proxy.js';
 import { encodeCwd } from './observe/transcript.js';
 import { duplexRoute } from './duplex.js';
+import { planToolCalls } from './plan-tools.js';
 
 // ----- input queue: one always-open async iterable per live query ---------
 
@@ -1567,7 +1568,9 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
       const endIndex = Math.max(0, Math.min(total, Number.isFinite(before) ? before : total));
       const startIndex = Math.max(0, endIndex - limit);
       const events = msgs.slice(startIndex, endIndex).map((m) => ({ type: m.type, uuid: m.uuid, message: m.message }));
-      return { events, startIndex, endIndex, total };
+      // Model: web.PlanStrip — plan tool calls from the part not sent.
+      const planTools = planToolCalls(msgs.slice(0, startIndex) as { message?: unknown }[]);
+      return { events, startIndex, endIndex, total, planTools };
     },
   );
 

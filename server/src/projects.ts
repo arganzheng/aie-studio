@@ -22,6 +22,7 @@ import {
 } from './store.js';
 import { getUserId } from './auth.js';
 import { countWireRecords, wireDir } from './observe/wire.js';
+import { planToolCalls } from './plan-tools.js';
 
 function encodeCwd(cwd: string): string {
   // Claude Code stores sessions under ~/.claude/projects/<cwd with / replaced by ->
@@ -193,6 +194,8 @@ export function registerProjectRoutes(app: FastifyInstance) {
         startIndex: startIdx,
         endIndex: endIdx,
         total,
+        // Model: web.PlanStrip — plan tool calls from the part not sent.
+        planTools: planToolCalls(all.slice(0, startIdx)),
       };
     },
   );
