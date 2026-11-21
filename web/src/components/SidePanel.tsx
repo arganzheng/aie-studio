@@ -89,6 +89,11 @@ export function SidePanel({
 
   const tabs = visibleTabs(state, reviewOn);
   const current = activeTab(state, reviewOn);
+  // Keep the active tab in view when the strip scrolls sideways.
+  const stripRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    stripRef.current?.querySelector('.side-tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [current?.id, collapsed]);
 
   let body: ReactNode;
   if (!current) {
@@ -105,7 +110,7 @@ export function SidePanel({
     <>
       <div className="panel-header side-head">
         {!collapsed && (
-          <div className="side-tabs" role="tablist" aria-label="Side panel tabs">
+          <div className="side-tabs" role="tablist" aria-label="Side panel tabs" ref={stripRef}>
             {tabs.map((t) => (
               <div
                 key={t.id}
@@ -124,9 +129,10 @@ export function SidePanel({
                 >×</button>
               </div>
             ))}
-            <button type="button" className="side-add" onClick={() => setState((s) => addLauncher(s))} title="New tab (⌥T)" aria-label="New tab">+</button>
           </div>
         )}
+        {/* Outside the scrolling strip, so it stays in reach however many tabs there are. */}
+        {!collapsed && <button type="button" className="side-add" onClick={() => setState((s) => addLauncher(s))} title="New tab (⌥T)" aria-label="New tab">+</button>}
         <div className="side-actions">
           {!collapsed && (
             <button type="button" className="side-icon side-max" onClick={onToggleMax} title={maximized ? 'Restore (show the chat again)' : 'Maximize over the chat area'} aria-label={maximized ? 'Restore' : 'Maximize'}>

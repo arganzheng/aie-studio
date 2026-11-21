@@ -1839,7 +1839,7 @@ export default function App() {
 
   return (
     <div
-      className={`app${sideMax && !reviewCollapsed ? ' side-max' : ''}`}
+      className={`app${sideMax && !reviewCollapsed ? ' side-maximized' : ''}`}
       style={{
         ...(sidebarWidth != null ? { '--sidebar-width': `${sidebarWidth}px` } : {}),
         ...(reviewCollapsed

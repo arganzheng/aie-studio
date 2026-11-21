@@ -3751,7 +3751,8 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   overflow: visible;
 }
 .side-tabs {
-  flex: 1 1 auto;
+  /* Only as wide as its tabs, so "+" sits right after the last one. */
+  flex: 0 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -3761,9 +3762,10 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 }
 .side-tabs::-webkit-scrollbar { display: none; }
 .side-tab {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 220px;
+  /* Tabs never squeeze each other: each keeps its label (up to 180px, then
+     an ellipsis) and the strip scrolls sideways when they do not fit. */
+  flex: 0 0 auto;
+  max-width: 180px;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -3784,9 +3786,9 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   line-height: 1;
   padding: 0 4px;
   cursor: pointer;
-  visibility: hidden;
+  display: none;
 }
-.side-tab:hover .side-tab-close, .side-tab.active .side-tab-close { visibility: visible; }
+.side-tab:hover .side-tab-close, .side-tab.active .side-tab-close { display: inline; }
 .side-tab-close:hover { color: var(--fg-strong); }
 .side-add {
   flex: 0 0 auto;
@@ -3826,11 +3828,12 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   .side-panel.collapsed .side-body { display: none; }
   .side-panel .review-collapse { width: 28px; height: 28px; padding: 0; }
   /* Maximize: the side panel takes the chat column's place. */
-  .app.side-max { grid-template-columns: var(--sidebar-width) 1fr; }
-  .app.side-max .main-panel { display: none; }
+  .app.side-maximized { grid-template-columns: var(--sidebar-width) 1fr; }
+  .app.side-maximized .main-panel { display: none; }
 }
 @media (max-width: 768px) {
-  .side-max { display: none; }
+  /* A drawer here: neither Maximize nor Collapse means anything. */
+  .side-panel .side-max, .side-panel .review-collapse { display: none; }
   .tab-review svg { width: 20px; height: 20px; }
 }
 
