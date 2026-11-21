@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { foldPlan, planFromList, planSummary, type PlanToolCall } from '../plan';
+import { foldPlan, planFromList, planSummary, planToolSummary, type PlanToolCall } from '../plan';
 
 const todo = (todos: any[]): PlanToolCall => ({ name: 'TodoWrite', input: { todos } });
 
@@ -82,5 +82,15 @@ describe('planSummary', () => {
     expect(planSummary(plan)).toEqual({ done: 1, total: 3, current: plan[2] });
     expect(planSummary(plan.slice(0, 2)).current).toBe(plan[1]);
     expect(planSummary(plan.slice(0, 1)).current).toBeNull();
+  });
+});
+
+describe('planToolSummary', () => {
+  it('names the task and the change', () => {
+    expect(planToolSummary('TaskCreate', { subject: 'Write tests' })).toBe('Write tests');
+    expect(planToolSummary('TaskUpdate', { taskId: '2', status: 'in_progress' })).toBe('#2 → in progress');
+    expect(planToolSummary('TaskUpdate', { taskId: '2', subject: 'Renamed' })).toBe('#2 Renamed');
+    expect(planToolSummary('TodoWrite', { todos: [{}, {}] })).toBe('2 todos');
+    expect(planToolSummary('Bash', { command: 'ls' })).toBe('');
   });
 });

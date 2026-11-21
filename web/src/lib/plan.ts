@@ -78,3 +78,15 @@ export function planSummary(plan: readonly PlanItem[]): { done: number; total: n
   const current = plan.find((x) => x.status === 'in_progress') ?? plan.find((x) => x.status === 'pending') ?? null;
   return { done, total: plan.length, current };
 }
+
+// The one-line summary on a plan tool's row in the chat; '' for other tools.
+export function planToolSummary(name: string, input: any): string {
+  if (!input || typeof input !== 'object') return '';
+  if (name === 'TodoWrite') return Array.isArray(input.todos) ? `${input.todos.length} todos` : '';
+  if (name === 'TaskCreate') return str(input.subject) ?? '';
+  if (name === 'TaskUpdate') {
+    const parts = [input.taskId != null ? `#${input.taskId}` : '', str(input.status) ? `→ ${String(input.status).replace('_', ' ')}` : '', str(input.subject) ?? ''];
+    return parts.filter(Boolean).join(' ');
+  }
+  return '';
+}

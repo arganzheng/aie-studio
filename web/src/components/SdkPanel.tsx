@@ -7,7 +7,7 @@
 import { Fragment, Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { PlanStrip } from './PlanStrip';
-import { foldPlan, isPlanTool, type PlanToolCall } from '../lib/plan';
+import { foldPlan, isPlanTool, planToolSummary, type PlanToolCall } from '../lib/plan';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -279,6 +279,7 @@ export function summarizeTool(name: string, input: any, rel: (s: string) => stri
     case 'WebFetch': s = pick(['url']); break;
     case 'WebSearch': s = pick(['query']); break;
     case 'Task': case 'Agent': s = pick(['description', 'prompt']); break;
+    case 'TodoWrite': case 'TaskCreate': case 'TaskUpdate': s = planToolSummary(name, input); break;
     case 'AskUserQuestion': s = Array.isArray(input.questions) ? input.questions.map((q: any) => q?.header || '').filter(Boolean).join(', ') : ''; break;
     default: s = pick(['description', 'command', 'file_path', 'path', 'pattern', 'query', 'url', 'prompt']);
   }

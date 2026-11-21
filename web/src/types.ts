@@ -211,6 +211,10 @@ export type Settings = {
   // Model: Session.children — Claude (SDK) sessions get the tools to open
   // and message child sessions. On unless set to false.
   childSessionTools?: boolean;
+  // Model: web.PlanStrip — start Claude sessions with the task-list tools
+  // (TaskCreate / TaskUpdate; CLAUDE_CODE_ENABLE_TODO_TOOLS), which recent
+  // claude CLIs leave off. Default on (absent = on).
+  taskListTools?: boolean;
   // Limits on the children Claude opens: how many of one session may work at
   // once (default 10) and how deep they may nest (default 2).
   childMaxRunning?: number;

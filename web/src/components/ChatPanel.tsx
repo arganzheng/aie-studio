@@ -16,7 +16,7 @@ import { Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo,
 import type { SendKey, Theme } from '../types';
 import ReactMarkdown from 'react-markdown';
 import { PlanStrip } from './PlanStrip';
-import { foldPlan, isPlanTool, type PlanToolCall } from '../lib/plan';
+import { foldPlan, isPlanTool, planToolSummary, type PlanToolCall } from '../lib/plan';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -118,8 +118,8 @@ function summarizeTool(name: string, input: any, rel: (s: string) => string): st
       return input.url ?? '';
     case 'WebSearch':
       return input.query ?? '';
-    case 'TodoWrite':
-      return `${(input.todos ?? []).length} todos`;
+    case 'TodoWrite': case 'TaskCreate': case 'TaskUpdate':
+      return planToolSummary(name, input);
     default: {
       const k = Object.keys(input)[0];
       if (!k) return '';
