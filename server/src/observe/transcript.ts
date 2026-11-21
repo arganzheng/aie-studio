@@ -4,6 +4,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { claudeDirName, realPathSync } from '../claude-paths.js';
 
 /** transcript 一行。只列装配用到的字段，其余透传在索引签名里。 */
 export interface TranscriptEntry {
@@ -73,9 +74,9 @@ export interface SessionTranscripts {
 // 路径
 // ---------------------------------------------------------------------------
 
-/** Claude Code 用 '-' 替换路径里的 '/' 作项目目录名（与 session.ts 的 encodeCwd 一致） */
+/** Claude Code 的项目目录名：先解析符号链接，再把所有非字母数字字符换成 '-'（见 claude-paths.ts） */
 export function encodeCwd(cwd: string): string {
-  return cwd.replace(/\//g, '-');
+  return claudeDirName(realPathSync(cwd));
 }
 
 export function transcriptDir(cwd: string, home = os.homedir()): string {

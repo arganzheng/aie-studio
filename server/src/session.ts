@@ -17,6 +17,7 @@ import { markLive, unmarkLive, liveBridge, type LiveState } from './live-session
 import { getSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 import { duplexRoute } from './duplex.js';
 import { taskToolsEnv, taskToolsOn } from './task-tools.js';
+import { claudeProjectDir, findTranscript, transcriptFile } from './claude-paths.js';
 
 export type CliCatalog = {
   slashCommands: string[];
@@ -159,12 +160,9 @@ const PING_INTERVAL_MS = 30_000;
 // window to avoid false positives.
 const EXTERNAL_QUIET_MS = 30_000;
 
-function encodeCwd(cwd: string): string {
-  return cwd.replace(/\//g, '-');
-}
-
+// Where claude writes this session's transcript (claude-paths.ts).
 function jsonlPathFor(cwd: string, sessionId: string): string {
-  return path.join(os.homedir(), '.claude', 'projects', encodeCwd(cwd), `${sessionId}.jsonl`);
+  return transcriptFile(cwd, sessionId);
 }
 
 // Scan the project's most-recent JSONL for the last `assistant` event's model.
@@ -174,7 +172,7 @@ function jsonlPathFor(cwd: string, sessionId: string): string {
 // arrives.
 async function peekRecentModel(cwd: string): Promise<string | null> {
   try {
-    const dir = path.join(os.homedir(), '.claude', 'projects', encodeCwd(cwd));
+    const dir = claudeProjectDir(cwd);
     const fsp = await import('node:fs/promises');
     const files = await fsp.readdir(dir).catch(() => [] as string[]);
     const stats = await Promise.all(
@@ -971,9 +969,8 @@ export function registerSessionRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'newText or images required' });
       }
 
-      const jsonlFile = jsonlPathFor(project.path, sid);
-      try { await fsp.stat(jsonlFile); }
-      catch { return reply.code(404).send({ error: 'session transcript not found' }); }
+      const jsonlFile = await findTranscript(project.path, sid);
+      if (!jsonlFile) return reply.code(404).send({ error: 'session transcript not found' });
 
       const entry = byResumeId.get(sid);
       if (!entry) {

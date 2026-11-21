@@ -6,6 +6,8 @@
 // (projects/claude-sdk-session/design.md).
 import { Fragment, Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { HistoryNotice, historyProblem } from './HistoryNotice';
+import { logDebug } from '../lib/debugLog';
 import { PlanStrip } from './PlanStrip';
 import { foldPlan, isPlanTool, planToolSummary, type PlanToolCall } from '../lib/plan';
 import remarkGfm from 'remark-gfm';
@@ -369,6 +371,10 @@ export function SdkPanel({
   onPanelApi?: (api: SessionPanelApi | null) => void;
 }) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
+  // Model: web.HistoryNotice — why the history is missing, instead of a blank chat.
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const msgsRef = useRef<Msg[]>(msgs);
+  msgsRef.current = msgs;
   const [status, setStatus] = useState<Status>('connecting');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [lightbox, setLightbox] = useState<string | null>(null);
@@ -587,15 +593,25 @@ export function SdkPanel({
 
   // ----- transcript ------------------------------------------------------
   async function refetchTranscript(sid: string) {
+    let r: Response | null = null;
     try {
-      const r = await fetch(`/api/projects/${projectId}/sdk-sessions/${sid}/transcript?limit=20`);
-      if (!r.ok) return;
-      const { events, startIndex, planTools } = await r.json();
+      r = await fetch(`/api/projects/${projectId}/sdk-sessions/${sid}/transcript?limit=20`);
+      if (!r.ok) {
+        logDebug('history', `sdk ${sid.slice(0, 8)}: transcript HTTP ${r.status}`);
+        setHistoryError(historyProblem(r, null, null));
+        return;
+      }
+      const { events, startIndex, planTools, total } = await r.json();
+      logDebug('history', `sdk ${sid.slice(0, 8)}: ${events?.length ?? 0} of ${total ?? '?'} messages`);
+      setHistoryError(historyProblem(r, events?.length ?? 0, total ?? null));
       orphanResultsRef.current = new Map();
       setMsgs(buildFromEvents(events, orphanResultsRef.current));
       setOldestIdx(startIndex ?? 0);
       setPlanBefore(Array.isArray(planTools) ? planTools : []);
-    } catch {}
+    } catch (e) {
+      logDebug('history', `sdk ${sid.slice(0, 8)}: transcript failed: ${String(e)}`);
+      if (!r) setHistoryError(historyProblem(null, null, null));
+    }
   }
 
   function loadOlder() { return loadOlderFrom(oldestIdxRef.current); }
@@ -771,6 +787,12 @@ export function SdkPanel({
       if (typeof m.title === 'string' && m.title) onTitleRef.current?.(m.title);
       if (Array.isArray(m.commands)) setCatalog({ commands: m.commands, agents: m.agents ?? [], models: m.models ?? [] });
       showToast(m.resumed ? (m.attached ? 'Attached to live session' : 'Resumed session') : 'Session started');
+      // Model: web.HistoryNotice — a resumed session with nothing on screen
+      // most likely asked for its history too early: ask once more.
+      const resumedSid = activeSessionIdRef.current;
+      if (m.resumed && resumedSid && msgsRef.current.length === 0) {
+        window.setTimeout(() => { if (msgsRef.current.length === 0) void refetchTranscript(resumedSid); }, 1000);
+      }
       return;
     }
     if (m.type === 'context') { if (m.context) setContextUsage(m.context); return; }
@@ -1131,6 +1153,9 @@ export function SdkPanel({
     <div className="chat">
       <PlanStrip plan={plan} />
       <div className="chat-messages" ref={scrollRef} onScroll={onMessagesScroll}>
+        {historyError && (
+          <HistoryNotice text={historyError} onRetry={() => { const sid = activeSessionIdRef.current; if (sid) void refetchTranscript(sid); }} />
+        )}
         {oldestIdx > 0 && (
           <button ref={loadOlderRef} className="load-older" onClick={() => void loadOlder()} disabled={loadingMore} type="button">
             {loadingMore ? 'Loading…' : `↑ Load older (${oldestIdx} above)`}
