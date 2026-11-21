@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { PanelIcon } from './SidePanel';
 import type { Tab } from '../types';
 import { listTabKinds, type TabActivity } from '../registry';
 import { activityMark } from '../lib/tabActivity';
@@ -309,8 +310,8 @@ export function TabBar({
         )}
       </div>
       {onReviewClick && (
-        <button className="tab-review" onClick={onReviewClick} title="Review" aria-label="Review">
-          💬{!!reviewCount && <span className="tab-review-count">{reviewCount}</span>}
+        <button className="tab-review" onClick={onReviewClick} title="Side panel: changes, review" aria-label="Side panel">
+          <PanelIcon />{!!reviewCount && <span className="tab-review-count">{reviewCount}</span>}
         </button>
       )}
     </div>
