@@ -15,6 +15,8 @@ import type { SessionPanelApi, TabActivity } from '../registry/tabRegistry';
 import { Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SendKey, Theme } from '../types';
 import ReactMarkdown from 'react-markdown';
+import { PlanStrip } from './PlanStrip';
+import { foldPlan, isPlanTool, planToolSummary, type PlanToolCall } from '../lib/plan';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -116,8 +118,8 @@ function summarizeTool(name: string, input: any, rel: (s: string) => string): st
       return input.url ?? '';
     case 'WebSearch':
       return input.query ?? '';
-    case 'TodoWrite':
-      return `${(input.todos ?? []).length} todos`;
+    case 'TodoWrite': case 'TaskCreate': case 'TaskUpdate':
+      return planToolSummary(name, input);
     default: {
       const k = Object.keys(input)[0];
       if (!k) return '';
@@ -380,6 +382,12 @@ export function ChatPanel({
   const [toolPopout, setToolPopout] = useState<Msg | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [oldestIdx, setOldestIdx] = useState<number>(0);
+  // Model: web.PlanStrip — plan tool calls from the transcript before oldestIdx.
+  const [planBefore, setPlanBefore] = useState<PlanToolCall[]>([]);
+  const plan = useMemo(
+    () => foldPlan([...planBefore, ...msgs.flatMap((m) => m.role === 'tool' && isPlanTool(m.name) ? [{ name: m.name, input: m.input, output: m.output }] : [])]),
+    [planBefore, msgs],
+  );
   const [loadingMore, setLoadingMore] = useState(false);
   const [model, setModel] = useState<string | null>(null);
   // started.wire — the server confirmed this proc runs through the wire proxy.
@@ -526,11 +534,12 @@ export function ChatPanel({
     try {
       const r = await fetch(`/api/projects/${projectId}/sessions/${uuid}/transcript?limit=20`);
       if (!r.ok) return;
-      const { events, startIndex } = await r.json();
+      const { events, startIndex, planTools } = await r.json();
       // Reset orphan map: we're rebuilding from scratch.
       orphanResultsRef.current = new Map();
       setMsgs(buildFromEvents(events, orphanResultsRef.current));
       setOldestIdx(startIndex ?? 0);
+      setPlanBefore(Array.isArray(planTools) ? planTools : []);
     } catch {}
   }
 
@@ -546,12 +555,13 @@ export function ChatPanel({
         `/api/projects/${projectId}/sessions/${uuid}/transcript?before=${before}&limit=20`,
       );
       if (!r.ok) return;
-      const { events, startIndex } = await r.json();
+      const { events, startIndex, planTools } = await r.json();
       const el = scrollRef.current;
       if (el) beforePrependRef.current = { height: el.scrollHeight, top: el.scrollTop };
       const older = buildFromEvents(events, orphanResultsRef.current);
       setMsgs((prev) => [...older, ...prev]);
       setOldestIdx(startIndex ?? 0);
+      setPlanBefore(Array.isArray(planTools) ? planTools : []);
     } finally {
       loadingMoreRef.current = false;
       setLoadingMore(false);
@@ -706,12 +716,13 @@ export function ChatPanel({
             `/api/projects/${projectId}/sessions/${initialResume}/transcript?limit=20`,
           );
           if (r.ok) {
-            const { events, startIndex } = await r.json();
+            const { events, startIndex, planTools } = await r.json();
             if (aborted) return;
             orphanResultsRef.current = new Map();
             const arr = buildFromEvents(events, orphanResultsRef.current);
             setMsgs(arr);
             setOldestIdx(startIndex ?? 0);
+            setPlanBefore(Array.isArray(planTools) ? planTools : []);
             // Best-effort: surface the last model id from the transcript before
             // WS attaches. Avoids a blank model field on resume.
             for (let i = events.length - 1; i >= 0; i--) {
@@ -1200,6 +1211,7 @@ export function ChatPanel({
 
   return (
     <div className="chat">
+      <PlanStrip plan={plan} />
       <div className="chat-messages" ref={scrollRef} onScroll={onMessagesScroll}>
         {oldestIdx > 0 && (
           <button

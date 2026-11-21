@@ -53,6 +53,8 @@ import {
 import { registerWireSession, wireBaseUrl } from './observe/wire-proxy.js';
 import { encodeCwd } from './observe/transcript.js';
 import { duplexRoute } from './duplex.js';
+import { planToolCalls } from './plan-tools.js';
+import { taskToolsEnv, taskToolsOn } from './task-tools.js';
 
 // ----- input queue: one always-open async iterable per live query ---------
 
@@ -196,6 +198,8 @@ type SdkEntry = {
   // Model: Session.children — this session's agent may open child sessions
   // (Settings.childSessionTools).
   childTools: boolean;
+  // Model: web.PlanStrip — started with the task-list tools (Settings.taskListTools).
+  taskTools: boolean;
   // The turn now running was asked for by the parent agent (spawn / send):
   // its answer goes back to the parent when it ends.
   reportToParent: boolean;
@@ -296,7 +300,7 @@ function broadcast(entry: SdkEntry, msg: unknown, except?: WebSocket) {
   }
 }
 
-function sdkEnv(observeWire: boolean): Record<string, string> {
+function sdkEnv(observeWire: boolean, taskTools: boolean): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (typeof v === 'string') env[k] = v;
   // Same as session.ts: non-interactive runs only checkpoint files with this set.
@@ -305,6 +309,7 @@ function sdkEnv(observeWire: boolean): Record<string, string> {
   // which honours ANTHROPIC_BASE_URL like the cli bridge's spawn does.
   const wire = observeWire ? wireBaseUrl() : null;
   if (wire) env.ANTHROPIC_BASE_URL = wire;
+  Object.assign(env, taskToolsEnv(taskTools));
   return env;
 }
 
@@ -447,7 +452,7 @@ function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: 
       permissionMode: entry.mode,
       allowDangerouslySkipPermissions: true,
       enableFileCheckpointing: true,
-      env: sdkEnv(entry.observeWire),
+      env: sdkEnv(entry.observeWire, entry.taskTools),
       pathToClaudeCodeExecutable: process.env.REMOTE_IDE_SDK_CLAUDE_PATH || undefined,
       stderr: (data) => broadcast(entry, { type: 'stderr', data }),
       canUseTool: makeCanUseTool(entry),
@@ -1074,6 +1079,7 @@ function newEntry(o: {
     tasks: new Map(),
     parentSessionId: o.parentSessionId ?? null,
     childTools: o.settings.childSessionTools !== false,
+    taskTools: taskToolsOn(o.settings),
     reportToParent: false,
     spawnedByAgent: o.spawnedByAgent === true,
     userNotes: [],
@@ -1570,7 +1576,9 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
       const endIndex = Math.max(0, Math.min(total, Number.isFinite(before) ? before : total));
       const startIndex = Math.max(0, endIndex - limit);
       const events = msgs.slice(startIndex, endIndex).map((m) => ({ type: m.type, uuid: m.uuid, message: m.message }));
-      return { events, startIndex, endIndex, total };
+      // Model: web.PlanStrip — plan tool calls from the part not sent.
+      const planTools = planToolCalls(msgs.slice(0, startIndex) as { message?: unknown }[]);
+      return { events, startIndex, endIndex, total, planTools };
     },
   );
 

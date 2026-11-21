@@ -6,6 +6,7 @@ A browser-based workbench for driving AI coding agents (Claude Code, Devin CLI) 
 
 - **Agent tabs** — run multiple Claude Code / Devin sessions side by side, each pinned to a project directory; resume previous sessions
 - **`!` shell commands** — `!cmd` in a Claude (SDK) chat runs a shell command in the project directory; Claude sees its output with your next message, like Claude Code's bash mode. Obviously destructive commands are refused (see *Shell guard*)
+- **Plan strip** — when the agent keeps a task list (Claude's `TodoWrite` / `TaskCreate` / `TaskUpdate`, Devin's plan), a line above the chat shows progress and the step in progress, however far the chat has scrolled; tap it for the whole list. It survives a reload, even when the list was written long before the part of the chat that is loaded. Recent claude CLIs leave the task-list tools off; aie-studio turns them on for the Claude sessions it starts (`CLAUDE_CODE_ENABLE_TODO_TOOLS=1`), switchable in Settings → Claude → Task list
 - **File browser & viewer** — tree view of the project, preview of text, Markdown, images, PDFs
 - **Sessions** — one sidebar view for every session, newest first; sessions open in a tab are marked, and opening or closing a tab never moves a row; search, filter, archive
 - **Subagent tree** — a Claude session that spawned subagents (its Agent tool) gets a caret and a `⑂ 2/3` badge in the Sessions list; expand it to see each subagent with its status, click one to follow its conversation live in a read-only tab, and stop a running one without stopping the session.

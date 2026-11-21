@@ -9,6 +9,8 @@ import type { SessionPanelApi, TabActivity } from '../registry/tabRegistry';
 import { Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SendKey, Theme } from '../types';
 import ReactMarkdown from 'react-markdown';
+import { PlanStrip } from './PlanStrip';
+import { planFromList, type PlanItem } from '../lib/plan';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -437,6 +439,19 @@ export function DevinPanel({
     (ok) => showToast(ok ? 'Copied ✓' : 'Copy failed'),
   );
   const [msgs, setMsgs] = useState<Msg[]>([]);
+  // Model: web.PlanStrip — Devin's latest ACP `plan` update; before one
+  // arrives, a todo-list tool call in the loaded history stands in.
+  const [livePlan, setLivePlan] = useState<PlanItem[] | null>(null);
+  const plan = useMemo(() => {
+    if (livePlan) return livePlan;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.role !== 'tool') continue;
+      const list = planFromList(m.rawInput?.todos);
+      if (list) return list;
+    }
+    return null;
+  }, [livePlan, msgs]);
   const [status, setStatus] = useState<Status>('connecting');
   // Mirror status in a ref so updateStatus can no-op + skip logging when the
   // transition is a redundant same-value setState — most commonly caused by
@@ -1026,6 +1041,7 @@ export function DevinPanel({
         return;
       }
       case 'plan': {
+        setLivePlan(planFromList(update.entries) ?? []);
         const lines = (update.entries ?? []).map((e: any) => {
           const mark = e.status === 'completed' ? '✅' : e.status === 'in_progress' ? '🚀' : '·';
           return `${mark} ${e.content}`;
@@ -1561,6 +1577,7 @@ export function DevinPanel({
 
   return (
     <div className="chat">
+      <PlanStrip plan={plan} />
       <div className="chat-messages" ref={scrollRef} onScroll={onScroll}>
         {oldestIdx > 0 && (
           <button
