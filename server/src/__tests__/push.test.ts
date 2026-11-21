@@ -57,6 +57,8 @@ describe('payloadFor', () => {
     });
     expect(payloadFor({ ...event, kind: 'done', title: null, summary: null, tabType: 'devin' }, null))
       .toMatchObject({ title: 'Devin session', body: 'Finished', tag: 'p1:devin:s1' });
+    expect(payloadFor({ ...event, kind: 'done', title: null, summary: 'PUSH-OK' }, 'push-demo'))
+      .toMatchObject({ title: 'Claude session · push-demo', body: 'Finished\nPUSH-OK' });
   });
 });
 

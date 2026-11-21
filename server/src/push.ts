@@ -121,9 +121,11 @@ function withLock<T>(uid: string, fn: () => Promise<T>): Promise<T> {
 
 // Pure: what the notification says. `project` is the project's name.
 export function payloadFor(e: SessionEvent, project: string | null): PushPayload {
-  const who = e.title || (e.tabType === 'devin' ? 'Devin session' : 'Claude session');
+  const generic = e.tabType === 'devin' ? 'Devin session' : 'Claude session';
   const what = e.kind === 'awaiting' ? 'Needs you' : 'Finished';
-  const lines = [`${what}${project ? ` · ${project}` : ''}`];
+  // A session not titled yet is named by its project in the title instead.
+  const who = e.title || (project ? `${generic} · ${project}` : generic);
+  const lines = [e.title && project ? `${what} · ${project}` : what];
   if (e.summary) lines.push(e.summary.length > 160 ? `${e.summary.slice(0, 159)}…` : e.summary);
   return {
     title: who,
