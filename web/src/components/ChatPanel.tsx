@@ -15,6 +15,8 @@ import type { SessionPanelApi, TabActivity } from '../registry/tabRegistry';
 import { Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SendKey, Theme } from '../types';
 import ReactMarkdown from 'react-markdown';
+import { HistoryNotice, historyProblem } from './HistoryNotice';
+import { logDebug } from '../lib/debugLog';
 import { PlanStrip } from './PlanStrip';
 import { foldPlan, isPlanTool, planToolSummary, type PlanToolCall } from '../lib/plan';
 import remarkGfm from 'remark-gfm';
@@ -373,6 +375,10 @@ export function ChatPanel({
     (ok) => showToast(ok ? 'Copied ✓' : 'Copy failed'),
   );
   const [msgs, setMsgs] = useState<Msg[]>([]);
+  // Model: web.HistoryNotice — why the history is missing, instead of a blank chat.
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const msgsRef = useRef<Msg[]>(msgs);
+  msgsRef.current = msgs;
   const [status, setStatus] = useState<Status>('connecting');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // Model: web.ImageAttachments — images waiting to go with the next prompt.
@@ -531,16 +537,26 @@ export function ChatPanel({
   const VISIBILITY_STALE_MS = 30_000;
 
   async function refetchTranscript(uuid: string) {
+    let r: Response | null = null;
     try {
-      const r = await fetch(`/api/projects/${projectId}/sessions/${uuid}/transcript?limit=20`);
-      if (!r.ok) return;
-      const { events, startIndex, planTools } = await r.json();
+      r = await fetch(`/api/projects/${projectId}/sessions/${uuid}/transcript?limit=20`);
+      if (!r.ok) {
+        logDebug('history', `cli ${uuid.slice(0, 8)}: transcript HTTP ${r.status}`);
+        setHistoryError(historyProblem(r, null, null));
+        return;
+      }
+      const { events, startIndex, planTools, total } = await r.json();
+      logDebug('history', `cli ${uuid.slice(0, 8)}: ${events?.length ?? 0} of ${total ?? '?'} messages`);
+      setHistoryError(historyProblem(r, events?.length ?? 0, total ?? null));
       // Reset orphan map: we're rebuilding from scratch.
       orphanResultsRef.current = new Map();
       setMsgs(buildFromEvents(events, orphanResultsRef.current));
       setOldestIdx(startIndex ?? 0);
       setPlanBefore(Array.isArray(planTools) ? planTools : []);
-    } catch {}
+    } catch (e) {
+      logDebug('history', `cli ${uuid.slice(0, 8)}: transcript failed: ${String(e)}`);
+      if (!r) setHistoryError(historyProblem(null, null, null));
+    }
   }
 
   function loadOlder() { return loadOlderFrom(oldestIdx); }
@@ -715,9 +731,15 @@ export function ChatPanel({
           const r = await fetch(
             `/api/projects/${projectId}/sessions/${initialResume}/transcript?limit=20`,
           );
+          if (!r.ok) {
+            logDebug('history', `cli ${initialResume.slice(0, 8)}: transcript HTTP ${r.status}`);
+            setHistoryError(historyProblem(r, null, null));
+          }
           if (r.ok) {
-            const { events, startIndex, planTools } = await r.json();
+            const { events, startIndex, planTools, total } = await r.json();
             if (aborted) return;
+            logDebug('history', `cli ${initialResume.slice(0, 8)}: ${events?.length ?? 0} of ${total ?? '?'} messages`);
+            setHistoryError(historyProblem(r, events?.length ?? 0, total ?? null));
             orphanResultsRef.current = new Map();
             const arr = buildFromEvents(events, orphanResultsRef.current);
             setMsgs(arr);
@@ -1213,6 +1235,9 @@ export function ChatPanel({
     <div className="chat">
       <PlanStrip plan={plan} />
       <div className="chat-messages" ref={scrollRef} onScroll={onMessagesScroll}>
+        {historyError && (
+          <HistoryNotice text={historyError} onRetry={() => { const sid = activeSessionIdRef.current ?? initialResumeIdRef.current; if (sid) void refetchTranscript(sid); }} />
+        )}
         {oldestIdx > 0 && (
           <button
             ref={loadOlderRef}

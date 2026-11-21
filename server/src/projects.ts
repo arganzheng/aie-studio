@@ -23,11 +23,8 @@ import {
 import { getUserId } from './auth.js';
 import { countWireRecords, wireDir } from './observe/wire.js';
 import { planToolCalls } from './plan-tools.js';
+import { claudeProjectDir, findTranscript } from './claude-paths.js';
 
-function encodeCwd(cwd: string): string {
-  // Claude Code stores sessions under ~/.claude/projects/<cwd with / replaced by ->
-  return cwd.replace(/\//g, '-');
-}
 
 export function registerProjectRoutes(app: FastifyInstance) {
   app.get('/api/projects', async (req, reply) => {
@@ -84,7 +81,7 @@ export function registerProjectRoutes(app: FastifyInstance) {
     if (!uid) return reply.code(401).send({ error: 'unauthorized' });
     const project = await getProject(uid, req.params.id);
     if (!project) return reply.code(404).send({ error: 'project not found' });
-    const dir = path.join(os.homedir(), '.claude', 'projects', encodeCwd(project.path));
+    const dir = claudeProjectDir(project.path);
     let files: string[] = [];
     try {
       files = await fs.readdir(dir);
@@ -160,13 +157,9 @@ export function registerProjectRoutes(app: FastifyInstance) {
       if (!uid) return reply.code(401).send({ error: 'unauthorized' });
       const project = await getProject(uid, req.params.id);
       if (!project) return reply.code(404).send({ error: 'project not found' });
-      const file = path.join(
-        os.homedir(),
-        '.claude',
-        'projects',
-        encodeCwd(project.path),
-        `${req.params.uuid}.jsonl`,
-      );
+      // Model: server.ReadTranscript — where claude wrote it (claude-paths.ts).
+      const file = await findTranscript(project.path, req.params.uuid);
+      if (!file) return reply.code(404).send({ error: 'transcript not found' });
       let raw: string;
       try {
         raw = await fs.readFile(file, 'utf8');
