@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { getUserId } from './auth.js';
 import { inbox, sessionKey } from './inbox.js';
 import { duplexRoute } from './duplex.js';
+import { pushSessionEvent } from './push.js';
 
 // Model: server.SessionEvents — tells a user's open pages that one of their
 // AI sessions finished a turn or is waiting on them, whichever project / tab
@@ -83,6 +84,8 @@ export function publishSessionEvent(
   backlogs.set(owner.uid, pushBacklog(backlogs.get(owner.uid) ?? [], event, now));
   try { inbox()?.add(owner.uid, event); } catch (e) { console.error('[inbox] add failed:', e); }
   for (const socket of subscribers.get(owner.uid) ?? []) send(socket, { type: 'session', event });
+  // Model: server.WebPush — and to the user's devices, page open or not.
+  pushSessionEvent(owner.uid, event);
 }
 
 // Model: web.Inbox — another page changed read state; refetch.

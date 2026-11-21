@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { PushSettings } from './PushSettings';
 import { requestSystemNotify, systemNotifyState } from '../lib/sessionAlertEffects';
 import type { Settings, SendKey, Theme, FontScale, LocalPrefs } from '../types';
 import { usePwaInstall } from '../usePwaInstall';
@@ -479,6 +480,7 @@ export function Settings({
                       : 'Permission is per browser: turning this on asks once on each device.'
                     }
                   />
+                  <PushSettings />
                 </>
               )}
               <Toggle
