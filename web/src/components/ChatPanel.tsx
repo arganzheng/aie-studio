@@ -27,7 +27,7 @@ import { makeRelPath } from '../lib/relPath';
 import { MarkdownLink } from './MarkdownLink';
 import { ChatInput } from './ChatInput';
 import { useAieCommands } from '../useAieCommands';
-import { toCommandItems } from '../lib/commandPicker';
+import { BTW_COMMAND, btwQuestion, toCommandItems } from '../lib/commandPicker';
 import type { ClaudeCliCatalog } from '../lib/claudeCatalog';
 import { useClaudeModels, effortOptionsFor } from '../useClaudeModels';
 import { stripStatus } from '../lib/sessionStatus';
@@ -306,6 +306,7 @@ export function ChatPanel({
   onFocusComment,
   onPanelApi,
   onActivity,
+  onBtw,
   onOpenFile,
 }: {
   projectId: string;
@@ -345,6 +346,8 @@ export function ChatPanel({
   onPanelApi?: (api: SessionPanelApi | null) => void;
   // Model: web.TabActivityMarkers — report generating state for the tab marker.
   onActivity?: (activity: TabActivity | null) => void;
+  // Model: SideChat — `/btw …` opens the side chat about this session; false when it has no id yet.
+  onBtw?: (question: string) => boolean;
   // Model: web.OpenChatLink — in-project file link clicked in assistant text.
   onOpenFile?: (relPath: string) => void;
 }) {
@@ -354,7 +357,7 @@ export function ChatPanel({
   // when attaching to a live session.
   const [cliCatalog, setCliCatalog] = useState<ClaudeCliCatalog | null>(null);
   const commands = useMemo(
-    () => toCommandItems(aieSkills, aieAgents, cliCatalog),
+    () => [BTW_COMMAND, ...toCommandItems(aieSkills, aieAgents, cliCatalog)],
     [aieSkills, aieAgents, cliCatalog],
   );
   // Captured at mount: the prop is cleared by the parent right after we send.
@@ -1105,6 +1108,13 @@ export function ChatPanel({
 
   function send(raw: string) {
     if (!wsRef.current || status === 'closed' || status === 'connecting' || status === 'reconnecting') return;
+    // Model: SideChat — a side question, not a message to this session.
+    const btw = btwQuestion(raw);
+    if (btw !== null) {
+      if (!onBtw) showToast('Side chats are not available here');
+      else if (!onBtw(btw)) showToast('Send a first message: a side chat needs the session to exist');
+      return;
+    }
     const text = raw.trim();
     if (!text && pendingImages.length === 0) return;
     sendPrompt(text, pendingImages);

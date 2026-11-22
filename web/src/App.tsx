@@ -443,7 +443,13 @@ export default function App() {
     try { localStorage.setItem(SIDE_MAX_LS_KEY, sideMax ? '1' : '0'); } catch {}
   }, [sideMax]);
   const [sideRequest, setSideRequest] = useState<SideRequest | null>(null);
-  const askSide = (kind: SideRequest['kind']) => setSideRequest((prev) => ({ kind, seq: (prev?.seq ?? 0) + 1 }));
+  const askSide = (kind: 'review' | 'launcher') => setSideRequest((prev) => ({ kind, seq: (prev?.seq ?? 0) + 1 }));
+  // Model: SideChat (/btw) — show the side panel with the side chat about a session.
+  const openSideChat = (sessionId: string, label: string, question: string) => {
+    setReviewCollapsed(false);
+    setReviewDrawerOpen(true);
+    setSideRequest((prev) => ({ kind: 'btw', sessionId, label, question, seq: (prev?.seq ?? 0) + 1 }));
+  };
   // Comments and bookmarks land in Review: bring its tab forward.
   const showReview = () => { setReviewCollapsed(false); askSide('review'); };
   // Model: web.CommandPalette — Cmd/Ctrl+K opens it; Option+J / Option+K move
@@ -2128,6 +2134,7 @@ export default function App() {
                   registerCloseGuard: (guard) => registerCloseGuard(tab.id, guard),
                   revealInSession,
                   reportActivity: (a) => reportActivity(tab.id, a),
+                  openSideChat,
                 }) : <div className="empty">Unknown tab kind: {tab.type}</div>;
                 return <div key={tabKey} style={style}>{body}</div>;
               })}
@@ -2160,6 +2167,7 @@ export default function App() {
               lsPrefix={LS_PREFIX}
               projectId={activeProject.id}
               projectName={activeProject.name}
+              theme={settings.theme}
               reviewOn={reviewOn}
               reviewCount={draftComments}
               follow={follow}

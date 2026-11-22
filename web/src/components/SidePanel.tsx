@@ -6,6 +6,8 @@ import {
 } from '../lib/sidePanel';
 import { ChangesView, type FollowInfo } from './ChangesView';
 import { SideLauncher } from './SideLauncher';
+import { SideChat } from './SideChat';
+import type { Theme } from '../types';
 
 // Model: web.SidePanel — the right-hand column (formerly only Review): its
 // own strip of tabs with "+", and on the right Maximize (take over the chat
@@ -14,7 +16,10 @@ import { SideLauncher } from './SideLauncher';
 
 // Asks the panel to show a tab: Review (a comment was just added) or a new
 // launcher (Option+T). `seq` makes repeated asks distinct.
-export type SideRequest = { kind: 'review' | 'launcher'; seq: number };
+export type SideRequest =
+  | { kind: 'review' | 'launcher'; seq: number }
+  // Model: SideChat — open (or focus) the side chat about a session and ask.
+  | { kind: 'btw'; sessionId: string; label: string; question: string; seq: number };
 
 export function PanelIcon() {
   return (
@@ -39,6 +44,7 @@ function MaximizeIcon({ on }: { on: boolean }) {
 function tabTitle(t: SideTab, projectName: string, reviewCount: number): string {
   if (t.kind === 'review') return reviewCount ? `Review (${reviewCount})` : 'Review';
   if (t.kind === 'launcher') return 'New tab';
+  if (t.kind === 'btw') return `btw · ${t.label}`;
   if (t.target === FOLLOW) return 'Changes';
   return `Changes · ${t.target === ROOT ? projectName : t.target}`;
 }
@@ -46,12 +52,13 @@ function tabTitle(t: SideTab, projectName: string, reviewCount: number): string 
 function storageKey(prefix: string, projectId: string) { return `${prefix}side:${projectId}`; }
 
 export function SidePanel({
-  lsPrefix, projectId, projectName, reviewOn, reviewCount, renderReview, follow, onAddToChat,
+  lsPrefix, projectId, projectName, theme, reviewOn, reviewCount, renderReview, follow, onAddToChat,
   collapsed, maximized, onToggleCollapse, onToggleMax, onCloseDrawer, request,
 }: {
   lsPrefix: string;
   projectId: string;
   projectName: string;
+  theme: Theme;
   reviewOn: boolean;
   reviewCount: number;
   renderReview: () => ReactNode;
@@ -79,12 +86,18 @@ export function SidePanel({
     try { localStorage.setItem(storageKey(lsPrefix, projectId), JSON.stringify(state)); } catch {}
   }, [state, projectId, lsPrefix]);
 
+  // The latest /btw question, for the side chat about that session.
+  const [btwAsk, setBtwAsk] = useState<{ sessionId: string; question: string; seq: number } | null>(null);
   const lastSeq = useRef(request?.seq ?? 0);
   useEffect(() => {
     if (!request || request.seq === lastSeq.current) return;
     lastSeq.current = request.seq;
     if (request.kind === 'review' && reviewOn) setState((s) => openTab(s, { kind: 'review' }));
     else if (request.kind === 'launcher') setState((s) => addLauncher(s));
+    else if (request.kind === 'btw') {
+      setState((s) => openTab(s, { kind: 'btw', sessionId: request.sessionId, label: request.label }));
+      if (request.question.trim()) setBtwAsk({ sessionId: request.sessionId, question: request.question, seq: request.seq });
+    }
   }, [request, reviewOn]);
 
   const tabs = visibleTabs(state, reviewOn);
@@ -97,11 +110,13 @@ export function SidePanel({
 
   let body: ReactNode;
   if (!current) {
-    body = <SideLauncher projectId={projectId} projectName={projectName} reviewOn={reviewOn} followLabel={follow?.label ?? null} onPick={(want) => setState((s) => openTab(s, want))} />;
+    body = <SideLauncher projectId={projectId} projectName={projectName} reviewOn={reviewOn} followLabel={follow?.label ?? null} followSessionId={follow?.sessionId ?? null} onPick={(want) => setState((s) => openTab(s, want))} />;
   } else if (current.kind === 'launcher') {
-    body = <SideLauncher key={current.id} projectId={projectId} projectName={projectName} reviewOn={reviewOn} followLabel={follow?.label ?? null} onPick={(want) => setState((s) => pick(s, current.id, want))} />;
+    body = <SideLauncher key={current.id} projectId={projectId} projectName={projectName} reviewOn={reviewOn} followLabel={follow?.label ?? null} followSessionId={follow?.sessionId ?? null} onPick={(want) => setState((s) => pick(s, current.id, want))} />;
   } else if (current.kind === 'review') {
     body = renderReview();
+  } else if (current.kind === 'btw') {
+    body = null; // kept mounted below, so a side chat survives switching tabs
   } else {
     body = <ChangesView key={current.id} projectId={projectId} projectName={projectName} target={current.target} follow={follow} active={!collapsed} onAddToChat={onAddToChat} />;
   }
@@ -149,7 +164,20 @@ export function SidePanel({
           <button type="button" className="review-panel-close" onClick={onCloseDrawer} aria-label="Close">×</button>
         </div>
       </div>
-      <div className="panel-body side-body">{body}</div>
+      <div className="panel-body side-body">
+        {body}
+        {state.tabs.filter((t): t is Extract<SideTab, { kind: 'btw' }> => t.kind === 'btw').map((t) => (
+          <div key={t.id} className="side-keep" style={t.id === current?.id ? undefined : { display: 'none' }}>
+            <SideChat
+              projectId={projectId}
+              sessionId={t.sessionId}
+              label={t.label}
+              theme={theme}
+              ask={btwAsk && btwAsk.sessionId === t.sessionId ? { question: btwAsk.question, seq: btwAsk.seq } : null}
+            />
+          </div>
+        ))}
+      </div>
     </>
   );
 }

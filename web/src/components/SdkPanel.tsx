@@ -49,7 +49,7 @@ import { isSendKeyTrigger } from '../lib/sendKey';
 import { toWireImages } from '../lib/imageAttachments';
 import { isImageSizeNote, parseToolResultContent, type ToolOutput } from '../lib/toolResult';
 import { makeRelPath } from '../lib/relPath';
-import { toCommandItems } from '../lib/commandPicker';
+import { BTW_COMMAND, btwQuestion, toCommandItems } from '../lib/commandPicker';
 import type { ClaudeCliCatalog } from '../lib/claudeCatalog';
 import { useAieCommands } from '../useAieCommands';
 import { useClaudeModels, effortOptionsFor } from '../useClaudeModels';
@@ -324,6 +324,7 @@ export function SdkPanel({
   onInitialPromptConsumed,
   onOpenFile,
   onActivity,
+  onBtw,
   onOpenSession,
   onExportApi,
   onComment,
@@ -357,6 +358,8 @@ export function SdkPanel({
   onInitialPromptConsumed?: () => void;
   onOpenFile?: (relPath: string) => void;
   onActivity?: (a: TabActivity | null) => void;
+  // Model: SideChat — `/btw …` opens the side chat about this session; false when it has no id yet.
+  onBtw?: (question: string) => boolean;
   // Open one of this project's sessions in its own tab (a child session).
   onOpenSession?: (sessionId: string, title?: string) => void;
   onExportApi?: (api: { open: () => void; canExport: boolean } | null) => void;
@@ -491,7 +494,7 @@ export function SdkPanel({
     () => (catalog ? { slashCommands: catalog.commands.map((c) => c.name), skills: [], agents: catalog.agents, terminalSlashCommands: [] } : null),
     [catalog],
   );
-  const commands = useMemo(() => toCommandItems(aieSkills, aieAgents, cliCatalog), [aieSkills, aieAgents, cliCatalog]);
+  const commands = useMemo(() => [BTW_COMMAND, ...toCommandItems(aieSkills, aieAgents, cliCatalog)], [aieSkills, aieAgents, cliCatalog]);
 
   // Export (⋮ → Export session). Same stale-closure note as ChatPanel: App
   // hands a fresh arrow per render, the underlying registerExportApi is stable.
@@ -1046,6 +1049,13 @@ export function SdkPanel({
 
   function send(raw: string, mode?: SendMode) {
     if (!wsRef.current || status === 'closed' || status === 'connecting' || status === 'reconnecting') return;
+    // Model: SideChat — a side question, not a message to this session.
+    const btw = btwQuestion(raw);
+    if (btw !== null) {
+      if (!onBtw) showToast('Side chats are not available here');
+      else if (!onBtw(btw)) showToast('Send a first message: a side chat needs the session to exist');
+      return;
+    }
     if (isBangInput(raw)) {
       const cmd = bangCommand(raw);
       if (cmd) runBangCommand(cmd);

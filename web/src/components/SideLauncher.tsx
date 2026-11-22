@@ -23,11 +23,13 @@ function checkoutDetail(c: CheckoutSummary): string {
   return parts.join(' · ');
 }
 
-export function SideLauncher({ projectId, projectName, reviewOn, followLabel, onPick }: {
+export function SideLauncher({ projectId, projectName, reviewOn, followLabel, followSessionId, onPick }: {
   projectId: string;
   projectName: string;
   reviewOn: boolean;
   followLabel: string | null;
+  // The Claude session the user is in (for a side chat about it).
+  followSessionId?: string | null;
   onPick: (want: SideWant) => void;
 }) {
   const [q, setQ] = useState('');
@@ -50,8 +52,15 @@ export function SideLauncher({ projectId, projectName, reviewOn, followLabel, on
       words: 'changes diff follow session',
       want: { kind: 'changes', target: FOLLOW },
     },
+    ...(followSessionId ? [{
+      key: 'btw',
+      title: 'Side chat (/btw)',
+      detail: `Ask about ${followLabel ?? 'this session'} without interrupting it · read-only`,
+      words: 'btw side chat ask question aside',
+      want: { kind: 'btw', sessionId: followSessionId, label: followLabel ?? 'session' } as const,
+    }] : []),
     ...(reviewOn ? [{ key: 'review', title: 'Review', detail: 'Bookmarks and comment batches', words: 'review comments batches bookmarks', want: { kind: 'review' } as const }] : []),
-  ], [followLabel, reviewOn]);
+  ], [followLabel, followSessionId, reviewOn]);
 
   const checkouts: Item[] = useMemo(() => (targets ?? []).map((c) => ({
     key: c.worktree ?? ROOT,
