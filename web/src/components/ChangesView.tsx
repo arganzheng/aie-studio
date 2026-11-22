@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchChanges, type ChangesResult, type ChangesScope, type DiffFile } from '../api';
+import { fetchChanges, fetchPrStatus, type ChangesResult, type ChangesScope, type DiffFile, type PrStatus } from '../api';
+import { PrCard } from './PrCard';
 import type { ChatQuote } from '../lib/addToChat';
 import { diffQuoteSource, statusLetter, type DiffRowRef } from '../lib/diffQuote';
 import { FOLLOW, ROOT } from '../lib/sidePanel';
@@ -15,6 +16,8 @@ import { AddToChatSelection } from './CommentComposer';
 export type FollowInfo = { sessionId?: string; worktree?: string; label: string };
 
 const POLL_MS = 5000;
+// The pull request is asked about less often (the server caches it 30 s too).
+const PR_POLL_MS = 30_000;
 // Files bigger than this start folded; so does everything after the first few.
 const OPEN_LINE_LIMIT = 300;
 const OPEN_FILE_LIMIT = 20;
@@ -94,6 +97,7 @@ export function ChangesView({ projectId, projectName, target, follow, active, on
   // Files the user folded or unfolded; the rest follow the default.
   const [toggled, setToggled] = useState<Map<string, boolean>>(new Map());
   const bodyRef = useRef<HTMLDivElement>(null);
+  const [pr, setPr] = useState<PrStatus | null>(null);
 
   const query = useMemo(() => {
     if (target === FOLLOW) return { worktree: follow?.worktree ?? null, session: follow?.sessionId ?? null };
@@ -118,6 +122,23 @@ export function ChangesView({ projectId, projectName, target, follow, active, on
       setLoading(false);
     }
   }, [projectId, query, scope]);
+
+  // Model: web.ChangesView "pull request" — the checkout's branch's PR.
+  const prKey = `${projectId}|${query.worktree ?? ''}|${query.session ?? ''}`;
+  const loadPr = useCallback(async (fresh = false) => {
+    try { setPr(await fetchPrStatus(projectId, { ...query, fresh })); }
+    catch (e) { setPr({ pr: null, unavailable: String((e as Error).message ?? e) }); }
+  }, [projectId, query]);
+  useEffect(() => { setPr(null); }, [prKey]);
+  useEffect(() => {
+    if (!active) return;
+    void loadPr();
+    const t = window.setInterval(() => { if (document.visibilityState === 'visible') void loadPr(); }, PR_POLL_MS);
+    return () => window.clearInterval(t);
+  }, [active, loadPr]);
+  // Asks again when the branch changes under the tab.
+  const branch = data?.git ? data.branch : null;
+  useEffect(() => { if (active && branch && pr && pr.branch !== undefined && pr.branch !== branch) void loadPr(); }, [active, branch, pr, loadPr]);
 
   // A different checkout or scope: start over.
   useEffect(() => {
@@ -167,7 +188,7 @@ export function ChangesView({ projectId, projectName, target, follow, active, on
             <button type="button" className={scope === 'base' ? 'on' : ''} onClick={() => setScope('base')} title="Everything since this branch left the main branch: commits and uncommitted work">Since {data?.git && data.base ? data.base.replace(/^origin\//, '') : 'main'}</button>
             <button type="button" className={scope === 'uncommitted' ? 'on' : ''} onClick={() => setScope('uncommitted')} title="Only what is not committed yet">Uncommitted</button>
           </div>
-          <button type="button" className="changes-refresh" onClick={() => void load()} title="Refresh (also refreshes by itself every few seconds)" aria-label="Refresh">{loading ? '…' : '⟳'}</button>
+          <button type="button" className="changes-refresh" onClick={() => { void load(); void loadPr(true); }} title="Refresh (also refreshes by itself every few seconds)" aria-label="Refresh">{loading ? '…' : '⟳'}</button>
         </div>
         <div className="changes-row changes-sub">
           {target === FOLLOW && (
@@ -189,6 +210,7 @@ export function ChangesView({ projectId, projectName, target, follow, active, on
             </span>
           )}
         </div>
+        {data?.git && !(pr && !pr.pr && !pr.unavailable && data.base && data.branch === data.base.replace(/^origin\//, '')) && <PrCard status={pr} onRefresh={() => void loadPr(true)} />}
       </div>
       <div className="changes-body" ref={bodyRef}>
         {error && <div className="changes-empty error">Could not read the changes: {error}</div>}

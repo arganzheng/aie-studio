@@ -4140,3 +4140,32 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .send-modes-hint { font-size: 11px; color: var(--fg-muted); white-space: normal; }
 .chat-input .send-modes-menu button { background: none; color: var(--fg); font-weight: 400; padding: 6px 10px; border-radius: 6px; }
 .chat-input .send-modes-menu button:hover { background: var(--bg-hover); }
+
+/* Model: web.ChangesView "pull request" — the PR card in the Changes tab. */
+.pr-card { margin-top: 6px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); font-size: 12px; }
+.pr-card.pr-none { color: var(--fg-muted); border-style: dashed; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pr-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pr-sub { margin-top: 4px; flex-wrap: wrap; }
+.pr-state { flex: none; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 9px; color: #fff; }
+.pr-state-open { background: #238636; }
+.pr-state-draft { background: #6e7681; }
+.pr-state-merged { background: #8957e5; }
+.pr-state-closed { background: #da3633; }
+.pr-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-strong); text-decoration: none; font-weight: 600; }
+.pr-title:hover { text-decoration: underline; }
+.pr-refresh { flex: none; background: none; border: none; color: var(--fg-muted); cursor: pointer; padding: 0 4px; }
+.pr-refresh:hover { color: var(--fg); }
+.pr-checks { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; padding: 0; color: var(--fg); cursor: pointer; font: inherit; }
+.pr-caret { font-size: 10px; color: var(--fg-muted); }
+.pr-n { font-variant-numeric: tabular-nums; }
+.pr-pass { color: #3fb950; }
+.pr-fail { color: #f85149; }
+.pr-pending { color: #d29922; }
+.pr-skipped, .pr-muted { color: var(--fg-muted); }
+.pr-tag { font-size: 11px; padding: 0 6px; border: 1px solid currentColor; border-radius: 9px; }
+.pr-check-list { list-style: none; margin: 6px 0 0; padding: 0; max-height: 220px; overflow-y: auto; border-top: 1px solid var(--border); }
+.pr-check { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+.pr-check-icon { flex: 0 0 12px; text-align: center; }
+.pr-check-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.pr-check-link { flex: none; color: var(--fg-muted); font-size: 11px; }
+.pr-check-link:hover { color: var(--accent); }

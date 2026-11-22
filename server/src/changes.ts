@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { getUserId } from './auth.js';
 import { getProject } from './store.js';
 import { WORKTREES_DIR, isWorktreeName, realPath, sessionCwd, worktreePath } from './worktrees.js';
+import { readPrStatus } from './changes-pr.js';
 
 // Model: web.SidePanel / web.ChangesView — what a session changed, as the
 // side panel's Changes tab shows it. A checkout (the project itself, or a
@@ -243,6 +244,23 @@ export function registerChangesRoutes(app: FastifyInstance) {
       const scope = req.query.scope === 'uncommitted' ? 'uncommitted' : 'base';
       try { return { git: true, ...await readChanges(dir, worktree, scope) }; }
       catch (e) { return reply.code(500).send({ error: String((e as Error).message) }); }
+    },
+  );
+
+  // The pull request of the branch the checkout is on, with its CI checks
+  // (model: web.ChangesView "pull request"). fresh=1 skips the 30 s cache.
+  app.get<{ Params: { id: string }; Querystring: { worktree?: string; session?: string; fresh?: string } }>(
+    '/api/projects/:id/changes/pr',
+    async (req, reply) => {
+      const uid = getUserId(req);
+      if (!uid) return reply.code(401).send({ error: 'unauthorized' });
+      const project = await getProject(uid, req.params.id);
+      if (!project) return reply.code(404).send({ error: 'project not found' });
+      const { dir } = await resolveDir(project.path, req.query);
+      if (!await isGitDir(dir)) return { pr: null, unavailable: 'Not a git repository' };
+      const branch = (await git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => '')).trim();
+      if (!branch || branch === 'HEAD') return { pr: null, branch: branch || null };
+      return { branch, ...await readPrStatus(dir, branch, req.query.fresh === '1') };
     },
   );
 
