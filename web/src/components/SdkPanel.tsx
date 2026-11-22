@@ -1378,7 +1378,14 @@ export function SdkPanel({
           <div className={`chat-status status-${status}`}>
             <span>{showLabel ? label : ''}</span>
             <ClaudeUsageBadge />
-            <ContextBadge context={contextUsage} />
+            <ContextBadge
+              context={contextUsage}
+              compact={{
+                run: () => send('/compact'),
+                blocked: status === 'thinking' ? (compacting ? 'Compacting…' : 'Wait for Claude to finish this turn')
+                  : status !== 'ready' ? 'Not connected' : null,
+              }}
+            />
             {/* Always there: the model is only reported once the session has
                 started (or run a turn), and switching must not wait for that. */}
             <div className="chat-status-model-wrap">
