@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom';
 import { archiveSession, deleteSessionForever, listAllSessions, renameAnySession, stopSession, type SubagentInfo } from '../api';
 import { useFitMenuTop } from '../lib/fitMenu';
 import {
-  NO_FILTER, childSessions, groupChildren, filterSessions, isFiltering, openSessionTabs, sessionRowKey, sessionStatus, sessionsByProject,
-  type ProjectSection, type SessionFilter, type SessionKind, type SessionRow, type SessionTabLike,
+  NO_FILTER, childSessions, groupChildren, filterSessions, isFiltering, openSessionTabs, sessionRowKey, sessionStatus, sessionsByProject, sessionsByStatus,
+  type ProjectSection, type StatusSection, type SessionFilter, type SessionKind, type SessionRow, type SessionTabLike,
 } from '../lib/sessionList';
 import { providerIcon } from './TabBar';
 import { SessionSubagents } from './SessionSubagents';
@@ -21,10 +21,22 @@ import { SessionSubagents } from './SessionSubagents';
 // session's tab never moves its row, it only toggles the row's "open" mark,
 // and clicking an open row goes to its tab. Session tabs that aren't listed
 // yet (a fresh session before its first reply) sit on top.
+//
+// "By status" (model: web.SessionList rule "by status", the ◔ button) lays the
+// same rows out the other way: every project together, one group per what the
+// session needs — Needs you, Working, Ready to review, Other — flat, each row
+// naming its project. The choice is kept on this device.
 
 const POLL_MS = 5000;
 const PROJECTS_OPEN_LS_KEY = 'remote-ide:sessionProjectsOpen';
 const SUBAGENTS_OPEN_LS_KEY = 'remote-ide:sessionSubagentsOpen';
+const GROUP_BY_LS_KEY = 'remote-ide:sessionGroupBy';
+const STATUS_CLOSED_LS_KEY = 'remote-ide:sessionStatusGroupsClosed';
+
+type GroupBy = 'project' | 'status';
+function loadGroupBy(): GroupBy {
+  try { return localStorage.getItem(GROUP_BY_LS_KEY) === 'status' ? 'status' : 'project'; } catch { return 'project'; }
+}
 
 function loadStringSet(key: string): Set<string> {
   try {
@@ -103,6 +115,9 @@ export function SessionList({
   // Child groups the user folded (`<session row key>:<label>`); open by default.
   const [groupsClosed, setGroupsClosed] = useState<Set<string>>(new Set());
   const [now, setNow] = useState(() => Date.now());
+  const [groupBy, setGroupBy] = useState<GroupBy>(loadGroupBy);
+  // Status groups the user folded (StatusGroupId); open by default.
+  const [statusClosed, setStatusClosed] = useState<Set<string>>(() => loadStringSet(STATUS_CLOSED_LS_KEY));
   const menuRef = useRef<HTMLDivElement>(null);
   const menuTop = useFitMenuTop(menuRef, menu, menu?.top ?? 0);
   const seq = useRef(0);
@@ -113,6 +128,12 @@ export function SessionList({
   useEffect(() => {
     try { localStorage.setItem(PROJECTS_OPEN_LS_KEY, JSON.stringify([...projectsOpen])); } catch {}
   }, [projectsOpen]);
+  useEffect(() => {
+    try { localStorage.setItem(GROUP_BY_LS_KEY, groupBy); } catch {}
+  }, [groupBy]);
+  useEffect(() => {
+    try { localStorage.setItem(STATUS_CLOSED_LS_KEY, JSON.stringify([...statusClosed])); } catch {}
+  }, [statusClosed]);
   useEffect(() => {
     try { localStorage.setItem(SUBAGENTS_OPEN_LS_KEY, JSON.stringify([...subagentsOpen].slice(-200))); } catch {}
   }, [subagentsOpen]);
@@ -171,10 +192,13 @@ export function SessionList({
 
   // Child sessions sit under their parent rather than at the top level —
   // except while searching / filtering, where every match is listed flat.
+  // The tree serves the menu's "Stop with child sessions" in both layouts.
   const kids = useMemo(() => {
     if (filtering || rows === null) return null;
     return childSessions({ projectId, rows: filter.archived ? shown : rows.filter((r) => !r.archived), tabs: workspace?.tabs ?? [] });
   }, [filtering, rows, shown, filter.archived, projectId, workspace?.tabs]);
+  // By status, a child is listed in its own group, not under its parent.
+  const byStatus = groupBy === 'status';
 
   async function act(what: string, fn: () => Promise<void>) {
     setMenu(null);
@@ -229,7 +253,7 @@ export function SessionList({
 
   // One session line. `tabId` is the open tab showing it, if any; `row` is
   // null for a tab not listed yet.
-  function renderRow(row: SessionRow | null, opts: { tabId?: string; title?: string; kind?: SessionKind; depth?: number } = {}): ReactNode {
+  function renderRow(row: SessionRow | null, opts: { tabId?: string; title?: string; kind?: SessionKind; depth?: number; showProject?: boolean } = {}): ReactNode {
     const key = row ? sessionRowKey(row) : `tab:${opts.tabId}`;
     const tabId = opts.tabId ?? (row ? openTabs?.tabOf.get(key) : undefined);
     const isUnread = row ? unread.has(key) : false;
@@ -240,7 +264,7 @@ export function SessionList({
     const depth = opts.depth ?? 0;
     const subs = row?.kind === 'claude' && row.subagents && row.subagents.total > 0 ? row.subagents : null;
     // Child sessions of this one (capped depth: a link cycle can't recurse forever).
-    const children = (row?.kind === 'claude' && depth < 4 && kids?.childrenOf.get(row.sessionId)) || [];
+    const children = (!byStatus && row?.kind === 'claude' && depth < 4 && kids?.childrenOf.get(row.sessionId)) || [];
     const hasTree = subs !== null || children.length > 0;
     const childRunning = children.filter((c) => c.row?.state === 'running' || c.row?.state === 'awaiting').length;
     const treeTotal = (subs?.total ?? 0) + children.length;
@@ -292,6 +316,7 @@ export function SessionList({
             <div className="session-row-title">{row?.title ?? opts.title}</div>
           )}
           <div className="session-row-sub">
+            {opts.showProject && row && <span className="session-row-project">{projectNames.get(row.projectId) ?? 'Unknown project'} · </span>}
             <span className="session-row-status" title={status.tone === 'running' && row?.activity ? `Working — ${row.activity}` : undefined}>{status.label}</span>
             {row?.worktree && <span className="session-row-worktree" title={`Works in its own git worktree: .claude/worktrees/${row.worktree}`}> · ⎇ {row.worktree}</span>}
           </div>
@@ -397,9 +422,45 @@ export function SessionList({
     );
   }
 
+  // One status group (layout "by status"): heading, then its rows, flat.
+  function renderStatusSection(s: StatusSection): ReactNode {
+    const open = filtering || !statusClosed.has(s.id);
+    const toggle = () => setStatusClosed((prev) => { const next = new Set(prev); if (next.has(s.id)) next.delete(s.id); else next.add(s.id); return next; });
+    return (
+      <Fragment key={`st:${s.id}`}>
+        <div
+          className={`session-project-row session-status-row st-${s.id}`}
+          role="button"
+          aria-expanded={open}
+          title={`${s.label} — ${s.rows.length} session${s.rows.length === 1 ? '' : 's'}`}
+          onClick={filtering ? undefined : toggle}
+        >
+          <span className="session-group-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
+          <span className="session-project-name">{s.label}</span>
+          <span className="session-project-count">{s.rows.length}</span>
+        </div>
+        {open && s.rows.map((r) => renderRow(r, { showProject: true }))}
+      </Fragment>
+    );
+  }
+
   function renderBody(): ReactNode {
     if (error) return <div className="sessions-empty error">{error}</div>;
     if (rows === null) return <div className="sessions-empty">Loading…</div>;
+    if (byStatus) {
+      // Fresh tabs of the project on screen, not listed yet, sit on top.
+      const fresh = !filtering && openTabs ? openTabs.pending : [];
+      const groups = sessionsByStatus({ rows: shown, unread, now });
+      if (groups.length === 0 && fresh.length === 0) {
+        return <div className="sessions-empty">{filter.archived ? 'Nothing archived' : filtering ? 'No sessions match' : 'No sessions yet — start one with ＋'}</div>;
+      }
+      return (
+        <>
+          {fresh.map((p) => renderRow(null, { tabId: p.tabId, title: p.title, kind: p.kind }))}
+          {groups.map(renderStatusSection)}
+        </>
+      );
+    }
     // Fresh tabs not listed yet (children sit under their parent instead).
     const pending = !filtering && openTabs ? openTabs.pending.filter((p) => !kids?.childTabIds.has(p.tabId)) : [];
     const sections = sessionsByProject({ projects: projectNames, rows: shown, unread, keepEmpty: filtering ? null : projectId });
@@ -434,6 +495,14 @@ export function SessionList({
             )}
           </div>
         )}
+        <button
+          type="button"
+          className={`sessions-icon-btn${byStatus ? ' on' : ''}`}
+          title={byStatus ? 'Grouped by status — click to group by project' : 'Grouped by project — click to group by status'}
+          aria-label="Group by status"
+          aria-pressed={byStatus}
+          onClick={() => setGroupBy((g) => (g === 'status' ? 'project' : 'status'))}
+        >◔</button>
         <button
           type="button"
           className={`sessions-icon-btn${filtersOpen || isFiltering(filter) ? ' on' : ''}`}

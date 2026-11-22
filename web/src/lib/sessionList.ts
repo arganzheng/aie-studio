@@ -276,3 +276,40 @@ export function sessionsByProject(input: {
   }
   return [...byId.values()].filter((s) => s.rows.length > 0 || s.projectId === keepEmpty);
 }
+
+// ---- status groups (model: web.SessionList rule "by status") ----
+//
+// The other way to lay the list out: every project's sessions together, in
+// one group per what they need — the user first, then what is working, then
+// what has a result to look at, then the rest. Inside a group the rows keep
+// the order they were given (newest first).
+
+export type StatusGroupId = 'needs-you' | 'working' | 'ready' | 'other';
+
+export const STATUS_GROUPS: ReadonlyArray<{ id: StatusGroupId; label: string }> = [
+  { id: 'needs-you', label: 'Needs you' },
+  { id: 'working', label: 'Working' },
+  { id: 'ready', label: 'Ready to review' },
+  { id: 'other', label: 'Other' },
+];
+
+export function statusGroupOf(tone: SessionTone): StatusGroupId {
+  if (tone === 'awaiting') return 'needs-you';
+  if (tone === 'running') return 'working';
+  if (tone === 'ready' || tone === 'unread') return 'ready';
+  return 'other';
+}
+
+export type StatusSection = { id: StatusGroupId; label: string; rows: SessionRow[] };
+
+// Empty groups are left out.
+export function sessionsByStatus(input: {
+  rows: readonly SessionRow[];
+  unread: ReadonlySet<string>;
+  now: number;
+}): StatusSection[] {
+  const { rows, unread, now } = input;
+  const byId = new Map<StatusGroupId, SessionRow[]>(STATUS_GROUPS.map((g) => [g.id, []]));
+  for (const r of rows) byId.get(statusGroupOf(sessionStatus(r, unread.has(sessionRowKey(r)), now).tone))!.push(r);
+  return STATUS_GROUPS.map((g) => ({ ...g, rows: byId.get(g.id)! })).filter((s) => s.rows.length > 0);
+}
