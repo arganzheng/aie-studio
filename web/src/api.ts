@@ -732,3 +732,31 @@ export async function fetchChangeTargets(projectId: string): Promise<{ git: bool
   if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
   return j;
 }
+
+// Model: web.ChangesView "pull request" (server/src/changes-pr.ts) — the pull
+// request of the branch a checkout is on, and its CI checks.
+export type PrCheckState = 'pass' | 'fail' | 'pending' | 'skipped';
+export type PrCheck = { name: string; workflow: string; state: PrCheckState; url: string | null };
+export type PrInfo = {
+  number: number;
+  title: string;
+  url: string;
+  state: 'open' | 'draft' | 'merged' | 'closed';
+  review: 'approved' | 'changes-requested' | 'review-required' | '';
+  mergeable: 'yes' | 'conflicts' | 'unknown';
+  base: string;
+  head: string;
+  checks: PrCheck[];
+};
+export type PrStatus = { pr: PrInfo | null; branch?: string | null; unavailable?: string };
+
+export async function fetchPrStatus(projectId: string, q: { worktree?: string | null; session?: string | null; fresh?: boolean }, signal?: AbortSignal): Promise<PrStatus> {
+  const p = new URLSearchParams();
+  if (q.worktree) p.set('worktree', q.worktree);
+  if (q.session) p.set('session', q.session);
+  if (q.fresh) p.set('fresh', '1');
+  const r = await fetch(`/api/projects/${encodeURIComponent(projectId)}/changes/pr?${p}`, { signal });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
