@@ -7,7 +7,7 @@ import { planSummary, type PlanItem } from '../lib/plan';
 
 const MARK: Record<PlanItem['status'], string> = { completed: '✓', in_progress: '▸', pending: '○' };
 
-export function PlanStrip({ plan }: { plan: readonly PlanItem[] | null }) {
+export function PlanStrip({ plan, onOpenSide }: { plan: readonly PlanItem[] | null; onOpenSide?: () => void }) {
   const [open, setOpen] = useState(false);
   if (!plan || plan.length === 0) return null;
   const { done, total, current } = planSummary(plan);
@@ -32,6 +32,11 @@ export function PlanStrip({ plan }: { plan: readonly PlanItem[] | null }) {
         <span className="plan-strip-now">{now}</span>
         <span className="plan-strip-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
       </button>
+      {onOpenSide && (
+        <button type="button" className="plan-strip-side" onClick={onOpenSide} title="Open the task list in the side panel (Progress)" aria-label="Open in side panel">
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3"><rect x="1.5" y="2.5" width="13" height="11" rx="2" /><path d="M10 2.5v11" /></svg>
+        </button>
+      )}
       {open && (
         <ol className="plan-strip-list">
           {plan.map((it, i) => (

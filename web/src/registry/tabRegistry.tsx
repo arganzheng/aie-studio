@@ -76,6 +76,8 @@ export type TabRenderContext = {
   registerCloseGuard: (guard: (() => boolean) | null) => void;
   // Model: SideChat (/btw) — open the side chat about a Claude session and ask.
   openSideChat?: (sessionId: string, label: string, question: string) => void;
+  // Model: web.SidePanel — show (or focus) a session tool tab beside the chat.
+  openSideTool?: (kind: 'progress' | 'artifacts') => void;
 };
 
 // Kinds that opt into createAction get a "+ label" entry in the TabBar

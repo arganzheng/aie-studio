@@ -23,6 +23,7 @@ import {
 import { getUserId } from './auth.js';
 import { countWireRecords, wireDir } from './observe/wire.js';
 import { planToolCalls } from './plan-tools.js';
+import { sessionArtifacts, transcriptImage } from './artifacts.js';
 import { claudeProjectDir, findTranscript } from './claude-paths.js';
 
 
@@ -149,7 +150,7 @@ export function registerProjectRoutes(app: FastifyInstance) {
 
   app.get<{
     Params: { id: string; uuid: string };
-    Querystring: { limit?: string; before?: string; plan?: string };
+    Querystring: { limit?: string; before?: string; plan?: string; artifacts?: string; image?: string };
   }>(
     '/api/projects/:id/sessions/:uuid/transcript',
     async (req, reply) => {
@@ -178,6 +179,17 @@ export function registerProjectRoutes(app: FastifyInstance) {
       // Model: web.ProgressView — plan=all: only the task list's tool calls,
       // from the whole transcript.
       if (req.query.plan === 'all') return { planTools: planToolCalls(all), total: all.length };
+      // Model: web.ArtifactsView — files the session wrote or was handed.
+      if (req.query.artifacts === '1') return { ...sessionArtifacts(all, project.path), total: all.length };
+      // Model: web.ArtifactsView — one image the user pasted, by its ref.
+      if (typeof req.query.image === 'string') {
+        const img = transcriptImage(all, req.query.image);
+        if (!img) return reply.code(404).send({ error: 'image not found' });
+        reply.header('Content-Type', img.mediaType);
+        reply.header('X-Content-Type-Options', 'nosniff');
+        reply.header('Cache-Control', 'private, max-age=3600');
+        return reply.send(img.data);
+      }
       const total = all.length;
       const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 20));
       const endIdx =

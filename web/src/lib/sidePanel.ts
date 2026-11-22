@@ -23,6 +23,8 @@ export type SideWant =
   | { kind: 'progress' }
   | { kind: 'agents' }
   | { kind: 'observe' }
+  // Model: web.ArtifactsView — files the session wrote, files it was handed.
+  | { kind: 'artifacts' }
   // The project's files, read beside the chat.
   | { kind: 'files' }
   | { kind: 'launcher' };
@@ -101,7 +103,7 @@ export function parseSideState(raw: string | null, reviewOn: boolean): SideState
       const tabs: SideTab[] = v.tabs.filter((t: any) =>
         t && typeof t.id === 'string' && (
           (t.kind === 'changes' && typeof t.target === 'string') || t.kind === 'review' || t.kind === 'launcher'
-          || t.kind === 'progress' || t.kind === 'agents' || t.kind === 'observe' || t.kind === 'files'
+          || t.kind === 'progress' || t.kind === 'agents' || t.kind === 'observe' || t.kind === 'files' || t.kind === 'artifacts'
           || (t.kind === 'btw' && typeof t.sessionId === 'string' && typeof t.label === 'string')
           || (t.kind === 'preview' && isPreviewPort(t.port) && typeof t.path === 'string')
         ));
