@@ -2131,6 +2131,14 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .context-facts dt { color: var(--fg-muted); }
 .context-facts dd { margin: 0; font-variant-numeric: tabular-nums; }
 .context-facts .settings-mono { margin-left: 0; }
+.context-compact { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.context-compact .settings-option-hint { margin-top: 0; }
+.context-compact-btn {
+  padding: 6px 14px; min-height: 32px; border-radius: 4px; cursor: pointer;
+  background: var(--accent); border: 1px solid var(--accent); color: var(--bg); font-size: 12px; font-weight: 600;
+}
+.context-compact-btn:hover:not(:disabled) { filter: brightness(1.1); }
+.context-compact-btn:disabled { opacity: 0.5; cursor: default; }
 .context-table { width: 100%; border-collapse: collapse; margin: 10px 0 8px; font-size: 12px; }
 .context-table td { padding: 3px 0; border-bottom: 1px solid var(--border); }
 .context-table .context-num { text-align: right; font-variant-numeric: tabular-nums; padding-left: 12px; color: var(--fg-muted); }

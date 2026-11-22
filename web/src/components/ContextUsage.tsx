@@ -36,7 +36,11 @@ export function contextTitle(c: ContextSnapshot): string {
   return lines.join('\n');
 }
 
-function ContextDialog({ c, onClose }: { c: ContextSnapshot; onClose: () => void }) {
+// Compacting from the card: on a phone, typing `/compact` is the slow way.
+// `blocked` says why it can't run right now (Claude replying, not connected).
+export type CompactAction = { run: () => void; blocked?: string | null };
+
+function ContextDialog({ c, onClose, compact }: { c: ContextSnapshot; onClose: () => void; compact?: CompactAction }) {
   const level = levelOf(c.percent);
   const used = c.categories.filter((x) => x.kind === 'used');
   const rest = c.categories.filter((x) => x.kind !== 'used');
@@ -74,6 +78,19 @@ function ContextDialog({ c, onClose }: { c: ContextSnapshot; onClose: () => void
             <div className="settings-option-hint">
               Updated {new Date(c.fetchedAt).toLocaleTimeString()} after the last turn · same data as the CLI's <code className="settings-mono">/context</code>
             </div>
+            {compact && (
+              <div className="context-compact">
+                <button
+                  type="button"
+                  className="context-compact-btn"
+                  disabled={!!compact.blocked}
+                  onClick={() => { compact.run(); onClose(); }}
+                >Compact now</button>
+                <span className="settings-option-hint">
+                  {compact.blocked ?? <>Summarizes the conversation to free up context · same as <code className="settings-mono">/compact</code></>}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -94,7 +111,7 @@ function ContextFacts({ c }: { c: ContextSnapshot }) {
   );
 }
 
-export function ContextBadge({ context }: { context: ContextSnapshot | null }) {
+export function ContextBadge({ context, compact }: { context: ContextSnapshot | null; compact?: CompactAction }) {
   const [open, setOpen] = useState(false);
   if (!context) {
     return <span className="context-badge pending" title="Context usage shows after the session starts">ctx …</span>;
@@ -112,7 +129,7 @@ export function ContextBadge({ context }: { context: ContextSnapshot | null }) {
         <ContextFacts c={context} />
         <span className="context-pop-hint">Click for the breakdown</span>
       </span>
-      {open && <ContextDialog c={context} onClose={() => setOpen(false)} />}
+      {open && <ContextDialog c={context} compact={compact} onClose={() => setOpen(false)} />}
     </div>
   );
 }
