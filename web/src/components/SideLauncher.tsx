@@ -92,13 +92,21 @@ export function SideLauncher({ projectId, projectName, reviewOn, terminalOn = fa
     want: { kind: 'changes', target: c.worktree ?? ROOT },
   })), [targets, projectName]);
 
-  const previews: Item[] = useMemo(() => (ports ?? []).map((l) => ({
+  // Model: web.PreviewView launcher — pages served on this machine (the server
+  // only lists ports that answer with a page): this project's dev servers
+  // first; the rest folded away under "Other pages on this machine".
+  const previews: Array<Item & { inProject: boolean }> = useMemo(() => (ports ?? []).map((l) => ({
     key: `port:${l.port}`,
-    title: `:${l.port} · ${l.command}`,
-    detail: l.cwd ? (l.inProject ? `in this project${l.cwd.endsWith(`/${projectName}`) ? '' : ` · …/${l.cwd.split('/').slice(-2).join('/')}`}` : l.cwd.replace(/^\/Users\/[^/]+/, '~')) : `pid ${l.pid}`,
-    words: `preview app dev server port ${l.port} ${l.command} ${l.cwd ?? ''}`,
+    title: `:${l.port} · ${l.title ?? l.command}`,
+    detail: [
+      l.title ? l.command : null,
+      l.cwd ? (l.inProject ? `in this project${l.cwd.endsWith(`/${projectName}`) ? '' : ` · …/${l.cwd.split('/').slice(-2).join('/')}`}` : l.cwd.replace(/^\/Users\/[^/]+/, '~')) : `pid ${l.pid}`,
+    ].filter(Boolean).join(' · '),
+    words: `preview app dev server page port ${l.port} ${l.command} ${l.title ?? ''} ${l.cwd ?? ''}`,
     want: { kind: 'preview', port: l.port, path: '/' },
+    inProject: l.inProject,
   })), [ports, projectName]);
+  const [othersOpen, setOthersOpen] = useState(false);
 
   const needle = q.trim().toLowerCase();
   const match = (i: Item) => !needle || `${i.title} ${i.detail} ${i.words}`.toLowerCase().includes(needle);
@@ -161,17 +169,34 @@ export function SideLauncher({ projectId, projectName, reviewOn, terminalOn = fa
         <button type="submit" disabled={!isPreviewPort(typedPort)}>Open</button>
       </form>
       {ports === null && <div className="side-launcher-empty">Looking for running dev servers…</div>}
-      {ports !== null && previews.length === 0 && <div className="side-launcher-empty">No dev server is running. Start one (or ask the agent to), or type its port.</div>}
-      {shownPreviews.length > 0 && (
-        <div className="side-launcher-grid">
-          {shownPreviews.map((i) => (
-            <button key={i.key} type="button" className="side-card" onClick={() => onPick(i.want)}>
-              <div className="side-card-title side-card-port">{i.title}</div>
-              <div className="side-card-detail">{i.detail}</div>
-            </button>
-          ))}
-        </div>
-      )}
+      {ports !== null && (() => {
+        const mine = shownPreviews.filter((i) => i.inProject);
+        const others = shownPreviews.filter((i) => !i.inProject);
+        const showOthers = othersOpen || (!!needle && others.length > 0);
+        const card = (i: (typeof previews)[number]) => (
+          <button key={i.key} type="button" className="side-card" onClick={() => onPick(i.want)}>
+            <div className="side-card-title side-card-port">{i.title}</div>
+            <div className="side-card-detail">{i.detail}</div>
+          </button>
+        );
+        return (
+          <>
+            {mine.length > 0
+              ? <div className="side-launcher-grid">{mine.map(card)}</div>
+              : !needle && (
+                <div className="side-launcher-empty preview-hint">
+                  No dev server of this project is running. Start one and it shows up here: for example <code>!pnpm dev</code> in a Claude chat, or ask Claude to start it. Then this tab shows the app, also on your phone.
+                </div>
+              )}
+            {others.length > 0 && (
+              <button type="button" className="side-launcher-more" aria-expanded={showOthers} onClick={() => setOthersOpen((o) => !o)}>
+                {showOthers ? '▾' : '▸'} Other pages on this machine ({others.length})
+              </button>
+            )}
+            {showOthers && <div className="side-launcher-grid">{others.map(card)}</div>}
+          </>
+        );
+      })()}
       <div className="side-launcher-section">Checkouts</div>
       {targets === null && <div className="side-launcher-empty">Loading…</div>}
       {targets !== null && !git && <div className="side-launcher-empty">This project is not a git repository.</div>}
