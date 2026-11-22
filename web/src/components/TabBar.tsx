@@ -81,6 +81,7 @@ export function TabBar({
   onMenuClick,
   onReviewClick,
   reviewCount,
+  onSearch,
   onRefresh,
   onExport,
   canExport,
@@ -115,6 +116,8 @@ export function TabBar({
   // Mobile only (CSS hides it on desktop): toggles the right-hand Review
   // drawer, mirroring ☰ for the left drawer. Model: web.ReviewPanel.
   onReviewClick?: () => void;
+  // Model: web.CommandPalette — open the search box.
+  onSearch?: () => void;
   // Draft comments waiting to be sent — shown as a badge on 💬.
   reviewCount?: number;
   onRefresh?: () => void;
@@ -204,6 +207,9 @@ export function TabBar({
           </div>
         ))}
       </div>
+      {onSearch && (
+        <button className="tab-search-btn" onClick={onSearch} title="Search sessions, projects and actions (⌘K / Ctrl+K)" aria-label="Search">⌕</button>
+      )}
       <div className="tab-overflow">
         <button ref={btnRef} className="tab-overflow-btn" onClick={toggleMenu} aria-label="Tab menu">⋮</button>
         {open && (
