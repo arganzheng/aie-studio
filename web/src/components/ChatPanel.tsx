@@ -307,6 +307,7 @@ export function ChatPanel({
   onPanelApi,
   onActivity,
   onBtw,
+  onOpenProgress,
   onOpenFile,
 }: {
   projectId: string;
@@ -348,6 +349,8 @@ export function ChatPanel({
   onActivity?: (activity: TabActivity | null) => void;
   // Model: SideChat — `/btw …` opens the side chat about this session; false when it has no id yet.
   onBtw?: (question: string) => boolean;
+  // Model: web.PlanStrip — open the Progress tab beside the chat.
+  onOpenProgress?: () => void;
   // Model: web.OpenChatLink — in-project file link clicked in assistant text.
   onOpenFile?: (relPath: string) => void;
 }) {
@@ -1243,7 +1246,7 @@ export function ChatPanel({
 
   return (
     <div className="chat">
-      <PlanStrip plan={plan} />
+      <PlanStrip plan={plan} onOpenSide={onOpenProgress} />
       <div className="chat-messages" ref={scrollRef} onScroll={onMessagesScroll}>
         {historyError && (
           <HistoryNotice text={historyError} onRetry={() => { const sid = activeSessionIdRef.current ?? initialResumeIdRef.current; if (sid) void refetchTranscript(sid); }} />

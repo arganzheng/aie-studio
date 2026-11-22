@@ -461,7 +461,7 @@ function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: 
       pathToClaudeCodeExecutable: process.env.REMOTE_IDE_SDK_CLAUDE_PATH || undefined,
       stderr: (data) => broadcast(entry, { type: 'stderr', data }),
       canUseTool: makeCanUseTool(entry),
-      mcpServers: { ...(entry.childTools ? { aie: childToolsServer(entry) } : {}), aie_status: statusServer(), aie_watch: watchToolsServer(entry) },
+      mcpServers: { ...(entry.childTools ? { aie: childToolsServer(entry) } : {}), aie_status: statusServer(), aie_progress: progressServer(), aie_watch: watchToolsServer(entry) },
       outputFormat: entry.resultSchema ? { type: 'json_schema', schema: entry.resultSchema } : undefined,
     },
   });
@@ -1368,6 +1368,23 @@ const toolText = (text: string, isError = false) => ({ content: [{ type: 'text' 
 // `aie` never saw text added to it later. For the same reason, rename this
 // server (aie_status_2, ...) when STATUS_INSTRUCTIONS changes in a way open
 // sessions must pick up.
+// Model: web.PlanStrip / web.ProgressView — ask for a task list on work with
+// several steps, so the user can follow it (Plan strip, Progress tab). Its own
+// server for the same reason as aie_status: instructions are told once per name.
+export const PROGRESS_INSTRUCTIONS = [
+  'Progress the user can see.',
+  'This app shows your task list to the user: as a Plan strip above the chat and in a Progress tab beside it. It is how the user follows longer work without reading every tool call.',
+  'When a request has three or more distinct steps (for example: change two files and update the docs), or will run for more than a few minutes, write the steps as a task list before you start, even if each step is small.',
+  'Use your task list tool: TodoWrite, or TaskCreate and TaskUpdate, whichever this session has. If it is a deferred tool, load it with ToolSearch first.',
+  'A plan written only as text does not show there: whenever you state a plan of three or more steps, put the same steps in the task list too, then work through them.',
+  'Mark a step in progress when you start it and completed as soon as it is done, one step at a time, so the list always says where you are.',
+  'Skip the list only for a quick answer, a plain question or a single small change.',
+].join(' ');
+
+function progressServer() {
+  return createSdkMcpServer({ name: 'aie_progress', version: '1.0.0', instructions: PROGRESS_INSTRUCTIONS, tools: [] });
+}
+
 function statusServer() {
   return createSdkMcpServer({ name: 'aie_status', version: '1.0.0', instructions: STATUS_INSTRUCTIONS, tools: [] });
 }

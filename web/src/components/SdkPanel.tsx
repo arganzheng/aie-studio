@@ -327,6 +327,7 @@ export function SdkPanel({
   onOpenFile,
   onActivity,
   onBtw,
+  onOpenProgress,
   onOpenSession,
   onExportApi,
   onComment,
@@ -362,6 +363,8 @@ export function SdkPanel({
   onActivity?: (a: TabActivity | null) => void;
   // Model: SideChat — `/btw …` opens the side chat about this session; false when it has no id yet.
   onBtw?: (question: string) => boolean;
+  // Model: web.PlanStrip — open the Progress tab beside the chat.
+  onOpenProgress?: () => void;
   // Open one of this project's sessions in its own tab (a child session).
   onOpenSession?: (sessionId: string, title?: string) => void;
   onExportApi?: (api: { open: () => void; canExport: boolean } | null) => void;
@@ -1181,7 +1184,7 @@ export function SdkPanel({
   // ----- render ----------------------------------------------------------
   return (
     <div className="chat">
-      <PlanStrip plan={plan} />
+      <PlanStrip plan={plan} onOpenSide={onOpenProgress} />
       <div className="chat-messages" ref={scrollRef} onScroll={onMessagesScroll}>
         {historyError && (
           <HistoryNotice text={historyError} onRetry={() => { const sid = activeSessionIdRef.current; if (sid) void refetchTranscript(sid); }} />

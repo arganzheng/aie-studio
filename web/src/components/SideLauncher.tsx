@@ -58,6 +58,7 @@ export function SideLauncher({ projectId, projectName, reviewOn, followLabel, fo
   const sessionTools: Item[] = useMemo(() => (followSessionId ? [
     { key: 'progress', title: 'Progress', detail: 'Its task list, step by step', words: 'progress plan tasks todo steps', want: { kind: 'progress' } as const },
     { key: 'agents', title: 'Agents', detail: 'Its child sessions and subagents', words: 'agents children child sessions subagents', want: { kind: 'agents' } as const },
+    { key: 'artifacts', title: 'Artifacts', detail: 'Files it wrote or changed, files you attached', words: 'artifacts attachments outputs written files uploads', want: { kind: 'artifacts' } as const },
     { key: 'observe', title: 'Observe', detail: 'Turns, tool calls, tokens and time', words: 'observe trace tokens wire turns', want: { kind: 'observe' } as const },
   ] : []), [followSessionId]);
 

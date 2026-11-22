@@ -9,7 +9,7 @@ import { SideLauncher } from './SideLauncher';
 import { SideChat } from './SideChat';
 import type { Theme } from '../types';
 import { PreviewView } from './PreviewView';
-import { AgentsView, FilesView, ProgressView } from './SideSessionViews';
+import { AgentsView, ArtifactsView, FilesView, ProgressView } from './SideSessionViews';
 import { ObservePanel } from './ObservePanel';
 import type { SubagentInfo } from '../api';
 import type { SessionRow } from '../lib/sessionList';
@@ -24,7 +24,9 @@ import type { SessionRow } from '../lib/sessionList';
 export type SideRequest =
   | { kind: 'review' | 'launcher'; seq: number }
   // Model: SideChat — open (or focus) the side chat about a session and ask.
-  | { kind: 'btw'; sessionId: string; label: string; question: string; seq: number };
+  | { kind: 'btw'; sessionId: string; label: string; question: string; seq: number }
+  // A session tool tab (the Plan strip's "open in side panel").
+  | { kind: 'tool'; want: { kind: 'progress' | 'artifacts' }; seq: number };
 
 export function PanelIcon() {
   return (
@@ -54,6 +56,7 @@ function tabTitle(t: SideTab, projectName: string, reviewCount: number): string 
   if (t.kind === 'progress') return 'Progress';
   if (t.kind === 'agents') return 'Agents';
   if (t.kind === 'observe') return 'Observe';
+  if (t.kind === 'artifacts') return 'Artifacts';
   if (t.kind === 'files') return 'Files';
   if (t.target === FOLLOW) return 'Changes';
   return `Changes · ${t.target === ROOT ? projectName : t.target}`;
@@ -113,6 +116,7 @@ export function SidePanel({
     lastSeq.current = request.seq;
     if (request.kind === 'review' && reviewOn) setState((s) => openTab(s, { kind: 'review' }));
     else if (request.kind === 'launcher') setState((s) => addLauncher(s));
+    else if (request.kind === 'tool') setState((s) => openTab(s, request.want));
     else if (request.kind === 'btw') {
       setState((s) => openTab(s, { kind: 'btw', sessionId: request.sessionId, label: request.label }));
       if (request.question.trim()) setBtwAsk({ sessionId: request.sessionId, question: request.question, seq: request.seq });
@@ -140,6 +144,8 @@ export function SidePanel({
     body = <ProgressView projectId={projectId} follow={follow} active={!collapsed} />;
   } else if (current.kind === 'agents') {
     body = <AgentsView projectId={projectId} follow={follow} active={!collapsed} onOpenSession={onOpenSession} onOpenSubagent={onOpenSubagent} />;
+  } else if (current.kind === 'artifacts') {
+    body = <ArtifactsView projectId={projectId} follow={follow} active={!collapsed} theme={theme} onAddToChat={onAddToChat} />;
   } else if (current.kind === 'files') {
     body = <FilesView projectId={projectId} projectName={projectName} projectPath={projectPath} theme={theme} onAddToChat={onAddToChat} />;
   } else if (current.kind === 'observe') {

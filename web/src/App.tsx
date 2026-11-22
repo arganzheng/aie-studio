@@ -451,6 +451,12 @@ export default function App() {
     setReviewDrawerOpen(true);
     setSideRequest((prev) => ({ kind: 'btw', sessionId, label, question, seq: (prev?.seq ?? 0) + 1 }));
   };
+  // Model: web.SidePanel — show a session tool tab (Progress, ...) beside the chat.
+  const openSideTool = (kind: 'progress' | 'artifacts') => {
+    setReviewCollapsed(false);
+    setReviewDrawerOpen(true);
+    setSideRequest((prev) => ({ kind: 'tool', want: { kind }, seq: (prev?.seq ?? 0) + 1 }));
+  };
   // Comments and bookmarks land in Review: bring its tab forward.
   const showReview = () => { setReviewCollapsed(false); askSide('review'); };
   // Model: web.CommandPalette — Cmd/Ctrl+K opens it; Option+J / Option+K move
@@ -2149,6 +2155,7 @@ export default function App() {
                   revealInSession,
                   reportActivity: (a) => reportActivity(tab.id, a),
                   openSideChat,
+                  openSideTool,
                 }) : <div className="empty">Unknown tab kind: {tab.type}</div>;
                 return <div key={tabKey} style={style}>{body}</div>;
               })}

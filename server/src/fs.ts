@@ -11,6 +11,7 @@ import { getProject } from './store.js';
 import { getUserId } from './auth.js';
 import type { FastifyRequest } from 'fastify';
 import { attachmentsRoot, planAttachment } from './attachments.js';
+import { ownAttachment } from './artifacts.js';
 
 // mime-types is a web-server table: `.ts` is an MPEG transport stream, `.rs`
 // is an XML dialect, and most source extensions are simply unknown. Editor
@@ -286,6 +287,34 @@ export function registerFsRoutes(app: FastifyInstance) {
       return reply.send(createReadStream(abs));
     },
   );
+
+  // Model: web.ArtifactsView — read back a file the user attached
+  // (server.SessionAttachments). Only the user's own uploads; anything that
+  // a browser would run (HTML, SVG, ...) comes back as plain text.
+  app.get<{ Querystring: { path?: string } }>('/api/attachments/file', async (req, reply) => {
+    const uid = getUserId(req) ?? '';
+    const p = req.query.path ?? '';
+    if (!ownAttachment(attachmentsRoot(), uid, p)) return reply.code(403).send({ error: 'not one of your attachments' });
+    let real: string;
+    try { real = await fs.realpath(p); } catch { return reply.code(404).send({ error: 'attachment not found (attachments are kept for 7 days)' }); }
+    if (!ownAttachment(await fs.realpath(attachmentsRoot()).catch(() => attachmentsRoot()), uid, real)) return reply.code(403).send({ error: 'not one of your attachments' });
+    const stat = await fs.stat(real);
+    if (!stat.isFile()) return reply.code(400).send({ error: 'not a file' });
+    if (stat.size > 50 * 1024 * 1024) return reply.code(413).send({ error: 'file too large (>50MB)' });
+    const type = lookupMime(real);
+    const safe = /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(type) || type === 'application/pdf' || type.startsWith('audio/') || type.startsWith('video/')
+      ? type
+      : type.startsWith('text/') || type === 'application/json' || /javascript|typescript|xml|yaml|toml/.test(type) || type === 'image/svg+xml'
+        ? 'text/plain; charset=utf-8'
+        : 'application/octet-stream';
+    reply.header('Content-Type', safe);
+    reply.header('Content-Length', String(stat.size));
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('Content-Security-Policy', "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox");
+    reply.header('Content-Disposition', `${safe === 'application/octet-stream' ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(path.basename(real))}`);
+    reply.header('Cache-Control', 'no-store');
+    return reply.send(createReadStream(real));
+  });
 
   // Model: server.MoveEntry (auc-126).
   app.post<{ Body: { project?: string; from?: string; to?: string } }>(
