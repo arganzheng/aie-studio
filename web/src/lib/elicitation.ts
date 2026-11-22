@@ -179,9 +179,16 @@ export function bindElicitationsToCards(
   const out = new Map<number | string, string>();
   const claimed = new Set<string>();
   const unbound: Array<number | string> = [];
+  // An explicit toolCallId only binds when that card is actually in the
+  // stream: the ask can arrive before its tool_use (or after a reload whose
+  // transcript page doesn't hold it). Bound to a missing card, the form would
+  // render nowhere while the input stays locked — leave it out of the map so
+  // the host shows it as an orphan instead.
+  const present = new Set(cards.map((c) => c.toolCallId));
   for (const e of elicitations) {
-    if (e.toolCallId) { out.set(e.id, e.toolCallId); claimed.add(e.toolCallId); }
-    else unbound.push(e.id);
+    if (e.toolCallId) {
+      if (present.has(e.toolCallId)) { out.set(e.id, e.toolCallId); claimed.add(e.toolCallId); }
+    } else unbound.push(e.id);
   }
   if (unbound.length === 0) return out;
   const candidates = cards
@@ -201,7 +208,8 @@ export function bindElicitationsToCards(
 //     options:[{ label, description }], multiSelect }] }, tool_use_id } }
 // Same ElicitationRequest shape as Devin's form so the rest of the pipeline
 // (form, lock, recap, binding) is shared. toolCallId is always present, so
-// bindElicitationsToCards never needs the positional fallback here.
+// bindElicitationsToCards never needs the positional fallback here (it
+// still falls back to an orphan form while that card isn't in the stream).
 export function parseAskUserQuestion(ev: any): ElicitationRequest | null {
   if (ev?.type !== 'control_request' || typeof ev.request_id !== 'string') return null;
   const r = ev.request;
