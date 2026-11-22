@@ -129,6 +129,10 @@ describe('bindElicitationsToCards', () => {
     const m = bindElicitationsToCards([{ id: 'e1', toolCallId: 'ask3' }], cards);
     expect(m.get('e1')).toBe('ask3');
   });
+  it('leaves an explicit toolCallId unbound when its card is not in the stream', () => {
+    const m = bindElicitationsToCards([{ id: 'e1', toolCallId: 'toolu_missing' }], cards);
+    expect(m.has('e1')).toBe(false);
+  });
   it('pairs unbound requests with trailing ask cards in order (3000.6.x has no _meta toolCallId)', () => {
     const m = bindElicitationsToCards([{ id: 'e1' }, { id: 'e2' }], cards);
     expect(m.get('e1')).toBe('ask2');
