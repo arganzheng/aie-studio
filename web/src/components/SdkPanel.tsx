@@ -39,6 +39,7 @@ import { ContextBadge, type ContextSnapshot } from './ContextUsage';
 import { childLinkOfTool } from '../lib/childLink';
 import { parseCompactNote } from '../lib/compactNote';
 import { parseChildReports } from '../lib/childReport';
+import { parseWatchReport, type WatchItem } from '../lib/watchReport';
 import { parseParentContext, withParentContext, type ParentContext } from '../lib/parentContext';
 import { summarizeSession } from '../api';
 import { ImageAttachmentStrip, useImageAttachments, type ImageAttachment } from './ImageAttachments';
@@ -408,6 +409,8 @@ export function SdkPanel({
   const [wireOn, setWireOn] = useState(false);
   // Context window reading, pushed by the server after each turn.
   const [contextUsage, setContextUsage] = useState<ContextSnapshot | null>(null);
+  // Model: Session.watches — what the server watches for on this session's behalf.
+  const [watches, setWatches] = useState<WatchItem[]>([]);
   const [exportOpen, setExportOpen] = useState(false);
   const [insertion, setInsertion] = useState<PromptInsertion | null>(null);
   const pendingInitialPromptRef = useRef<string | null>(initialPrompt?.trim() || null);
@@ -801,6 +804,7 @@ export function SdkPanel({
       return;
     }
     if (m.type === 'context') { if (m.context) setContextUsage(m.context); return; }
+    if (m.type === 'watches') { setWatches(Array.isArray(m.items) ? m.items : []); return; }
     if (m.type === 'queue') { setQueued(parseQueue(m.items)); return; }
     if (m.type === 'catalog') { setCatalog({ commands: m.commands ?? [], agents: m.agents ?? [], models: m.models ?? [] }); return; }
     if (m.type === 'title') { if (typeof m.title === 'string' && m.title) onTitleRef.current?.(m.title); return; }
@@ -1202,6 +1206,20 @@ export function SdkPanel({
                 </Fragment>
               );
             }
+            // A watch the agent set has settled: the server's message, not the user's.
+            const watchReport = m.images?.length ? null : parseWatchReport(m.text);
+            if (watchReport) {
+              return (
+                <div key={m.id} className={`msg msg-child-report msg-watch-report${watchReport.state === 'met' ? '' : ' failed'}`} data-anchor={anchor ?? undefined}>
+                  <div className="child-report-head">
+                    <span className="child-report-mark" aria-hidden="true">⏳</span>
+                    <span className="child-report-title">{watchReport.label}</span>
+                    <span className="child-report-state">watch {watchReport.state}</span>
+                  </div>
+                  <MarkdownText text={watchReport.body} theme={theme} projectPath={projectPath} onOpenFile={openFile} />
+                </div>
+              );
+            }
             // What a compaction left behind: not typed by the user.
             const compact = m.images?.length ? null : parseCompactNote(m.text);
             if (compact?.kind === 'done') return null;
@@ -1493,6 +1511,17 @@ export function SdkPanel({
           </div>
         );
       })()}
+      {watches.length > 0 && (
+        <div className="watch-bar" role="status">
+          {watches.map((w) => (
+            <div key={w.id} className="watch-bar-item" title={`Last seen: ${w.lastSeen}\nGives up at ${new Date(w.deadline).toLocaleString()}`}>
+              <span className="watch-bar-icon" aria-hidden="true">⏳</span>
+              <span className="watch-bar-text">Goes on by itself when <b>{w.label}</b> — or when you reply</span>
+              <button type="button" className="watch-bar-cancel" aria-label={`Stop watching for ${w.label}`} title="Stop watching" onClick={() => wsSend({ type: 'watch_cancel', id: w.id })}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
       {parentCtx.status !== 'off' && (
         <div className={`parent-ctx parent-ctx-${parentCtx.status}`}>
           <div className="parent-ctx-bar">

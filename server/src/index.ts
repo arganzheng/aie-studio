@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { registerFsRoutes } from './fs.js';
 import { registerSessionRoutes } from './session.js';
 import { recoverChildReports, registerSdkSessionRoutes } from './sdk-session.js';
+import { startWatches } from './watch-service.js';
 import { registerDevinRoutes } from './devin.js';
 import { registerNotifyRoutes } from './notify.js';
 import { registerDuplexRoutes } from './duplex.js';
@@ -150,5 +151,7 @@ startAttachmentSweep((msg) => app.log.info(msg));
 app.listen({ port: PORT, host: HOST }).then((addr) => {
   // Children that were mid-turn when the server last went down: tell their parents.
   setTimeout(() => { void recoverChildReports().then((n) => { if (n > 0) app.log.info(`child sessions: ${n} interrupted report(s) delivered`); }).catch(() => {}); }, 3000);
+  // Watches: carry on looking; deliver what settled before the restart.
+  setTimeout(() => { void startWatches().then((n) => { if (n > 0) app.log.info(`watches: ${n} settled report(s) delivered`); }).catch((err) => app.log.warn({ err }, 'watches failed to start')); }, 4000);
   app.log.info(`remote-ide server listening on ${addr}`);
 });

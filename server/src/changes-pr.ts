@@ -110,3 +110,43 @@ export function readPrStatus(dir: string, branch: string, fresh = false): Promis
   if (cache.size > 200) cache.delete(cache.keys().next().value!);
   return value;
 }
+
+// ---- by number (model: Session.watches) ----
+
+function runGhJson(args: string[], cwd: string | undefined): Promise<{ json: any } | { error: string }> {
+  const bin = process.env.AIE_GH_BIN || 'gh';
+  return new Promise((resolve) => {
+    execFile(bin, args, { cwd, timeout: 20_000, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' } }, (err, stdout, stderr) => {
+      if (err) {
+        const p = ghProblem(`${stderr || ''}\n${(err as NodeJS.ErrnoException).code === 'ENOENT' ? 'ENOENT' : err.message}`);
+        resolve({ error: p.unavailable ?? 'no pull request found' });
+        return;
+      }
+      try { resolve({ json: JSON.parse(stdout) }); } catch { resolve({ error: 'gh answered something unreadable' }); }
+    });
+  });
+}
+
+// The pull request `pr` (or, without one, that of the branch checked out in
+// `dir`): its number and its repository's URL.
+export function readPrRef(dir: string, pr?: number): Promise<{ json: any } | { error: string }> {
+  return runGhJson(['pr', 'view', ...(pr ? [String(pr)] : []), '--json', 'number,url'], dir);
+}
+
+const byNumberCache = new Map<string, { at: number; value: Promise<{ pr: PrInfo | null; mergeCommit: string | null } | { error: string }> }>();
+
+// Pull request `pr` of `repo` (owner/name), wherever the server runs: a
+// watch outlives the checkout that set it. Answers are kept 30 s.
+export function readPrByNumber(repo: string, pr: number): Promise<{ pr: PrInfo | null; mergeCommit: string | null } | { error: string }> {
+  const key = `${repo}#${pr}`;
+  const hit = byNumberCache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.value;
+  const value = runGhJson(['pr', 'view', String(pr), '--repo', repo, '--json', `${FIELDS},mergeCommit`], undefined).then((r) =>
+    'error' in r ? r : { pr: parsePr(r.json), mergeCommit: typeof r.json?.mergeCommit?.oid === 'string' ? r.json.mergeCommit.oid : null });
+  byNumberCache.set(key, { at: Date.now(), value });
+  if (byNumberCache.size > 200) byNumberCache.delete(byNumberCache.keys().next().value!);
+  return value;
+}
+
+// Tests: forget what was read.
+export function clearPrCache() { cache.clear(); byNumberCache.clear(); }
