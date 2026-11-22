@@ -149,7 +149,7 @@ export function registerProjectRoutes(app: FastifyInstance) {
 
   app.get<{
     Params: { id: string; uuid: string };
-    Querystring: { limit?: string; before?: string };
+    Querystring: { limit?: string; before?: string; plan?: string };
   }>(
     '/api/projects/:id/sessions/:uuid/transcript',
     async (req, reply) => {
@@ -175,6 +175,9 @@ export function registerProjectRoutes(app: FastifyInstance) {
           if (obj.type === 'user' || obj.type === 'assistant') all.push(obj);
         } catch {}
       }
+      // Model: web.ProgressView — plan=all: only the task list's tool calls,
+      // from the whole transcript.
+      if (req.query.plan === 'all') return { planTools: planToolCalls(all), total: all.length };
       const total = all.length;
       const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 20));
       const endIdx =

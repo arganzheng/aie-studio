@@ -24,7 +24,16 @@ const shown = {
   },
 };
 
-export function SideChat({ projectId, sessionId, label, theme, ask, onClose }: {
+// Pure: the side conversation as text, for the child session it continues in.
+export function sideTranscript(lines: readonly { role: string; text: string }[]): string {
+  return lines
+    .filter((l) => l.role === 'user' || l.role === 'assistant')
+    .map((l) => `${l.role === 'user' ? 'Me' : 'Claude'}: ${l.text}`)
+    .join('\n\n')
+    .slice(-20_000);
+}
+
+export function SideChat({ projectId, sessionId, label, theme, ask, onClose, onContinue }: {
   projectId: string;
   sessionId: string;
   label: string;
@@ -32,6 +41,8 @@ export function SideChat({ projectId, sessionId, label, theme, ask, onClose }: {
   // A question sent from the session (`/btw …`); seq makes repeats distinct.
   ask: { question: string; seq: number } | null;
   onClose?: () => void;
+  // Carry on in a child session (it can change things), told what was said here.
+  onContinue?: (conversation: string) => void;
 }) {
   const [lines, setLines] = useState<Line[]>(() => {
     const before = shown.get(sessionId).filter((l) => !l.text.startsWith('Reconnected:'));
@@ -114,6 +125,14 @@ export function SideChat({ projectId, sessionId, label, theme, ask, onClose }: {
       <div className="btw-head" title="A read-only copy of the session's conversation: it can read files but not change anything, and is not saved. The session itself keeps working.">
         <span className="btw-mark">btw</span>
         <span className="btw-label">about <b>{label}</b> · read-only, not saved{cost > 0 ? ` · $${cost.toFixed(3)}` : ''}</span>
+        {onContinue && lines.some((l) => l.role === 'assistant') && (
+          <button
+            type="button"
+            className="btw-continue"
+            title="Open a child session of this one (it can make changes) that starts from this side conversation"
+            onClick={() => onContinue(sideTranscript(lines))}
+          >Continue as child session</button>
+        )}
         {onClose && <button type="button" className="btw-close" onClick={onClose} aria-label="Close side chat">×</button>}
       </div>
       <div className="btw-body" ref={bodyRef}>

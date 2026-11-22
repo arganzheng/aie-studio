@@ -53,6 +53,14 @@ export function SideLauncher({ projectId, projectName, reviewOn, followLabel, fo
     return () => { off = true; };
   }, [projectId]);
 
+  // Model: web.SidePanel launcher groups (like Devin's): about the session
+  // you are in, then tools, previews and checkouts.
+  const sessionTools: Item[] = useMemo(() => (followSessionId ? [
+    { key: 'progress', title: 'Progress', detail: 'Its task list, step by step', words: 'progress plan tasks todo steps', want: { kind: 'progress' } as const },
+    { key: 'agents', title: 'Agents', detail: 'Its child sessions and subagents', words: 'agents children child sessions subagents', want: { kind: 'agents' } as const },
+    { key: 'observe', title: 'Observe', detail: 'Turns, tool calls, tokens and time', words: 'observe trace tokens wire turns', want: { kind: 'observe' } as const },
+  ] : []), [followSessionId]);
+
   const tools: Item[] = useMemo(() => [
     {
       key: 'follow',
@@ -68,6 +76,7 @@ export function SideLauncher({ projectId, projectName, reviewOn, followLabel, fo
       words: 'btw side chat ask question aside',
       want: { kind: 'btw', sessionId: followSessionId, label: followLabel ?? 'session' } as const,
     }] : []),
+    { key: 'files', title: 'Files', detail: 'Browse and read the project beside the chat', words: 'files tree browse read code', want: { kind: 'files' } as const },
     ...(reviewOn ? [{ key: 'review', title: 'Review', detail: 'Bookmarks and comment batches', words: 'review comments batches bookmarks', want: { kind: 'review' } as const }] : []),
   ], [followLabel, followSessionId, reviewOn]);
 
@@ -89,7 +98,8 @@ export function SideLauncher({ projectId, projectName, reviewOn, followLabel, fo
 
   const needle = q.trim().toLowerCase();
   const match = (i: Item) => !needle || `${i.title} ${i.detail} ${i.words}`.toLowerCase().includes(needle);
-  const shownTools = tools.filter(match);
+  const shownSession = [...sessionTools, ...tools.filter((t) => t.key === 'btw')].filter(match);
+  const shownTools = tools.filter((t) => t.key !== 'btw').filter(match);
   const shownCheckouts = checkouts.filter(match);
   const shownPreviews = previews.filter(match);
 
@@ -103,15 +113,28 @@ export function SideLauncher({ projectId, projectName, reviewOn, followLabel, fo
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
-              const first = shownTools[0] ?? shownPreviews[0] ?? shownCheckouts[0];
+              const first = shownSession[0] ?? shownTools[0] ?? shownPreviews[0] ?? shownCheckouts[0];
               if (first) onPick(first.want);
             }
           }}
-          placeholder="Search changes, previews, worktrees and tools"
+          placeholder="Search tools, previews and checkouts"
           aria-label="Search the side panel's tools and checkouts"
         />
         <kbd title="Option+T opens a new tab here">⌥T</kbd>
       </label>
+      {shownSession.length > 0 && (
+        <>
+          <div className="side-launcher-section" title={followLabel ?? undefined}>This session{followLabel ? <span className="side-launcher-sub"> · {followLabel}</span> : null}</div>
+          <div className="side-launcher-grid">
+            {shownSession.map((i) => (
+              <button key={i.key} type="button" className="side-card" onClick={() => onPick(i.want)}>
+                <div className="side-card-title">{i.title}</div>
+                <div className="side-card-detail">{i.detail}</div>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       {shownTools.length > 0 && (
         <>
           <div className="side-launcher-section">Tools</div>

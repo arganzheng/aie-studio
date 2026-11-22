@@ -19,6 +19,12 @@ export type SideWant =
   // Model: web.PreviewView — a dev server on this machine, by port; path is
   // where it was last (kept so the tab comes back to it).
   | { kind: 'preview'; port: number; path: string }
+  // Model: web.SidePanel session tools — follow the session the user is in.
+  | { kind: 'progress' }
+  | { kind: 'agents' }
+  | { kind: 'observe' }
+  // The project's files, read beside the chat.
+  | { kind: 'files' }
   | { kind: 'launcher' };
 export type SideTab = SideWant & { id: string };
 export type SideState = { tabs: SideTab[]; active: string | null };
@@ -95,6 +101,7 @@ export function parseSideState(raw: string | null, reviewOn: boolean): SideState
       const tabs: SideTab[] = v.tabs.filter((t: any) =>
         t && typeof t.id === 'string' && (
           (t.kind === 'changes' && typeof t.target === 'string') || t.kind === 'review' || t.kind === 'launcher'
+          || t.kind === 'progress' || t.kind === 'agents' || t.kind === 'observe' || t.kind === 'files'
           || (t.kind === 'btw' && typeof t.sessionId === 'string' && typeof t.label === 'string')
           || (t.kind === 'preview' && isPreviewPort(t.port) && typeof t.path === 'string')
         ));
