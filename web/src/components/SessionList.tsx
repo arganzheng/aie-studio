@@ -317,7 +317,7 @@ export function SessionList({
           )}
           <div className="session-row-sub">
             {opts.showProject && row && <span className="session-row-project">{projectNames.get(row.projectId) ?? 'Unknown project'} · </span>}
-            <span className="session-row-status" title={status.tone === 'running' && row?.activity ? `Working — ${row.activity}` : undefined}>{status.label}</span>
+            <span className="session-row-status" title={status.tone === 'running' && row?.activity ? `Working — ${row.activity}` : row?.watches?.length ? `Goes on by itself when ${row.watches.map((w) => w.label).join(', ')} — or when you reply` : undefined}>{status.label}</span>
             {row?.worktree && <span className="session-row-worktree" title={`Works in its own git worktree: .claude/worktrees/${row.worktree}`}> · ⎇ {row.worktree}</span>}
           </div>
         </div>

@@ -4,6 +4,7 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { ensureUser } from './users.js';
 import { normalizeStatus, type SessionStatus } from './session-status.js';
+import { normalizeWatches, type Watches } from './watches.js';
 
 export type Project = {
   id: string;
@@ -124,6 +125,7 @@ function sessionMetaFile(uid: string): string { return path.join(userDir(uid), '
 function owedReportsFile(uid: string): string { return path.join(userDir(uid), 'child-reports.json'); }
 function heldReportsFile(uid: string): string { return path.join(userDir(uid), 'child-reports-held.json'); }
 function childTermsFile(uid: string): string { return path.join(userDir(uid), 'child-terms.json'); }
+function watchesFile(uid: string): string { return path.join(userDir(uid), 'watches.json'); }
 
 // Legacy single-user file locations — used only for the one-shot migration
 // into the per-user tree on first start after the multi-user upgrade.
@@ -642,4 +644,13 @@ export async function getAutomationsRaw(uid: string): Promise<unknown> {
 }
 export async function putAutomationsRaw(uid: string, data: unknown): Promise<void> {
   await writeJson(automationsFile(uid), data);
+}
+
+// Model: Session.watches — what the user's sessions are waiting on that the
+// server checks for them (watches.ts). On disk so a restart keeps watching.
+export async function getWatches(uid: string): Promise<Watches> {
+  return normalizeWatches(await readJson<unknown>(watchesFile(uid), {}));
+}
+export async function putWatches(uid: string, watches: Watches): Promise<void> {
+  await writeJson(watchesFile(uid), normalizeWatches(watches));
 }

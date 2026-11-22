@@ -138,3 +138,18 @@ export function filterCommands(items: CommandItem[], query: string): CommandItem
   );
   return scored.map((x) => x.it);
 }
+
+// Model: SideChat (/btw) — handled by the panel itself, not sent to claude.
+export const BTW_COMMAND: CommandItem = {
+  group: COMMANDS_GROUP,
+  name: 'btw',
+  label: '/btw',
+  description: 'Ask a side question without interrupting — read-only, opens in the side panel',
+  insert: '/btw ',
+};
+
+// Pure: the question of a `/btw …` message, or null when it is not one.
+export function btwQuestion(text: string): string | null {
+  const m = /^\/btw(?:\s+([\s\S]*))?$/.exec(text.trim());
+  return m ? (m[1] ?? '').trim() : null;
+}

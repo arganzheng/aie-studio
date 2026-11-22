@@ -39,6 +39,7 @@ import { ContextBadge, type ContextSnapshot } from './ContextUsage';
 import { childLinkOfTool } from '../lib/childLink';
 import { parseCompactNote } from '../lib/compactNote';
 import { parseChildReports } from '../lib/childReport';
+import { parseWatchReport, type WatchItem } from '../lib/watchReport';
 import { parseParentContext, withParentContext, type ParentContext } from '../lib/parentContext';
 import { summarizeSession } from '../api';
 import { ImageAttachmentStrip, useImageAttachments, type ImageAttachment } from './ImageAttachments';
@@ -49,7 +50,7 @@ import { isSendKeyTrigger } from '../lib/sendKey';
 import { toWireImages } from '../lib/imageAttachments';
 import { isImageSizeNote, parseToolResultContent, type ToolOutput } from '../lib/toolResult';
 import { makeRelPath } from '../lib/relPath';
-import { toCommandItems } from '../lib/commandPicker';
+import { BTW_COMMAND, btwQuestion, toCommandItems } from '../lib/commandPicker';
 import type { ClaudeCliCatalog } from '../lib/claudeCatalog';
 import { useAieCommands } from '../useAieCommands';
 import { useClaudeModels, effortOptionsFor } from '../useClaudeModels';
@@ -324,6 +325,7 @@ export function SdkPanel({
   onInitialPromptConsumed,
   onOpenFile,
   onActivity,
+  onBtw,
   onOpenSession,
   onExportApi,
   onComment,
@@ -357,6 +359,8 @@ export function SdkPanel({
   onInitialPromptConsumed?: () => void;
   onOpenFile?: (relPath: string) => void;
   onActivity?: (a: TabActivity | null) => void;
+  // Model: SideChat — `/btw …` opens the side chat about this session; false when it has no id yet.
+  onBtw?: (question: string) => boolean;
   // Open one of this project's sessions in its own tab (a child session).
   onOpenSession?: (sessionId: string, title?: string) => void;
   onExportApi?: (api: { open: () => void; canExport: boolean } | null) => void;
@@ -408,6 +412,8 @@ export function SdkPanel({
   const [wireOn, setWireOn] = useState(false);
   // Context window reading, pushed by the server after each turn.
   const [contextUsage, setContextUsage] = useState<ContextSnapshot | null>(null);
+  // Model: Session.watches — what the server watches for on this session's behalf.
+  const [watches, setWatches] = useState<WatchItem[]>([]);
   const [exportOpen, setExportOpen] = useState(false);
   const [insertion, setInsertion] = useState<PromptInsertion | null>(null);
   const pendingInitialPromptRef = useRef<string | null>(initialPrompt?.trim() || null);
@@ -491,7 +497,7 @@ export function SdkPanel({
     () => (catalog ? { slashCommands: catalog.commands.map((c) => c.name), skills: [], agents: catalog.agents, terminalSlashCommands: [] } : null),
     [catalog],
   );
-  const commands = useMemo(() => toCommandItems(aieSkills, aieAgents, cliCatalog), [aieSkills, aieAgents, cliCatalog]);
+  const commands = useMemo(() => [BTW_COMMAND, ...toCommandItems(aieSkills, aieAgents, cliCatalog)], [aieSkills, aieAgents, cliCatalog]);
 
   // Export (⋮ → Export session). Same stale-closure note as ChatPanel: App
   // hands a fresh arrow per render, the underlying registerExportApi is stable.
@@ -801,6 +807,7 @@ export function SdkPanel({
       return;
     }
     if (m.type === 'context') { if (m.context) setContextUsage(m.context); return; }
+    if (m.type === 'watches') { setWatches(Array.isArray(m.items) ? m.items : []); return; }
     if (m.type === 'queue') { setQueued(parseQueue(m.items)); return; }
     if (m.type === 'catalog') { setCatalog({ commands: m.commands ?? [], agents: m.agents ?? [], models: m.models ?? [] }); return; }
     if (m.type === 'title') { if (typeof m.title === 'string' && m.title) onTitleRef.current?.(m.title); return; }
@@ -1046,6 +1053,13 @@ export function SdkPanel({
 
   function send(raw: string, mode?: SendMode) {
     if (!wsRef.current || status === 'closed' || status === 'connecting' || status === 'reconnecting') return;
+    // Model: SideChat — a side question, not a message to this session.
+    const btw = btwQuestion(raw);
+    if (btw !== null) {
+      if (!onBtw) showToast('Side chats are not available here');
+      else if (!onBtw(btw)) showToast('Send a first message: a side chat needs the session to exist');
+      return;
+    }
     if (isBangInput(raw)) {
       const cmd = bangCommand(raw);
       if (cmd) runBangCommand(cmd);
@@ -1200,6 +1214,20 @@ export function SdkPanel({
                     </div>
                   ))}
                 </Fragment>
+              );
+            }
+            // A watch the agent set has settled: the server's message, not the user's.
+            const watchReport = m.images?.length ? null : parseWatchReport(m.text);
+            if (watchReport) {
+              return (
+                <div key={m.id} className={`msg msg-child-report msg-watch-report${watchReport.state === 'met' ? '' : ' failed'}`} data-anchor={anchor ?? undefined}>
+                  <div className="child-report-head">
+                    <span className="child-report-mark" aria-hidden="true">⏳</span>
+                    <span className="child-report-title">{watchReport.label}</span>
+                    <span className="child-report-state">watch {watchReport.state}</span>
+                  </div>
+                  <MarkdownText text={watchReport.body} theme={theme} projectPath={projectPath} onOpenFile={openFile} />
+                </div>
               );
             }
             // What a compaction left behind: not typed by the user.
@@ -1493,6 +1521,17 @@ export function SdkPanel({
           </div>
         );
       })()}
+      {watches.length > 0 && (
+        <div className="watch-bar" role="status">
+          {watches.map((w) => (
+            <div key={w.id} className="watch-bar-item" title={`Last seen: ${w.lastSeen}\nGives up at ${new Date(w.deadline).toLocaleString()}`}>
+              <span className="watch-bar-icon" aria-hidden="true">⏳</span>
+              <span className="watch-bar-text">Goes on by itself when <b>{w.label}</b> — or when you reply</span>
+              <button type="button" className="watch-bar-cancel" aria-label={`Stop watching for ${w.label}`} title="Stop watching" onClick={() => wsSend({ type: 'watch_cancel', id: w.id })}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
       {parentCtx.status !== 'off' && (
         <div className={`parent-ctx parent-ctx-${parentCtx.status}`}>
           <div className="parent-ctx-bar">

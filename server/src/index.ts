@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { registerFsRoutes } from './fs.js';
 import { registerSessionRoutes } from './session.js';
 import { recoverChildReports, registerSdkSessionRoutes } from './sdk-session.js';
+import { startWatches } from './watch-service.js';
 import { registerDevinRoutes } from './devin.js';
 import { registerNotifyRoutes } from './notify.js';
 import { registerDuplexRoutes } from './duplex.js';
@@ -21,6 +22,8 @@ import { registerSubagentRoutes } from './subagents.js';
 import { registerWorktreeRoutes } from './worktrees.js';
 import { registerChangesRoutes } from './changes.js';
 import { registerAutomationRoutes, startAutomationScheduler } from './automations.js';
+import { registerSideChatRoutes } from './side-chat.js';
+import { registerPreviewRoutes } from './preview.js';
 import { registerPushRoutes } from './push.js';
 import { registerSessionSummaryRoutes } from './session-summary.js';
 import { registerDevinVersionRoutes } from './devin-versions.js';
@@ -79,6 +82,8 @@ registerSubagentRoutes(app);
 registerWorktreeRoutes(app);
 registerChangesRoutes(app);
 registerAutomationRoutes(app);
+registerSideChatRoutes(app);
+registerPreviewRoutes(app, { ownPorts: [PORT, Number(process.env.REMOTE_IDE_WIRE_PORT ?? 9992)] });
 registerPushRoutes(app);
 registerSessionSummaryRoutes(app);
 registerDevinVersionRoutes(app);
@@ -151,5 +156,7 @@ if (process.env.AIE_AUTOMATIONS !== 'off') startAutomationScheduler((msg) => app
 app.listen({ port: PORT, host: HOST }).then((addr) => {
   // Children that were mid-turn when the server last went down: tell their parents.
   setTimeout(() => { void recoverChildReports().then((n) => { if (n > 0) app.log.info(`child sessions: ${n} interrupted report(s) delivered`); }).catch(() => {}); }, 3000);
+  // Watches: carry on looking; deliver what settled before the restart.
+  setTimeout(() => { void startWatches().then((n) => { if (n > 0) app.log.info(`watches: ${n} settled report(s) delivered`); }).catch((err) => app.log.warn({ err }, 'watches failed to start')); }, 4000);
   app.log.info(`remote-ide server listening on ${addr}`);
 });

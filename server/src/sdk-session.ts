@@ -56,16 +56,18 @@ import { duplexRoute } from './duplex.js';
 import { planToolCalls } from './plan-tools.js';
 import { taskToolsEnv, taskToolsOn } from './task-tools.js';
 import { MAX_QUEUED, MAX_QUEUED_TEXT, editQueued, mergeQueued, queueView, type QueuedPrompt } from './prompt-queue.js';
+import { addWatch, cancelWatches, configureWatches, watchesOf } from './watch-service.js';
+import { MAX_TIMEOUT_HOURS, WATCH_INSTRUCTIONS, watchView } from './watches.js';
 
 // ----- input queue: one always-open async iterable per live query ---------
 
-type InputQueue = {
+export type InputQueue = {
   iterable: () => AsyncIterable<SDKUserMessage>;
   push: (m: SDKUserMessage) => void;
   close: () => void;
 };
 
-function makeInputQueue(): InputQueue {
+export function makeInputQueue(): InputQueue {
   const buf: SDKUserMessage[] = [];
   let wake: (() => void) | null = null;
   let closed = false;
@@ -303,7 +305,7 @@ function broadcast(entry: SdkEntry, msg: unknown, except?: WebSocket) {
   }
 }
 
-function sdkEnv(observeWire: boolean, taskTools: boolean): Record<string, string> {
+export function sdkEnv(observeWire: boolean, taskTools: boolean): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (typeof v === 'string') env[k] = v;
   // Same as session.ts: non-interactive runs only checkpoint files with this set.
@@ -459,7 +461,7 @@ function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: 
       pathToClaudeCodeExecutable: process.env.REMOTE_IDE_SDK_CLAUDE_PATH || undefined,
       stderr: (data) => broadcast(entry, { type: 'stderr', data }),
       canUseTool: makeCanUseTool(entry),
-      mcpServers: { ...(entry.childTools ? { aie: childToolsServer(entry) } : {}), aie_status: statusServer() },
+      mcpServers: { ...(entry.childTools ? { aie: childToolsServer(entry) } : {}), aie_status: statusServer(), aie_watch: watchToolsServer(entry) },
       outputFormat: entry.resultSchema ? { type: 'json_schema', schema: entry.resultSchema } : undefined,
     },
   });
@@ -671,7 +673,7 @@ function flushQueue(entry: SdkEntry) {
   broadcastQueue(entry);
   if (items.length === 0) return;
   const { text, images } = mergeQueued(items);
-  deliverUser(entry, text, images, null);
+  deliverUser(entry, text, images, null, Math.min(...items.map((q) => q.at)));
 }
 
 // Model: Session.queue — the client messages that change it. True when
@@ -685,7 +687,7 @@ function handleQueueMessage(entry: SdkEntry, msg: any): boolean {
     const item = entry.queued.find((q) => q.id === id);
     entry.queued = entry.queued.filter((q) => q.id !== id);
     broadcastQueue(entry);
-    if (item) deliverUser(entry, item.text, item.images, null);
+    if (item) deliverUser(entry, item.text, item.images, null, item.at);
     return true;
   } else return false;
   broadcastQueue(entry);
@@ -808,6 +810,7 @@ function attachClient(entry: SdkEntry, socket: WebSocket) {
   if (entry.killTimer) { clearTimeout(entry.killTimer); entry.killTimer = undefined; }
   entry.clients.add(socket);
   disarmAllAsks(entry);
+  if (entry.sessionId) void watchesOf(entry.owner.uid, entry.sessionId).then((ws) => send(socket, { type: 'watches', items: ws.map(watchView) }));
 
   let alive = true;
   const pingTimer = setInterval(() => {
@@ -835,7 +838,10 @@ function attachClient(entry: SdkEntry, socket: WebSocket) {
 
 // Put a message the user wrote into the session: the running turn takes it
 // at its next step, or it starts a turn.
-function deliverUser(entry: SdkEntry, text: string, images: Array<{ mediaType?: string; data?: string }>, msgId: string | null) {
+function deliverUser(entry: SdkEntry, text: string, images: Array<{ mediaType?: string; data?: string }>, msgId: string | null, writtenAt = Date.now()) {
+  // Model: Session.watches — the user's reply came first: what the session
+  // was waiting on (set before they wrote) is no longer awaited.
+  if (entry.sessionId) void cancelWatches(entry.owner.uid, entry.sessionId, { before: writtenAt });
   // Writing while a plan waits is the answer to it: the plan goes back and
   // the message says why.
   for (const [id, ask] of entry.pendingAsks) {
@@ -863,6 +869,7 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
   if (msg.type === 'ping') { send(socket, { type: 'pong' }); return; }
   if (msg.type === 'bang') { handleBang(entry, msg); return; }
   if (msg.type === 'bang_interrupt') { entry.runningBang.get(String(msg.id ?? ''))?.run.interrupt(); return; }
+  if (msg.type === 'watch_cancel') { if (entry.sessionId) await cancelWatches(entry.owner.uid, entry.sessionId, { id: String(msg.id ?? '') }); return; }
   if (!entry.q) { send(socket, { type: 'error', message: 'session is not live' }); return; }
 
   if (handleQueueMessage(entry, msg)) return;
@@ -1352,6 +1359,80 @@ function statusServer() {
   return createSdkMcpServer({ name: 'aie_status', version: '1.0.0', instructions: STATUS_INSTRUCTIONS, tools: [] });
 }
 
+// ----- watches (model: Session.watches) -------------------------------------
+
+async function broadcastWatches(uid: string, sessionId: string) {
+  const entry = byId.get(sessionId);
+  if (!entry || entry.owner.uid !== uid) return;
+  const ws = await watchesOf(uid, sessionId);
+  broadcast(entry, { type: 'watches', items: ws.map(watchView) });
+}
+
+configureWatches({
+  changed: (uid, sessionId) => { void broadcastWatches(uid, sessionId); },
+  // Into the session as a message, waking it; done when that turn is.
+  deliver: async (uid, w, text) => {
+    const entry = await wakeSession({ uid, projectId: w.projectId, projectPath: w.projectPath }, w.sessionId);
+    if (!entry) throw new Error('session not reachable');
+    injectUserText(entry, text);
+    while (entry.thinking && byId.get(w.sessionId) === entry) await new Promise((r) => setTimeout(r, 2000));
+  },
+});
+
+// The watch tools, a server of their own (any SDK session has them, child
+// tools or not; its instructions are told once per server name).
+function watchToolsServer(entry: SdkEntry) {
+  const who = () => entry.sessionId ? { sessionId: entry.sessionId, projectId: entry.owner.projectId, projectPath: entry.projectPath, cwd: entry.cwd } : null;
+  return createSdkMcpServer({
+    name: 'aie_watch',
+    version: '1.0.0',
+    instructions: WATCH_INSTRUCTIONS,
+    tools: [
+      tool(
+        'watch_until',
+        'Have the server watch for a condition while you wait for the user, so the work goes on as soon as it is met even if the user never replies. Kinds: "pr_merged" (the pull request is merged), "pr_checks" (its CI checks have all finished, passed or not), "deployed" (this aie-studio server has been restarted onto code that includes `commit`, or the merge commit of `pr`). `pr` defaults to the pull request of the branch checked out where you work. Returns at once; end your turn after it. When the condition is met (or can no longer be, or the watch times out) a message starting with "[Watch" arrives in this conversation. If the user replies first, the watch ends.',
+        {
+          kind: z.enum(['pr_merged', 'pr_checks', 'deployed']).describe('What to wait for'),
+          pr: z.number().int().positive().optional().describe('Pull request number; omit for the PR of your current branch'),
+          commit: z.string().optional().describe('deployed only: the commit that must be running (instead of pr)'),
+          then: z.string().describe('What you will do once it is met, in one or two sentences — it is handed back to you with the report'),
+          timeout_hours: z.number().positive().max(MAX_TIMEOUT_HOURS).optional().describe('Give up after this long (default 24, at most 168)'),
+        },
+        async (args) => {
+          const me = who();
+          if (!me) return toolText('This session has no id yet; try again in a moment.', true);
+          const w = await addWatch(entry.owner.uid, me, { kind: args.kind, pr: args.pr, commit: args.commit, then: args.then, timeoutHours: args.timeout_hours });
+          if ('error' in w) return toolText(w.error, true);
+          const hours = Math.round((w.deadline - w.createdAt) / 3_600_000);
+          return toolText(`Watching "${w.label}" (id ${w.id}, gives up after ${hours} h). End your turn now; when it is met a message starting with "[Watch" will arrive. If the user replies first, the watch ends.`);
+        },
+      ),
+      tool(
+        'cancel_watch',
+        'Stop watching a condition you no longer need to wait for.',
+        { id: z.string().describe('The watch id from watch_until or list_watches') },
+        async (args) => {
+          const me = who();
+          if (!me) return toolText('No watches.');
+          const gone = await cancelWatches(entry.owner.uid, me.sessionId, { id: String(args.id ?? '').trim() });
+          return gone.length ? toolText(`Stopped watching "${gone[0].label}".`) : toolText(`No watch ${args.id} on this session. Use list_watches.`, true);
+        },
+      ),
+      tool(
+        'list_watches',
+        'List the conditions this session is watching for, with what was last seen of each.',
+        {},
+        async () => {
+          const me = who();
+          const ws = me ? await watchesOf(entry.owner.uid, me.sessionId) : [];
+          if (ws.length === 0) return toolText('This session is not watching for anything.');
+          return toolText(ws.map((w) => `${w.id}: ${w.label} — last seen: ${w.lastSeen}; gives up ${new Date(w.deadline).toISOString()}`).join('\n'));
+        },
+      ),
+    ],
+  });
+}
+
 // The in-process MCP server that gives `parent`'s agent its child-session
 // tools. One per query: the handlers close over the entry.
 function childToolsServer(parent: SdkEntry) {
@@ -1710,4 +1791,10 @@ export async function sendToSession(o: { uid: string; projectId: string; project
   if (!entry) return { ok: false, error: 'That session is open in a classic (CLI) tab, or is not yours' };
   deliverUser(entry, o.text, [], null);
   return { ok: true };
+}
+
+// The model a live session runs (side chats fork with the same one, which
+// keeps the shared start of the conversation in the prompt cache).
+export function sdkLiveModel(sessionId: string): string | null {
+  return byId.get(sessionId)?.model ?? null;
 }
