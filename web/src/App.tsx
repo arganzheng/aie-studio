@@ -1,3 +1,4 @@
+import { AutomationsDialog } from './components/AutomationsDialog';
 import type React from 'react';
 import { CommandPalette, type PaletteAction } from './components/CommandPalette';
 import { cycleTab } from './lib/palette';
@@ -588,6 +589,7 @@ export default function App() {
   }, []);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [automationsOpen, setAutomationsOpen] = useState(false);
   const [devinUsageOpen, setDevinUsageOpen] = useState(false);
   // Model: web.ProjectManager dialog.
   const [projectManagerOpen, setProjectManagerOpen] = useState(false);
@@ -1888,6 +1890,7 @@ export default function App() {
     { id: 'side-new', title: 'New side panel tab', detail: 'Changes, worktrees, Review · ⌥T', run: () => { setReviewCollapsed(false); setReviewDrawerOpen(true); askSide('launcher'); } },
     { id: 'side-toggle', title: reviewCollapsed ? 'Show the side panel' : 'Hide the side panel', run: () => setReviewCollapsed((v) => !v) },
     { id: 'settings', title: 'Open settings', run: () => setSettingsOpen(true) },
+    { id: 'automations', title: 'Automations', detail: 'Schedules and webhooks that start sessions', run: () => setAutomationsOpen(true) },
   ];
 
   return (
@@ -1921,6 +1924,7 @@ export default function App() {
               onSelect={setActiveProject}
               onManage={() => setProjectManagerOpen(true)}
               onOpenSettings={() => setSettingsOpen(true)}
+              onOpenAutomations={() => setAutomationsOpen(true)}
               onOpenDevinUsage={() => setDevinUsageOpen(true)}
               onOpenDebug={() => setDebugOpen(true)}
             />
@@ -2246,6 +2250,17 @@ export default function App() {
             await logout();
             window.location.reload();
           }}
+        />
+      )}
+      {automationsOpen && (
+        <AutomationsDialog
+          projects={projects}
+          activeProjectId={activeProjectId}
+          onOpenSession={(projectId, sessionId) => {
+            setDrawerOpen(false);
+            openSessionRow({ kind: 'claude', sessionId, projectId, title: '', updatedAt: Date.now(), live: null, state: null, archived: false });
+          }}
+          onClose={() => setAutomationsOpen(false)}
         />
       )}
       {devinUsageOpen && <DevinUsage onClose={() => setDevinUsageOpen(false)} />}

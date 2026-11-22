@@ -1667,3 +1667,47 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
     },
   );
 }
+
+// ----- sessions started by an automation (model: Automation.action) ---------
+
+// Open a new Claude session in a project with nobody attached, working on
+// `prompt` (in its own worktree when asked). It is an ordinary session: it
+// shows in the Sessions list, alerts when it ends, and can be opened and
+// talked to. Resolves once claude has named it.
+export async function startDetachedSession(o: {
+  uid: string; projectId: string; projectPath: string; prompt: string; title: string; model?: string; worktree?: boolean;
+}): Promise<{ sessionId: string | null; worktree?: string }> {
+  const settings = await getSettings(o.uid);
+  let cwd = o.projectPath;
+  let wtNote = '';
+  let wtName: string | undefined;
+  if (o.worktree) {
+    const wt = await createWorktree(o.projectPath, o.projectPath, o.title);
+    cwd = wt.path;
+    wtName = wt.name;
+    wtNote = `${worktreePreface({ path: wt.path, branch: wt.branch, projectPath: o.projectPath })}\n\n`;
+  }
+  const entry = newEntry({ uid: o.uid, projectId: o.projectId, cwd, projectPath: o.projectPath, settings, model: o.model });
+  entry.title = o.title;
+  pending.add(entry);
+  startQuery(entry, {});
+  injectUserText(entry, wtNote + o.prompt);
+  for (let i = 0; i < 300 && !entry.sessionId && entry.q; i++) await new Promise((r) => setTimeout(r, 100));
+  if (!entry.sessionId) return { sessionId: null, worktree: wtName };
+  entry.title = o.title;
+  entry.givenTitle = o.title;
+  broadcast(entry, { type: 'title', title: o.title });
+  void nameChildSession(entry, o.title);
+  // Nobody is attached: end the process once it has finished and gone quiet.
+  scheduleKillIfIdle(entry);
+  return { sessionId: entry.sessionId, worktree: wtName };
+}
+
+// Send `text` to one of the user's Claude sessions as if typed (into the
+// running turn if it is working), starting its process if needed.
+export async function sendToSession(o: { uid: string; projectId: string; projectPath: string; sessionId: string; text: string }): Promise<{ ok: boolean; error?: string }> {
+  const entry = await wakeSession({ uid: o.uid, projectId: o.projectId, projectPath: o.projectPath }, o.sessionId);
+  if (!entry) return { ok: false, error: 'That session is open in a classic (CLI) tab, or is not yours' };
+  deliverUser(entry, o.text, [], null);
+  return { ok: true };
+}

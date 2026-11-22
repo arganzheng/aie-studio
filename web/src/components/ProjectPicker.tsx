@@ -10,6 +10,7 @@ export function ProjectPicker({
   onSelect,
   onManage,
   onOpenSettings,
+  onOpenAutomations,
   onOpenDevinUsage,
   onOpenDebug,
 }: {
@@ -18,6 +19,7 @@ export function ProjectPicker({
   onSelect: (id: string) => void;
   onManage: () => void;
   onOpenSettings?: () => void;
+  onOpenAutomations?: () => void;
   onOpenDevinUsage?: () => void;
   onOpenDebug?: () => void;
 }) {
@@ -75,6 +77,13 @@ export function ProjectPicker({
               className="picker-add-action"
               onClick={() => { setOpen(false); onOpenSettings(); }}
             >⚙ Settings</div>
+          )}
+          {onOpenAutomations && (
+            <div
+              className="picker-add-action"
+              role="menuitem"
+              onClick={() => { setOpen(false); onOpenAutomations(); }}
+            >⏱ Automations</div>
           )}
           {(onOpenDevinUsage || onOpenSettings) && <div className="picker-divider" />}
           {projects.map((p) => (

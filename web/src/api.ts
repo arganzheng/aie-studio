@@ -760,3 +760,48 @@ export async function fetchPrStatus(projectId: string, q: { worktree?: string | 
   if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
   return j;
 }
+
+// Model: Automation (server/src/automations.ts).
+export type AutomationTrigger = { kind: 'schedule'; cron: string } | { kind: 'webhook'; token: string };
+export type AutomationAction =
+  | { kind: 'new-session'; projectId: string; model?: string; worktree?: boolean }
+  | { kind: 'message'; projectId: string; sessionId: string };
+export type Automation = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger: AutomationTrigger;
+  action: AutomationAction;
+  prompt: string;
+  createdAt: number;
+  // From the server: the schedule in words, and when it runs next.
+  schedule?: string | null;
+  nextRunAt?: number | null;
+};
+export type AutomationDraft = Omit<Automation, 'id' | 'createdAt' | 'trigger'> & { trigger: { kind: 'schedule'; cron: string } | { kind: 'webhook' } };
+export type AutomationRun = {
+  id: string; automationId: string; name: string; at: number; source: 'schedule' | 'webhook' | 'manual';
+  ok: boolean; projectId: string; sessionId: string | null; error?: string;
+};
+
+async function automationJson(r: Response) {
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+const jsonInit = (method: string, body?: unknown): RequestInit => ({ method, headers: body === undefined ? undefined : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+export async function listAutomations(): Promise<{ automations: Automation[]; runs: AutomationRun[] }> {
+  return automationJson(await fetch('/api/automations'));
+}
+export async function saveAutomation(id: string | null, draft: AutomationDraft): Promise<Automation> {
+  return automationJson(await fetch(id ? `/api/automations/${encodeURIComponent(id)}` : '/api/automations', jsonInit(id ? 'PUT' : 'POST', draft)));
+}
+export async function deleteAutomation(id: string): Promise<void> {
+  await automationJson(await fetch(`/api/automations/${encodeURIComponent(id)}`, jsonInit('DELETE')));
+}
+export async function runAutomationNow(id: string): Promise<AutomationRun> {
+  return automationJson(await fetch(`/api/automations/${encodeURIComponent(id)}/run`, jsonInit('POST', {})));
+}
+export async function rotateAutomationToken(id: string): Promise<Automation> {
+  return automationJson(await fetch(`/api/automations/${encodeURIComponent(id)}/rotate-token`, jsonInit('POST', {})));
+}

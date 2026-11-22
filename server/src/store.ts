@@ -633,3 +633,13 @@ export async function putSessionMeta(uid: string, meta: SessionMeta): Promise<Se
   await writeJson(sessionMetaFile(uid), clean);
   return clean;
 }
+
+// Model: Automation (server/src/automations.ts) — stored as given; the
+// module normalizes what it reads.
+function automationsFile(uid: string): string { return path.join(userDir(uid), 'automations.json'); }
+export async function getAutomationsRaw(uid: string): Promise<unknown> {
+  return readJson<unknown>(automationsFile(uid), {});
+}
+export async function putAutomationsRaw(uid: string, data: unknown): Promise<void> {
+  await writeJson(automationsFile(uid), data);
+}
