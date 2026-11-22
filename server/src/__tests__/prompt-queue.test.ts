@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { editQueued, mergeQueued, queueView, type QueuedPrompt } from '../prompt-queue.js';
+import { editQueued, mergeQueued, queueView, steersRunningTurn, type QueuedPrompt } from '../prompt-queue.js';
 
 const img = { mediaType: 'image/png', data: 'AAA' };
 const q = (id: string, text: string, images = 0): QueuedPrompt => ({ id, text, images: Array.from({ length: images }, () => img), at: 1 });
@@ -18,5 +18,13 @@ describe('prompt queue', () => {
     expect(editQueued(items, 'a', '  ').map((x) => x.id)).toEqual(['b']);
     expect(editQueued(items, 'b', '').map((x) => x.id)).toEqual(['a', 'b']);
     expect(editQueued(items, 'zzz', 'x')).toEqual(items);
+  });
+  it('steers the running turn with text, not with a slash command', () => {
+    expect(steersRunningTurn('stop, use the other approach')).toBe(true);
+    expect(steersRunningTurn('/tmp/x is the wrong path')).toBe(true);
+    expect(steersRunningTurn('/plugin:cmd arg')).toBe(false);
+    expect(steersRunningTurn('  /compact')).toBe(false);
+    expect(steersRunningTurn('/ not a command')).toBe(true);
+    expect(steersRunningTurn('look at a/b')).toBe(true);
   });
 });
