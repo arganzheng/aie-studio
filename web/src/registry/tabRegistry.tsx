@@ -74,6 +74,8 @@ export type TabRenderContext = {
   // unmount; CloseTab asks the guard first and aborts when it returns false
   // (EditorPanel uses it to confirm discarding unsaved changes).
   registerCloseGuard: (guard: (() => boolean) | null) => void;
+  // Model: SideChat (/btw) — open the side chat about a Claude session and ask.
+  openSideChat?: (sessionId: string, label: string, question: string) => void;
 };
 
 // Kinds that opt into createAction get a "+ label" entry in the TabBar

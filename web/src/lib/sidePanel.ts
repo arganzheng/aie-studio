@@ -12,6 +12,10 @@ export const ROOT = '@root';
 export type SideWant =
   | { kind: 'changes'; target: string }
   | { kind: 'review' }
+  // Model: SideChat (/btw) — a read-only side chat about a Claude session.
+  // The tab is kept; the side chat's own memory lives on the server only
+  // while the tab is connected (a reload starts a fresh copy).
+  | { kind: 'btw'; sessionId: string; label: string }
   // Model: web.PreviewView — a dev server on this machine, by port; path is
   // where it was last (kept so the tab comes back to it).
   | { kind: 'preview'; port: number; path: string }
@@ -39,6 +43,7 @@ export function activeTab(s: SideState, reviewOn: boolean): SideTab | null {
 }
 
 function same(a: SideTab, b: SideWant): boolean {
+  if (a.kind === 'btw' || b.kind === 'btw') return a.kind === 'btw' && b.kind === 'btw' && a.sessionId === b.sessionId;
   if (a.kind === 'preview' || b.kind === 'preview') return a.kind === 'preview' && b.kind === 'preview' && a.port === b.port;
   if (a.kind === 'changes' || b.kind === 'changes') return a.kind === b.kind && a.kind === 'changes' && b.kind === 'changes' && a.target === b.target;
   return a.kind === b.kind;
@@ -90,6 +95,7 @@ export function parseSideState(raw: string | null, reviewOn: boolean): SideState
       const tabs: SideTab[] = v.tabs.filter((t: any) =>
         t && typeof t.id === 'string' && (
           (t.kind === 'changes' && typeof t.target === 'string') || t.kind === 'review' || t.kind === 'launcher'
+          || (t.kind === 'btw' && typeof t.sessionId === 'string' && typeof t.label === 'string')
           || (t.kind === 'preview' && isPreviewPort(t.port) && typeof t.path === 'string')
         ));
       return { tabs, active: typeof v.active === 'string' ? v.active : tabs[0]?.id ?? null };

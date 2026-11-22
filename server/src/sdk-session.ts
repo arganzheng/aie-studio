@@ -61,13 +61,13 @@ import { MAX_TIMEOUT_HOURS, WATCH_INSTRUCTIONS, watchView } from './watches.js';
 
 // ----- input queue: one always-open async iterable per live query ---------
 
-type InputQueue = {
+export type InputQueue = {
   iterable: () => AsyncIterable<SDKUserMessage>;
   push: (m: SDKUserMessage) => void;
   close: () => void;
 };
 
-function makeInputQueue(): InputQueue {
+export function makeInputQueue(): InputQueue {
   const buf: SDKUserMessage[] = [];
   let wake: (() => void) | null = null;
   let closed = false;
@@ -305,7 +305,7 @@ function broadcast(entry: SdkEntry, msg: unknown, except?: WebSocket) {
   }
 }
 
-function sdkEnv(observeWire: boolean, taskTools: boolean): Record<string, string> {
+export function sdkEnv(observeWire: boolean, taskTools: boolean): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (typeof v === 'string') env[k] = v;
   // Same as session.ts: non-interactive runs only checkpoint files with this set.
@@ -1747,4 +1747,10 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
       return { ok: true, title };
     },
   );
+}
+
+// The model a live session runs (side chats fork with the same one, which
+// keeps the shared start of the conversation in the prompt cache).
+export function sdkLiveModel(sessionId: string): string | null {
+  return byId.get(sessionId)?.model ?? null;
 }
