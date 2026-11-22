@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NO_FILTER, childSessions, groupChildren, filterSessions, sessionsByProject, isFiltering, openSessionTabs, sessionRowKey, sessionStatus, timeAgo, type SessionRow } from '../sessionList';
+import { NO_FILTER, childSessions, groupChildren, filterSessions, sessionsByProject, sessionsByStatus, statusGroupOf, isFiltering, openSessionTabs, sessionRowKey, sessionStatus, timeAgo, type SessionRow } from '../sessionList';
 import { alertKey } from '../sessionAlerts';
 
 function row(over: Partial<SessionRow> = {}): SessionRow {
@@ -190,5 +190,37 @@ describe('sessionsByProject', () => {
   it('puts rows of a project that is not listed in a section after the listed ones', () => {
     const out = sessionsByProject({ projects, rows: [row({ projectId: 'gone' }), row({ projectId: 'p1' })], unread: none });
     expect(out.map((s) => [s.projectId, s.name])).toEqual([['p1', 'Blog'], ['gone', 'Unknown project']]);
+  });
+});
+
+describe('sessionsByStatus', () => {
+  const now = Date.now();
+  const rows = [
+    row({ projectId: 'p1', sessionId: 'idle1' }),
+    row({ projectId: 'p2', sessionId: 'run', state: 'running' }),
+    row({ projectId: 'p1', sessionId: 'ask', state: 'awaiting' }),
+    row({ projectId: 'p2', sessionId: 'q', state: 'idle', status: { tone: 'needs-you', label: 'Confirm scope' } }),
+    row({ projectId: 'p1', sessionId: 'pr', status: { tone: 'ready', label: 'PR is ready' } }),
+    row({ projectId: 'p2', sessionId: 'done' }),
+    row({ projectId: 'p2', sessionId: 'idle2' }),
+  ];
+  it('puts what needs the user first, then working, ready, and the rest, keeping row order', () => {
+    const unread = new Set([sessionRowKey(rows[5])]);
+    const out = sessionsByStatus({ rows, unread, now });
+    expect(out.map((s) => [s.id, s.rows.map((r) => r.sessionId)])).toEqual([
+      ['needs-you', ['ask', 'q']],
+      ['working', ['run']],
+      ['ready', ['pr', 'done']],
+      ['other', ['idle1', 'idle2']],
+    ]);
+  });
+  it('leaves empty groups out', () => {
+    expect(sessionsByStatus({ rows: [rows[0]], unread: new Set(), now }).map((s) => s.id)).toEqual(['other']);
+    expect(sessionsByStatus({ rows: [], unread: new Set(), now })).toEqual([]);
+  });
+  it('a running session with a stale question is working, not waiting', () => {
+    const r = row({ state: 'running', status: { tone: 'needs-you', label: 'Old question' } });
+    expect(sessionsByStatus({ rows: [r], unread: new Set(), now })[0].id).toBe('working');
+    expect(statusGroupOf('unread')).toBe('ready');
   });
 });
