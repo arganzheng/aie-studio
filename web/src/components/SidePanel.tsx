@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ChatQuote } from '../lib/addToChat';
 import {
-  FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, openTab, parseSideState, pick, visibleTabs,
+  FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, openTab, parseSideState, pick, updateTab, visibleTabs,
   type SideState, type SideTab, type SideWant,
 } from '../lib/sidePanel';
 import { ChangesView, type FollowInfo } from './ChangesView';
 import { SideLauncher } from './SideLauncher';
+import { PreviewView } from './PreviewView';
 
 // Model: web.SidePanel — the right-hand column (formerly only Review): its
 // own strip of tabs with "+", and on the right Maximize (take over the chat
@@ -39,6 +40,7 @@ function MaximizeIcon({ on }: { on: boolean }) {
 function tabTitle(t: SideTab, projectName: string, reviewCount: number): string {
   if (t.kind === 'review') return reviewCount ? `Review (${reviewCount})` : 'Review';
   if (t.kind === 'launcher') return 'New tab';
+  if (t.kind === 'preview') return `Preview :${t.port}`;
   if (t.target === FOLLOW) return 'Changes';
   return `Changes · ${t.target === ROOT ? projectName : t.target}`;
 }
@@ -102,6 +104,9 @@ export function SidePanel({
     body = <SideLauncher key={current.id} projectId={projectId} projectName={projectName} reviewOn={reviewOn} followLabel={follow?.label ?? null} onPick={(want) => setState((s) => pick(s, current.id, want))} />;
   } else if (current.kind === 'review') {
     body = renderReview();
+  } else if (current.kind === 'preview') {
+    const id = current.id;
+    body = <PreviewView key={id} port={current.port} path={current.path} onPath={(path) => setState((s) => updateTab(s, id, { path }))} />;
   } else {
     body = <ChangesView key={current.id} projectId={projectId} projectName={projectName} target={current.target} follow={follow} active={!collapsed} onAddToChat={onAddToChat} />;
   }

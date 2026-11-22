@@ -1,6 +1,19 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <script>
+      // Model: web.PreviewView — a page of an app previewed under /preview/<port>/
+      // that reloaded or followed a link to its own path landed here; send it back.
+      (function () {
+        var m = /^aie-preview:(\d+)$/.exec(window.name || '');
+        if (m && location.pathname.indexOf('/preview/') !== 0) {
+          location.replace('/preview/' + m[1] + location.pathname + location.search + location.hash);
+          // Not window.stop(): it would cancel the replace too. This swallows
+          // the rest of the page, so aie-studio's own app never starts here.
+          document.write('<plaintext style="display:none">');
+        }
+      })();
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>AI Studio</title>
