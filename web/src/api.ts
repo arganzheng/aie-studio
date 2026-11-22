@@ -761,6 +761,65 @@ export async function fetchPrStatus(projectId: string, q: { worktree?: string | 
   return j;
 }
 
+// Model: Automation (server/src/automations.ts).
+export type ConditionKind = 'pr_merged' | 'pr_checks' | 'deployed';
+export type AutomationTrigger =
+  | { kind: 'schedule'; cron: string }
+  | { kind: 'webhook'; token: string }
+  | { kind: 'condition'; on: ConditionKind; repo?: string; pr?: number; commit?: string; timeoutHours: number; armedAt: number };
+export type AutomationAction =
+  | { kind: 'new-session'; projectId: string; model?: string; worktree?: boolean }
+  | { kind: 'message'; projectId: string; sessionId: string };
+export type Automation = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger: AutomationTrigger;
+  action: AutomationAction;
+  prompt: string;
+  createdAt: number;
+  // From the server: the schedule in words, and when it runs next; a
+  // condition in words, and what was seen of it last.
+  schedule?: string | null;
+  nextRunAt?: number | null;
+  condition?: string | null;
+  lastSeen?: string | null;
+};
+// A condition as the editor holds it (the PR as typed).
+export type ConditionDraft = { kind: 'condition'; on: ConditionKind; ref: string; commit?: string; timeoutHours: number };
+export type AutomationDraft = Omit<Automation, 'id' | 'createdAt' | 'trigger'> & { trigger: { kind: 'schedule'; cron: string } | { kind: 'webhook' } | ConditionDraft };
+export type AutomationRun = {
+  id: string; automationId: string; name: string; at: number; source: 'schedule' | 'webhook' | 'manual' | 'condition' | 'watch';
+  ok: boolean; projectId: string; sessionId: string | null; error?: string;
+};
+
+async function automationJson(r: Response) {
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+const jsonInit = (method: string, body?: unknown): RequestInit => ({ method, headers: body === undefined ? undefined : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+// Model: Session.watches — what sessions' agents are waiting on.
+export type WatchItem = { id: string; sessionId: string; projectId: string; label: string; then: string; createdAt: number; deadline: number; lastSeen: string };
+export async function cancelWatch(sessionId: string, id: string): Promise<void> {
+  await automationJson(await fetch(`/api/watches/${encodeURIComponent(sessionId)}/${encodeURIComponent(id)}`, jsonInit('DELETE')));
+}
+export async function listAutomations(): Promise<{ automations: Automation[]; runs: AutomationRun[]; watches: WatchItem[] }> {
+  return automationJson(await fetch('/api/automations'));
+}
+export async function saveAutomation(id: string | null, draft: AutomationDraft): Promise<Automation> {
+  return automationJson(await fetch(id ? `/api/automations/${encodeURIComponent(id)}` : '/api/automations', jsonInit(id ? 'PUT' : 'POST', draft)));
+}
+export async function deleteAutomation(id: string): Promise<void> {
+  await automationJson(await fetch(`/api/automations/${encodeURIComponent(id)}`, jsonInit('DELETE')));
+}
+export async function runAutomationNow(id: string): Promise<AutomationRun> {
+  return automationJson(await fetch(`/api/automations/${encodeURIComponent(id)}/run`, jsonInit('POST', {})));
+}
+export async function rotateAutomationToken(id: string): Promise<Automation> {
+  return automationJson(await fetch(`/api/automations/${encodeURIComponent(id)}/rotate-token`, jsonInit('POST', {})));
+}
+
 // Model: web.PreviewView (server/src/preview.ts) — dev servers listening on
 // this machine; those started inside the project first.
 export type ListeningPort = { port: number; pid: number; command: string; cwd: string | null; inProject: boolean };

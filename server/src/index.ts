@@ -21,6 +21,7 @@ import { registerClaudeUsageRoutes } from './claude-usage.js';
 import { registerSubagentRoutes } from './subagents.js';
 import { registerWorktreeRoutes } from './worktrees.js';
 import { registerChangesRoutes } from './changes.js';
+import { registerAutomationRoutes, startAutomationScheduler } from './automations.js';
 import { registerSideChatRoutes } from './side-chat.js';
 import { registerPreviewRoutes } from './preview.js';
 import { registerPushRoutes } from './push.js';
@@ -80,6 +81,7 @@ registerClaudeUsageRoutes(app);
 registerSubagentRoutes(app);
 registerWorktreeRoutes(app);
 registerChangesRoutes(app);
+registerAutomationRoutes(app);
 registerSideChatRoutes(app);
 registerPreviewRoutes(app, { ownPorts: [PORT, Number(process.env.REMOTE_IDE_WIRE_PORT ?? 9992)] });
 registerPushRoutes(app);
@@ -149,6 +151,7 @@ if (WIRE_PORT > 0) {
 }
 
 startAttachmentSweep((msg) => app.log.info(msg));
+if (process.env.AIE_AUTOMATIONS !== 'off') startAutomationScheduler((msg) => app.log.info(msg));
 
 app.listen({ port: PORT, host: HOST }).then((addr) => {
   // Children that were mid-turn when the server last went down: tell their parents.

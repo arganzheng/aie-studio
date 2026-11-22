@@ -636,6 +636,16 @@ export async function putSessionMeta(uid: string, meta: SessionMeta): Promise<Se
   return clean;
 }
 
+// Model: Automation (server/src/automations.ts) — stored as given; the
+// module normalizes what it reads.
+function automationsFile(uid: string): string { return path.join(userDir(uid), 'automations.json'); }
+export async function getAutomationsRaw(uid: string): Promise<unknown> {
+  return readJson<unknown>(automationsFile(uid), {});
+}
+export async function putAutomationsRaw(uid: string, data: unknown): Promise<void> {
+  await writeJson(automationsFile(uid), data);
+}
+
 // Model: Session.watches — what the user's sessions are waiting on that the
 // server checks for them (watches.ts). On disk so a restart keeps watching.
 export async function getWatches(uid: string): Promise<Watches> {

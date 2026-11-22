@@ -17,10 +17,14 @@ import {
 const TICK_MS = 15_000;
 const DELIVERY_TIMEOUT_MS = 30 * 60_000;
 
+// Where a message goes: one of the user's sessions.
+export type DeliveryTarget = { sessionId: string; projectId: string; projectPath: string };
+
 export type WatchHooks = {
-  // Put `text` into the session as a message (waking it), and resolve once
-  // the turn it starts has ended. Throws when the session can't take it.
-  deliver: (uid: string, w: Watch, text: string) => Promise<void>;
+  // Put `text` into the session as a message (waking it), call `onInjected`
+  // once it is in, and resolve once the turn it starts has ended. Throws
+  // when the session can't take it.
+  deliver: (uid: string, to: DeliveryTarget, text: string, onInjected?: () => void) => Promise<void>;
   // The session's set of watches changed: tell its open tabs.
   changed: (uid: string, sessionId: string) => void;
 };
@@ -68,7 +72,7 @@ export function serverHead(): Promise<string> {
 }
 
 // Does the running code include `commit`? null: git doesn't know it.
-async function serverContains(commit: string): Promise<boolean | null> {
+export async function serverContains(commit: string): Promise<boolean | null> {
   const head = await serverHead();
   if (!head) return null;
   const r = await git(['merge-base', '--is-ancestor', commit, head]);
@@ -147,17 +151,23 @@ export async function cancelWatches(uid: string, sessionId: string, opts: { id?:
 
 // ---- looking ----
 
-async function lookAtPr(repo: string, pr: number): Promise<PrSeen> {
+export async function lookAtPr(repo: string, pr: number): Promise<PrSeen> {
   const r = await readPrByNumber(repo, pr);
   if ('error' in r) return { error: r.error };
   if (!r.pr) return { error: 'no such pull request' };
   return { state: r.pr.state, title: r.pr.title, mergeCommit: r.mergeCommit, checks: r.pr.checks.map((c) => ({ name: c.name, state: c.state })) };
 }
 
+// Other work on the same timer (model: Automation — schedules and
+// conditions are looked at on it too).
+const tickTasks: Array<() => Promise<void>> = [];
+export function onWatchTick(fn: () => Promise<void>) { tickTasks.push(fn); }
+
 let ticking = false;
 async function tick(opts: { all?: boolean } = {}) {
   if (ticking) return;
   ticking = true;
+  for (const t of tickTasks) { try { await t(); } catch {} }
   try {
     const head = await serverHead();
     // One look per pull request / commit per tick, shared by every watch.
@@ -210,14 +220,16 @@ export function checkWatchesNow(): Promise<void> { return tick({ all: true }); }
 
 // ---- delivering, a few at a time ----
 
-const queue: { uid: string; id: string }[] = [];
+// Every message the server puts into a session on its own (a watch's
+// report, an automation's message) waits its turn here.
+const queue: Array<() => Promise<void>> = [];
 const queued = new Set<string>();
 let inFlight = 0;
 
 function enqueue(uid: string, w: Watch) {
   if (queued.has(w.id)) return;
   queued.add(w.id);
-  queue.push({ uid, id: w.id });
+  queue.push(() => deliverOne(uid, w.id).finally(() => { queued.delete(w.id); }));
   pump();
 }
 
@@ -225,9 +237,36 @@ function pump() {
   while (inFlight < MAX_CONCURRENT_DELIVERIES && queue.length > 0) {
     const job = queue.shift()!;
     inFlight++;
-    void deliverOne(job.uid, job.id).finally(() => { inFlight--; queued.delete(job.id); pump(); });
+    void job().catch(() => {}).finally(() => { inFlight--; pump(); });
   }
 }
+
+// Put `text` into a session through the same queue: resolves once it is in
+// the session (its turn then holds a place in the queue until it ends);
+// rejects when the session can't take it.
+export function deliverToSession(uid: string, to: DeliveryTarget, text: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    queue.push(async () => {
+      if (!hooks) { reject(new Error('the server is not ready to deliver')); return; }
+      let injected = false;
+      try {
+        await Promise.race([
+          hooks.deliver(uid, to, text, () => { injected = true; resolve(); }),
+          new Promise((r) => setTimeout(r, DELIVERY_TIMEOUT_MS)),
+        ]);
+        if (!injected) resolve();
+      } catch (e) {
+        if (!injected) reject(e);
+      }
+    });
+    pump();
+  });
+}
+
+// Told after each watch's report has gone to its session (model:
+// Automation runs list them too).
+const deliveredListeners: Array<(uid: string, w: Watch) => void> = [];
+export function onWatchDelivered(fn: (uid: string, w: Watch) => void) { deliveredListeners.push(fn); }
 
 async function deliverOne(uid: string, id: string) {
   // Read again: the user may have replied (cancelling it) while it queued.
@@ -238,6 +277,7 @@ async function deliverOne(uid: string, id: string) {
   await edit(uid, (ws) => { delete ws[id]; }).catch(() => {});
   hooks.changed(uid, w.sessionId);
   const text = watchReport(w, w.outcome, w.lastSeen);
+  for (const l of deliveredListeners) { try { l(uid, w); } catch {} }
   try {
     await Promise.race([hooks.deliver(uid, w, text), new Promise((r) => setTimeout(r, DELIVERY_TIMEOUT_MS))]);
   } catch {}
