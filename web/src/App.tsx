@@ -457,6 +457,12 @@ export default function App() {
     setReviewDrawerOpen(true);
     setSideRequest((prev) => ({ kind: 'tool', want: { kind }, seq: (prev?.seq ?? 0) + 1 }));
   };
+  // Model: web.PreviewView — Claude showed a page (show_preview): open it beside the chat.
+  const openSidePreview = (port: number, path: string) => {
+    setReviewCollapsed(false);
+    setReviewDrawerOpen(true);
+    setSideRequest((prev) => ({ kind: 'tool', want: { kind: 'preview', port, path }, seq: (prev?.seq ?? 0) + 1 }));
+  };
   // Comments and bookmarks land in Review: bring its tab forward.
   const showReview = () => { setReviewCollapsed(false); askSide('review'); };
   // Model: web.CommandPalette — Cmd/Ctrl+K opens it; Option+J / Option+K move
@@ -2156,6 +2162,7 @@ export default function App() {
                   reportActivity: (a) => reportActivity(tab.id, a),
                   openSideChat,
                   openSideTool,
+                  openSidePreview,
                 }) : <div className="empty">Unknown tab kind: {tab.type}</div>;
                 return <div key={tabKey} style={style}>{body}</div>;
               })}

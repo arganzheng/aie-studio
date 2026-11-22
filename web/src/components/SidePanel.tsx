@@ -27,7 +27,7 @@ export type SideRequest =
   // Model: SideChat — open (or focus) the side chat about a session and ask.
   | { kind: 'btw'; sessionId: string; label: string; question: string; seq: number }
   // A session tool tab (the Plan strip's "open in side panel").
-  | { kind: 'tool'; want: { kind: 'progress' | 'artifacts' }; seq: number };
+  | { kind: 'tool'; want: { kind: 'progress' | 'artifacts' } | { kind: 'preview'; port: number; path: string }; seq: number };
 
 export function PanelIcon() {
   return (
@@ -113,6 +113,8 @@ export function SidePanel({
   }, [state, projectId, lsPrefix]);
 
   // The latest /btw question, for the side chat about that session.
+  // Bumped by show_preview so the Preview tab loads again.
+  const [previewLoad, setPreviewLoad] = useState(0);
   const [btwAsk, setBtwAsk] = useState<{ sessionId: string; question: string; seq: number } | null>(null);
   const lastSeq = useRef(request?.seq ?? 0);
   useEffect(() => {
@@ -120,7 +122,15 @@ export function SidePanel({
     lastSeq.current = request.seq;
     if (request.kind === 'review' && reviewOn) setState((s) => openTab(s, { kind: 'review' }));
     else if (request.kind === 'launcher') setState((s) => addLauncher(s));
-    else if (request.kind === 'tool') setState((s) => openTab(s, request.want));
+    else if (request.kind === 'tool') {
+      const want = request.want;
+      if (want.kind === 'preview') {
+        // Claude's show_preview: focus (or open) the port's tab, go to the
+        // path, and load it afresh (the page may just have been rebuilt).
+        setState((s) => { const n = openTab(s, want); return n.active ? updateTab(n, n.active, { path: want.path }) : n; });
+        setPreviewLoad(request.seq);
+      } else setState((s) => openTab(s, want));
+    }
     else if (request.kind === 'btw') {
       setState((s) => openTab(s, { kind: 'btw', sessionId: request.sessionId, label: request.label }));
       if (request.question.trim()) setBtwAsk({ sessionId: request.sessionId, question: request.question, seq: request.seq });
@@ -159,7 +169,7 @@ export function SidePanel({
       : <div className="side-empty">Open a Claude session to observe it here: its turns, tool calls and tokens. This tab follows the session you are in.</div>;
   } else if (current.kind === 'preview') {
     const id = current.id;
-    body = <PreviewView key={id} port={current.port} path={current.path} onPath={(path) => setState((s) => updateTab(s, id, { path }))} />;
+    body = <PreviewView key={`${id}:${previewLoad}`} port={current.port} path={current.path} onPath={(path) => setState((s) => updateTab(s, id, { path }))} />;
   } else {
     body = <ChangesView key={current.id} projectId={projectId} projectName={projectName} target={current.target} follow={follow} active={!collapsed} onAddToChat={onAddToChat} />;
   }

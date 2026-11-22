@@ -78,6 +78,8 @@ export type TabRenderContext = {
   openSideChat?: (sessionId: string, label: string, question: string) => void;
   // Model: web.SidePanel — show (or focus) a session tool tab beside the chat.
   openSideTool?: (kind: 'progress' | 'artifacts') => void;
+  // Model: web.PreviewView — Claude's show_preview: a page beside the chat.
+  openSidePreview?: (port: number, path: string) => void;
 };
 
 // Kinds that opt into createAction get a "+ label" entry in the TabBar
