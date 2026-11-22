@@ -177,9 +177,23 @@ function upstreamHeaders(req: http.IncomingMessage, port: number, ws: boolean): 
 }
 
 function sendSmallPage(res: http.ServerResponse, status: number, title: string, text: string) {
-  const body = `<!doctype html><meta charset="utf-8"><title>${title}</title><style>body{font:14px -apple-system,system-ui,sans-serif;color:#999;margin:24px;line-height:1.6}</style><h3 style="color:#ccc">${title}</h3><p>${text}</p>`;
+  const body = `<!doctype html><meta charset="utf-8"><title>${title}</title><style>html{background:#1e1e1e}body{font:14px -apple-system,system-ui,sans-serif;color:#aaa;margin:24px;line-height:1.6}code{color:#ddd;background:#2d2d2d;padding:1px 4px;border-radius:3px}</style><h3 style="color:#e6e6e6">${title}</h3><p>${text}</p>`;
   res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
   res.end(body);
+}
+
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+
+// Up to `max` characters of a response body, then stop reading it.
+function readSome(r: http.IncomingMessage, max: number): Promise<string> {
+  return new Promise((resolve) => {
+    let text = '';
+    r.setEncoding('utf8');
+    r.on('data', (c: string) => { text += c; if (text.length >= max) { r.destroy(); resolve(text.slice(0, max)); } });
+    r.on('end', () => resolve(text));
+    r.on('error', () => resolve(text));
+    r.on('close', () => resolve(text));
+  });
 }
 
 function proxyHttp(req: http.IncomingMessage, res: http.ServerResponse, port: number, rest: string) {
@@ -193,11 +207,25 @@ function proxyHttp(req: http.IncomingMessage, res: http.ServerResponse, port: nu
     if (typeof headers.location === 'string') headers.location = rewriteLocation(headers.location, port);
     if (Array.isArray(headers['set-cookie'])) headers['set-cookie'] = headers['set-cookie'].map((c) => c.replace(/;\s*domain=[^;]*/i, ''));
     const type = String(ur.headers['content-type'] ?? '');
+    const status = ur.statusCode ?? 200;
+    // Model: web.PreviewView — opening something that is not a page shows why,
+    // not a blank frame: an error answered in plain text / JSON, or an empty page.
+    const navigate = req.headers['sec-fetch-mode'] === 'navigate';
+    if (navigate && status >= 400 && !/^text\/html/i.test(type)) {
+      readSome(ur, 600).then((text) => sendSmallPage(res, status, `Port ${port} answered ${status}: this is not a web page`,
+        `${text.trim() ? `It said: <code>${escapeHtml(text.trim().slice(0, 300))}</code><br>` : ''}It may be an API or a tool's internal port. Pick a dev server of your project (for example <code>pnpm dev</code>'s port) in ＋ → Preview.`));
+      return;
+    }
     if (/^text\/html/i.test(type) && req.method !== 'HEAD') {
       const chunks: Buffer[] = [];
       ur.on('data', (c: Buffer) => chunks.push(c));
       ur.on('end', () => {
-        const html = injectIntoHtml(Buffer.concat(chunks).toString('utf8'), `<script src="${prefixOf(port)}/${AIE}/inject.js"></script>`);
+        const raw = Buffer.concat(chunks).toString('utf8');
+        if (navigate && !raw.trim() && !ur.headers['content-encoding']) {
+          sendSmallPage(res, status, `Port ${port} sent an empty page`, 'It answered, but with nothing to show. It may be a tool\'s internal port rather than a web page.');
+          return;
+        }
+        const html = injectIntoHtml(raw, `<script src="${prefixOf(port)}/${AIE}/inject.js"></script>`);
         delete headers['content-length'];
         delete headers['content-encoding'];
         headers['cache-control'] = 'no-store';
@@ -256,7 +284,51 @@ function upgradeParts(raw: http.IncomingMessage): { socket: Duplex; head: Buffer
 
 // ---- dev servers listening on this machine ----
 
-export type ListeningPort = { port: number; pid: number; command: string; cwd: string | null; inProject: boolean };
+export type ListeningPort = { port: number; pid: number; command: string; cwd: string | null; inProject: boolean; title?: string };
+
+// Model: web.PreviewView launcher — only ports that serve a web page are worth
+// offering: a monitoring endpoint (cloudflared's), a debugger port (Chrome's)
+// or an API answers, but there is nothing to look at. Pure: does this answer
+// to `GET /` look like a page? A redirect counts (dev servers send you to
+// /login or /app), and so does a sign-in page (401 / 403). A 404 or other
+// error at the root does not: there is no page to land on.
+export function looksLikePage(status: number, contentType: string, bodyStart: string): boolean {
+  if (status >= 300 && status < 400) return true;
+  if (!/^text\/html/i.test(contentType) || !bodyStart.trim()) return false;
+  return (status >= 200 && status < 300) || status === 401 || status === 403;
+}
+
+// Pure: the page's <title>, if it has one.
+export function pageTitle(html: string): string | undefined {
+  const m = /<title[^>]*>([^<]*)<\/title>/i.exec(html);
+  const t = m?.[1].replace(/\s+/g, ' ').trim()
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+  return t ? t.slice(0, 120) : undefined;
+}
+
+const PROBE_MS = 1500;
+const PROBE_BYTES = 16 * 1024;
+
+// GET / on the port, as the preview would (same host); null = not a page.
+function probePage(port: number): Promise<{ title?: string } | null> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v: { title?: string } | null) => { if (!done) { done = true; resolve(v); } };
+    const req = http.get({ host: 'localhost', port, path: '/', headers: { accept: 'text/html,*/*;q=0.8', 'user-agent': 'aie-studio-preview-probe' }, timeout: PROBE_MS }, (res) => {
+      const type = String(res.headers['content-type'] ?? '');
+      const status = res.statusCode ?? 0;
+      if (status >= 300 && status < 400) { res.destroy(); finish({}); return; }
+      if (!/^text\/html/i.test(type)) { res.destroy(); finish(null); return; }
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c: string) => { body += c; if (body.length >= PROBE_BYTES) { res.destroy(); finish(looksLikePage(status, type, body) ? { title: pageTitle(body) } : null); } });
+      res.on('end', () => finish(looksLikePage(status, type, body) ? { title: pageTitle(body) } : null));
+      res.on('error', () => finish(null));
+    });
+    req.on('timeout', () => { req.destroy(); finish(null); });
+    req.on('error', () => finish(null));
+  });
+}
 
 // Pure: `lsof -nP -iTCP -sTCP:LISTEN -Fpcn` → port, pid, command.
 export function parseLsof(out: string): Array<{ port: number; pid: number; command: string }> {
@@ -335,11 +407,18 @@ export function registerPreviewRoutes(app: FastifyInstance, opts: { ownPorts: nu
     const root = project ? await realPath(project.path).catch(() => project.path) : null;
     const listening = parseLsof(await run('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-Fpcn'])).filter((l) => !own.has(l.port) && l.pid !== process.pid);
     const cwds = await cwdOf([...new Set(listening.map((l) => l.pid))]);
-    const ports: ListeningPort[] = listening.map((l) => {
+    // One port per number (a server on both IPv4 and IPv6 is listed twice).
+    const seen = new Set<number>();
+    const unique = listening.filter((l) => !seen.has(l.port) && seen.add(l.port));
+    const pages = await Promise.all(unique.map((l) => probePage(l.port)));
+    const ports: ListeningPort[] = [];
+    unique.forEach((l, i) => {
+      const page = pages[i];
+      if (!page) return;
       const cwd = cwds.get(l.pid) ?? null;
-      return { ...l, cwd, inProject: !!(root && cwd && (cwd === root || cwd.startsWith(root + '/'))) };
+      ports.push({ ...l, cwd, inProject: !!(root && cwd && (cwd === root || cwd.startsWith(root + '/'))), ...(page.title ? { title: page.title } : {}) });
     });
     ports.sort((a, b) => Number(b.inProject) - Number(a.inProject) || a.port - b.port);
-    return { ports };
+    return { ports, hidden: unique.length - ports.length };
   });
 }
