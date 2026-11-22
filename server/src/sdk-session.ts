@@ -1801,7 +1801,9 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
       const before = req.query.before != null ? Number(req.query.before) : total;
       const endIndex = Math.max(0, Math.min(total, Number.isFinite(before) ? before : total));
       const startIndex = Math.max(0, endIndex - limit);
-      const events = msgs.slice(startIndex, endIndex).map((m) => ({ type: m.type, uuid: m.uuid, message: m.message }));
+      // timestamp: when the record was written (the SDK returns it, its type
+      // doesn't say so) — model: web.WorkGroups times the work from it.
+      const events = msgs.slice(startIndex, endIndex).map((m) => ({ type: m.type, uuid: m.uuid, message: m.message, timestamp: (m as { timestamp?: unknown }).timestamp }));
       // Model: web.PlanStrip — plan tool calls from the part not sent.
       const planTools = planToolCalls(msgs.slice(0, startIndex) as { message?: unknown }[]);
       return { events, startIndex, endIndex, total, planTools };
