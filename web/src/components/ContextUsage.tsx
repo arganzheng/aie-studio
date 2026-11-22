@@ -37,8 +37,12 @@ export function contextTitle(c: ContextSnapshot): string {
 }
 
 // Compacting from the card: on a phone, typing `/compact` is the slow way.
-// `blocked` says why it can't run right now (Claude replying, not connected).
-export type CompactAction = { run: () => void; blocked?: string | null };
+// The CLI compacts only between turns, so while Claude works there are two
+// ways: once this turn ends (queued), or stop it now, compact, and have it
+// carry on. `blocked` says why it can't run at all (compacting, not
+// connected).
+export type CompactWhen = 'now' | 'queue' | 'interrupt';
+export type CompactAction = { run: (when: CompactWhen) => void; working: boolean; blocked?: string | null };
 
 function ContextDialog({ c, onClose, compact }: { c: ContextSnapshot; onClose: () => void; compact?: CompactAction }) {
   const level = levelOf(c.percent);
@@ -80,15 +84,27 @@ function ContextDialog({ c, onClose, compact }: { c: ContextSnapshot; onClose: (
             </div>
             {compact && (
               <div className="context-compact">
-                <button
-                  type="button"
-                  className="context-compact-btn"
-                  disabled={!!compact.blocked}
-                  onClick={() => { compact.run(); onClose(); }}
-                >Compact now</button>
-                <span className="settings-option-hint">
-                  {compact.blocked ?? <>Summarizes the conversation to free up context · same as <code className="settings-mono">/compact</code></>}
-                </span>
+                {compact.working && !compact.blocked ? (
+                  <>
+                    <button type="button" className="context-compact-btn" onClick={() => { compact.run('queue'); onClose(); }}>Compact after this turn</button>
+                    <button type="button" className="context-compact-btn secondary" onClick={() => { compact.run('interrupt'); onClose(); }}>Stop, compact, carry on</button>
+                    <span className="settings-option-hint">
+                      Claude is working. Compact once this turn ends (queued above the input), or stop it now — a running command is stopped too — compact, and let it carry on.
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="context-compact-btn"
+                      disabled={!!compact.blocked}
+                      onClick={() => { compact.run('now'); onClose(); }}
+                    >Compact now</button>
+                    <span className="settings-option-hint">
+                      {compact.blocked ?? <>Summarizes the conversation to free up context · same as <code className="settings-mono">/compact</code></>}
+                    </span>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -125,10 +141,14 @@ export function ContextBadge({ context, compact }: { context: ContextSnapshot | 
         aria-label={contextTitle(context)}
         onClick={() => setOpen(true)}
       >ctx {context.percent}%</button>
-      <span className="context-pop" role="tooltip">
-        <ContextFacts c={context} />
-        <span className="context-pop-hint">Click for the breakdown</span>
-      </span>
+      {/* The dialog sits inside this wrap, so hovering it would show the
+          tooltip on top of it: no tooltip while the dialog is open. */}
+      {!open && (
+        <span className="context-pop" role="tooltip">
+          <ContextFacts c={context} />
+          <span className="context-pop-hint">Click for the breakdown</span>
+        </span>
+      )}
       {open && <ContextDialog c={context} compact={compact} onClose={() => setOpen(false)} />}
     </div>
   );

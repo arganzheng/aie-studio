@@ -35,10 +35,43 @@ export function editQueued(items: readonly QueuedPrompt[], id: string, text: str
   return items.flatMap((q) => (q.id !== id ? [q] : t.trim() || q.images.length ? [{ ...q, text: t }] : []));
 }
 
+// A slash command (`/compact`, `/plugin:cmd arg`), as opposed to text that
+// starts with a path (`/tmp/x is wrong`). Same rule as web lib/steering.
+export function isSlashCommand(text: string): boolean {
+  return /^\s*\/[A-Za-z][\w:-]*(\s|$)/.test(text);
+}
+
+export function isCompactCommand(text: string): boolean {
+  return /^\s*\/compact(\s|$)/.test(text);
+}
+
 // Steering: a message written during a turn sends the command or subagent
 // running in the foreground to the background, so the turn reads it at once
 // instead of when that is done. Not for a slash command: the CLI runs those
 // only once the turn has ended, so moving work aside would gain nothing.
 export function steersRunningTurn(text: string): boolean {
-  return !/^\s*\/[A-Za-z][\w:-]*(\s|$)/.test(text);
+  return !isSlashCommand(text);
+}
+
+// Stop and send `/compact` (or "Stop, compact, carry on" by the context
+// card): what goes out after the compaction, so that Claude goes on with
+// the work it was stopped in — `/compact` alone starts no turn.
+export const CARRY_ON_AFTER_COMPACT = 'Carry on with what you were doing before I stopped you to compact the conversation.';
+
+// Pure: the messages a queue goes out as, in order. A slash command goes on
+// its own (merged into text it would be read as text, not run); runs of
+// other items are merged as mergeQueued does.
+export function batchQueued(items: readonly QueuedPrompt[]): Array<{ text: string; images: QueuedImage[]; at: number }> {
+  const out: Array<{ text: string; images: QueuedImage[]; at: number }> = [];
+  let run: QueuedPrompt[] = [];
+  const close = () => {
+    if (run.length) out.push({ ...mergeQueued(run), at: Math.min(...run.map((q) => q.at)) });
+    run = [];
+  };
+  for (const q of items) {
+    if (isSlashCommand(q.text) && q.images.length === 0) { close(); out.push({ text: q.text.trim(), images: [], at: q.at }); }
+    else run.push(q);
+  }
+  close();
+  return out.filter((b) => b.text || b.images.length);
 }

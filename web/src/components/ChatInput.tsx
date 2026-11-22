@@ -5,7 +5,7 @@ import { imageFilesFromClipboard } from '../lib/imageAttachments';
 import { isSendKeyTrigger } from '../lib/sendKey';
 import { AttachImagesButton } from './ImageAttachments';
 import { isBangInput } from '../lib/bang';
-import { isSlashCommand } from '../lib/steering';
+import { isCompactCommand, isSlashCommand } from '../lib/steering';
 import { addQuotes, composeQuotedPrompt, quoteCardLabel, quoteCardPreview, type ChatQuote } from '../lib/addToChat';
 import { dragHasFiles, droppedFiles } from '../lib/fileAttachments';
 
@@ -350,7 +350,9 @@ export const ChatInput = memo(function ChatInput({
       }}
     >
       {dragOver && <div className="chat-input-drop" aria-hidden="true">{anyFile ? 'Drop files to attach' : 'Drop images to attach'}</div>}
-      {slashWaits && <span className="chat-input-slash-note" title="Slash commands run once this turn has ended. To run it now: ▾ → Stop and send, then tell Claude to carry on.">runs after this turn · ▾ Stop and send to run now</span>}
+      {slashWaits && (isCompactCommand(text)
+        ? <span className="chat-input-slash-note" title="Send queues it: it compacts once this turn has ended. ▾ Stop and send stops Claude now, compacts, and has it carry on.">Send: compact after this turn · ▾ Stop and send: compact now, then carry on</span>
+        : <span className="chat-input-slash-note" title="Slash commands run once this turn has ended: Send queues it. ▾ Stop and send runs it now.">Send: queued, runs after this turn · ▾ Stop and send to run now</span>)}
       {bashMode && isBangInput(text) && <span className="chat-input-bash-badge" title="Runs in the project directory; output goes to Claude with your next message">! bash</span>}
       <div
         className="chat-input-resize"
@@ -437,7 +439,7 @@ export const ChatInput = memo(function ChatInput({
           title="Type in chat anyway — the form above stays open until you answer it"
         >Unlock</button>
       )}
-      <button onClick={() => submit()} disabled={!canSend} title={uploading ? 'Waiting for the attached files to upload' : sendModes && status === 'thinking' ? (slashWaits ? 'Slash commands run once this turn has ended' : 'Claude reads it within seconds; a running command keeps going in the background') : undefined}>{uploading ? 'Uploading…' : 'Send'}</button>
+      <button onClick={() => submit()} disabled={!canSend} title={uploading ? 'Waiting for the attached files to upload' : sendModes && status === 'thinking' ? (slashWaits ? 'Queued: slash commands run once this turn has ended' : 'Claude reads it within seconds; a running command keeps going in the background') : undefined}>{uploading ? 'Uploading…' : 'Send'}</button>
       {sendModes && status === 'thinking' && (
         <div className="send-modes">
           <button

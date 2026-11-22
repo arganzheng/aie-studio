@@ -8,6 +8,10 @@ export function isSlashCommand(text: string): boolean {
   return /^\s*\/[A-Za-z][\w:-]*(\s|$)/.test(text);
 }
 
+export function isCompactCommand(text: string): boolean {
+  return /^\s*\/compact(\s|$)/.test(text);
+}
+
 // What the CLI writes into the conversation when the user stops a turn
 // ("[Request interrupted by user]", "… for tool use]"): a note, not something
 // the user typed.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { editQueued, mergeQueued, queueView, steersRunningTurn, type QueuedPrompt } from '../prompt-queue.js';
+import { batchQueued, editQueued, isCompactCommand, mergeQueued, queueView, steersRunningTurn, type QueuedPrompt } from '../prompt-queue.js';
 
 const img = { mediaType: 'image/png', data: 'AAA' };
 const q = (id: string, text: string, images = 0): QueuedPrompt => ({ id, text, images: Array.from({ length: images }, () => img), at: 1 });
@@ -26,5 +26,21 @@ describe('prompt queue', () => {
     expect(steersRunningTurn('  /compact')).toBe(false);
     expect(steersRunningTurn('/ not a command')).toBe(true);
     expect(steersRunningTurn('look at a/b')).toBe(true);
+  });
+  it('sends a slash command on its own, merging the text around it', () => {
+    const items = [q('a', 'first'), q('b', 'second', 1), q('c', ' /compact '), q('d', 'carry on'), q('e', '/tmp/x is a path')];
+    expect(batchQueued(items)).toEqual([
+      { text: 'first\n\nsecond', images: [img], at: 1 },
+      { text: '/compact', images: [], at: 1 },
+      { text: 'carry on\n\n/tmp/x is a path', images: [], at: 1 },
+    ]);
+    expect(batchQueued([q('a', '/compact'), q('b', '/context')]).map((b) => b.text)).toEqual(['/compact', '/context']);
+    expect(batchQueued([q('a', '  ')])).toEqual([]);
+  });
+  it('knows /compact', () => {
+    expect(isCompactCommand('/compact')).toBe(true);
+    expect(isCompactCommand(' /compact keep the plan')).toBe(true);
+    expect(isCompactCommand('/compacted')).toBe(false);
+    expect(isCompactCommand('please /compact')).toBe(false);
   });
 });

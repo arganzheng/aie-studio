@@ -2,7 +2,8 @@ import { useState } from 'react';
 
 // Model: Session.queue (web side) — messages the user chose to send after
 // the running turn (▾ next to Send), shown above the input. They wait on the
-// server and go out together, as one message, when the turn ends — or, once
+// server and go out together when the turn ends (text as one message, each
+// slash command on its own) — or, once
 // the user has interrupted the turn to send one, as soon as it has stopped.
 // Each can be edited, dropped, or sent now (into the running turn).
 
@@ -37,9 +38,9 @@ export function QueuedMessages({ items, working, agent, onEdit, onRemove, onSend
     <div className="queued" aria-label="Queued messages">
       <div className="queued-head">
         {working && items.some((q) => q.interrupt)
-          ? `Stopping ${agent} · sent as one message as soon as it has stopped`
+          ? `Stopping ${agent} · sent as soon as it has stopped`
           : working
-          ? `Queued · sent as one message when ${agent} finishes this turn`
+          ? `Queued · sent when ${agent} finishes this turn`
           : `Queued · ${agent} stopped before these went out`}
       </div>
       {items.map((q) => (
