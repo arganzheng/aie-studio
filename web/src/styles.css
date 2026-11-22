@@ -4256,3 +4256,37 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .auto-inline { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-muted); }
 .auto-inline input { width: 70px; }
 .auto-run-mark.auto-wait { color: #d29922; }
+
+/* Model: web.SidePanel session tools (Progress, Agents, Files). */
+.side-view { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; font-size: 13px; }
+.side-view-head { flex: none; display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--fg); min-width: 0; }
+.side-view-count { margin-left: auto; font-size: 12px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.side-view-section { padding: 10px 12px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--fg-muted); }
+.side-muted { color: var(--fg-muted); }
+.side-empty { padding: 8px 12px; color: var(--fg-muted); line-height: 1.5; }
+.side-empty.error { color: #f85149; }
+.side-foot { padding: 10px 12px; font-size: 12px; }
+.progress-list { list-style: none; margin: 0; padding: 6px 0; }
+.progress-item { display: flex; gap: 8px; padding: 5px 12px; line-height: 1.45; color: var(--fg); }
+.progress-mark { flex: 0 0 14px; text-align: center; color: var(--fg-muted); }
+.progress-item.st-completed .progress-mark { color: #3fb950; }
+.progress-item.st-completed .progress-text { color: var(--fg-muted); text-decoration: line-through; }
+.progress-item.st-in_progress { background: rgba(78, 201, 176, 0.08); }
+.progress-item.st-in_progress .progress-mark { color: var(--accent); }
+.progress-item.st-in_progress .progress-text { font-weight: 600; }
+.agent-row { display: grid; grid-template-columns: 12px 1fr; grid-template-rows: auto auto; column-gap: 8px; width: 100%; text-align: left; background: none; border: none; padding: 6px 12px; cursor: pointer; color: var(--fg); font: inherit; }
+.agent-row:hover { background: var(--bg-hover); }
+.agent-dot { grid-row: 1 / span 2; align-self: center; width: 8px; height: 8px; border-radius: 50%; background: var(--fg-muted); opacity: .5; }
+.agent-dot.running { background: var(--accent); opacity: 1; }
+.agent-dot.awaiting { background: #d97706; opacity: 1; }
+.agent-dot.ready { background: #3b82f6; opacity: 1; }
+.agent-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-sub { grid-column: 2; font-size: 12px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-subagents { padding: 0 4px; }
+.side-files { height: 100%; }
+.side-back { flex: none; background: none; border: 1px solid var(--border); border-radius: 5px; color: var(--fg); cursor: pointer; padding: 2px 8px; font: inherit; font-size: 12px; }
+.side-file-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-muted); font: 12px var(--font-mono, ui-monospace, monospace); }
+.side-file-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.side-launcher-sub { font-weight: 400; text-transform: none; letter-spacing: 0; }
+.btw-continue { flex: none; background: none; border: 1px solid #8957e5; color: var(--fg); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+.btw-continue:hover { background: rgba(137, 87, 229, 0.18); }

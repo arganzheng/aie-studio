@@ -1105,7 +1105,7 @@ export default function App() {
   // Model: web.SdkChatPanel / web.SdkSessionPicker — the Agent-SDK Claude
   // tab. Same dedupe-by-resumeId as openSessionTab; the two kinds are kept
   // apart (a session already open as `session` opens again as `claude-sdk`).
-  function openSdkTab(resumeId?: string, title?: string, opts: { wire?: boolean; parentSessionId?: string; worktree?: string } = {}): string | undefined {
+  function openSdkTab(resumeId?: string, title?: string, opts: { wire?: boolean; parentSessionId?: string; worktree?: string; initialPrompt?: string } = {}): string | undefined {
     if (!activeProjectId) {
       logDebug('tab', 'openSdkTab ignored — no active project');
       return;
@@ -1128,7 +1128,7 @@ export default function App() {
     }
     const d = new Date();
     const defaultTitle = `SDK ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    const tab: Tab = { id: randomId(), type: 'claude-sdk', resumeId, title: title || defaultTitle, ...(opts.wire ? { wire: true } : {}), ...(opts.parentSessionId && !resumeId ? { parentSessionId: opts.parentSessionId } : {}), ...(opts.worktree && !resumeId ? { worktree: opts.worktree } : {}) };
+    const tab: Tab = { id: randomId(), type: 'claude-sdk', resumeId, title: title || defaultTitle, ...(opts.wire ? { wire: true } : {}), ...(opts.parentSessionId && !resumeId ? { parentSessionId: opts.parentSessionId } : {}), ...(opts.worktree && !resumeId ? { worktree: opts.worktree } : {}), ...(opts.initialPrompt && !resumeId ? { initialPrompt: opts.initialPrompt } : {}) };
     logDebug('tab', `openSdkTab: new claude-sdk tab ${tab.id}${resumeId ? ` (resume ${resumeId})` : ' (fresh)'} in project ${activeProjectId}`);
     updateProjectTabs(activeProjectId, [...tabs, tab]);
     setActiveSelection(activeProjectId, tab.id);
@@ -1366,6 +1366,16 @@ export default function App() {
 
   // Model: web.SessionList tree → web.SubagentPanel. Open (or re-activate)
   // the read-only view of one subagent; one tab per subagent per project.
+  // Model: SideChat → Session.children — carry a side chat on as a child
+  // session of the one it was about: the child gets the parent's summary (as
+  // any child the user opens) and, as its first message, the side chat.
+  function continueSideChatAsChild(sessionId: string, label: string, conversation: string) {
+    const prompt = `Below is a side conversation (/btw) I had about the parent session "${label}", in a read-only copy of it.\n\n${conversation}\n\nRead it, then tell me in a few lines what you would do next. Do not change anything until I say so.`;
+    openSdkTab(undefined, `btw → ${label}`.slice(0, 60), { parentSessionId: sessionId, initialPrompt: prompt });
+    setDrawerOpen(false);
+    setReviewDrawerOpen(false);
+  }
+
   function openSubagentTab(row: SessionRow, s: SubagentInfo) {
     if (!activeProjectId) return;
     if (row.projectId !== activeProjectId) {
@@ -2171,7 +2181,12 @@ export default function App() {
               lsPrefix={LS_PREFIX}
               projectId={activeProject.id}
               projectName={activeProject.name}
+              projectPath={activeProject.path}
               theme={settings.theme}
+              onOpenSession={(row) => { setReviewDrawerOpen(false); openSessionRow(row); }}
+              onOpenSubagent={(row, s) => { setReviewDrawerOpen(false); openSubagentTab(row, s); }}
+              onReveal={(sid, anchor) => { setReviewDrawerOpen(false); revealInSession({ type: 'session', key: sid }, anchor); }}
+              onContinueAsChild={continueSideChatAsChild}
               reviewOn={reviewOn}
               reviewCount={draftComments}
               follow={follow}

@@ -9,6 +9,10 @@ import { SideLauncher } from './SideLauncher';
 import { SideChat } from './SideChat';
 import type { Theme } from '../types';
 import { PreviewView } from './PreviewView';
+import { AgentsView, FilesView, ProgressView } from './SideSessionViews';
+import { ObservePanel } from './ObservePanel';
+import type { SubagentInfo } from '../api';
+import type { SessionRow } from '../lib/sessionList';
 
 // Model: web.SidePanel — the right-hand column (formerly only Review): its
 // own strip of tabs with "+", and on the right Maximize (take over the chat
@@ -47,6 +51,10 @@ function tabTitle(t: SideTab, projectName: string, reviewCount: number): string 
   if (t.kind === 'launcher') return 'New tab';
   if (t.kind === 'btw') return `btw · ${t.label}`;
   if (t.kind === 'preview') return `Preview :${t.port}`;
+  if (t.kind === 'progress') return 'Progress';
+  if (t.kind === 'agents') return 'Agents';
+  if (t.kind === 'observe') return 'Observe';
+  if (t.kind === 'files') return 'Files';
   if (t.target === FOLLOW) return 'Changes';
   return `Changes · ${t.target === ROOT ? projectName : t.target}`;
 }
@@ -54,13 +62,22 @@ function tabTitle(t: SideTab, projectName: string, reviewCount: number): string 
 function storageKey(prefix: string, projectId: string) { return `${prefix}side:${projectId}`; }
 
 export function SidePanel({
-  lsPrefix, projectId, projectName, theme, reviewOn, reviewCount, renderReview, follow, onAddToChat,
+  lsPrefix, projectId, projectName, projectPath, theme, reviewOn, reviewCount, renderReview, follow, onAddToChat,
+  onOpenSession, onOpenSubagent, onReveal, onContinueAsChild,
   collapsed, maximized, onToggleCollapse, onToggleMax, onCloseDrawer, request,
 }: {
   lsPrefix: string;
   projectId: string;
   projectName: string;
+  projectPath: string;
   theme: Theme;
+  // Agents tab: open a child session / a subagent in the main area.
+  onOpenSession: (row: SessionRow) => void;
+  onOpenSubagent: (row: SessionRow, s: SubagentInfo) => void;
+  // Observe tab: show this message of the session in its chat.
+  onReveal: (sessionId: string, anchor: string) => void;
+  // Side chat: carry on in a child session of `sessionId`, told what was said.
+  onContinueAsChild: (sessionId: string, label: string, conversation: string) => void;
   reviewOn: boolean;
   reviewCount: number;
   renderReview: () => ReactNode;
@@ -119,6 +136,17 @@ export function SidePanel({
     body = renderReview();
   } else if (current.kind === 'btw') {
     body = null; // kept mounted below, so a side chat survives switching tabs
+  } else if (current.kind === 'progress') {
+    body = <ProgressView projectId={projectId} follow={follow} active={!collapsed} />;
+  } else if (current.kind === 'agents') {
+    body = <AgentsView projectId={projectId} follow={follow} active={!collapsed} onOpenSession={onOpenSession} onOpenSubagent={onOpenSubagent} />;
+  } else if (current.kind === 'files') {
+    body = <FilesView projectId={projectId} projectName={projectName} projectPath={projectPath} theme={theme} onAddToChat={onAddToChat} />;
+  } else if (current.kind === 'observe') {
+    const sid = follow?.sessionId;
+    body = sid
+      ? <ObservePanel key={sid} projectId={projectId} origin={{ type: 'session', key: sid }} onReveal={(anchor) => onReveal(sid, anchor)} />
+      : <div className="side-empty">Open a Claude session to observe it here: its turns, tool calls and tokens. This tab follows the session you are in.</div>;
   } else if (current.kind === 'preview') {
     const id = current.id;
     body = <PreviewView key={id} port={current.port} path={current.path} onPath={(path) => setState((s) => updateTab(s, id, { path }))} />;
@@ -179,6 +207,7 @@ export function SidePanel({
               label={t.label}
               theme={theme}
               ask={btwAsk && btwAsk.sessionId === t.sessionId ? { question: btwAsk.question, seq: btwAsk.seq } : null}
+              onContinue={(conversation) => onContinueAsChild(t.sessionId, t.label, conversation)}
             />
           </div>
         ))}
