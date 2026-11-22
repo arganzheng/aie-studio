@@ -328,6 +328,7 @@ export function SdkPanel({
   onActivity,
   onBtw,
   onOpenProgress,
+  onShowPreview,
   onOpenSession,
   onExportApi,
   onComment,
@@ -365,6 +366,8 @@ export function SdkPanel({
   onBtw?: (question: string) => boolean;
   // Model: web.PlanStrip — open the Progress tab beside the chat.
   onOpenProgress?: () => void;
+  // Model: web.PreviewView — Claude's show_preview opens a page in the side panel.
+  onShowPreview?: (port: number, path: string) => void;
   // Open one of this project's sessions in its own tab (a child session).
   onOpenSession?: (sessionId: string, title?: string) => void;
   onExportApi?: (api: { open: () => void; canExport: boolean } | null) => void;
@@ -486,6 +489,7 @@ export function SdkPanel({
 
   // Latest callbacks for the mount-time WS handlers.
   const onTitleRef = useRef(onTitle); onTitleRef.current = onTitle;
+  const onShowPreviewRef = useRef(onShowPreview); onShowPreviewRef.current = onShowPreview;
   const onSessionIdRef = useRef(onSessionId); onSessionIdRef.current = onSessionId;
   const onActivityRef = useRef(onActivity); onActivityRef.current = onActivity;
   const onOpenFileRef = useRef(onOpenFile); onOpenFileRef.current = onOpenFile;
@@ -815,6 +819,11 @@ export function SdkPanel({
     if (m.type === 'queue') { setQueued(parseQueue(m.items)); return; }
     if (m.type === 'catalog') { setCatalog({ commands: m.commands ?? [], agents: m.agents ?? [], models: m.models ?? [] }); return; }
     if (m.type === 'title') { if (typeof m.title === 'string' && m.title) onTitleRef.current?.(m.title); return; }
+    if (m.type === 'side_open') {
+      const w = m.want;
+      if (w?.kind === 'preview' && Number.isInteger(w.port) && w.port >= 1024 && w.port <= 65535) onShowPreviewRef.current?.(w.port, typeof w.path === 'string' && w.path.startsWith('/') ? w.path : '/');
+      return;
+    }
     if (m.type === 'model') { if (typeof m.model === 'string') setModel(m.model); return; }
     if (m.type === 'effort') { const lvl = typeof m.effort === 'string' ? m.effort : ''; setEffort(lvl); showToast(lvl ? `Effort: ${lvl}` : 'Effort: default'); return; }
     if (m.type === 'effort_error' || m.type === 'rewind_error') { showToast(String(m.message ?? 'Request failed')); setRewinding(false); return; }

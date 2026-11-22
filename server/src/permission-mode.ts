@@ -46,7 +46,7 @@ export const PLAN_MODE_DENIAL = 'This session is in plan mode: nothing may be ch
 
 // The app's own tools (child sessions, watches) never need the user's say-so.
 export function isOwnTool(toolName: string): boolean {
-  return toolName.startsWith('mcp__aie__') || toolName.startsWith('mcp__aie_status__') || toolName.startsWith('mcp__aie_watch__');
+  return toolName.startsWith('mcp__aie__') || toolName.startsWith('mcp__aie_status__') || toolName.startsWith('mcp__aie_watch__') || toolName.startsWith('mcp__aie_view__');
 }
 
 export const PERMISSION_INPUT_MAX = 6000;

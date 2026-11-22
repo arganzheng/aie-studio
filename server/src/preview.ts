@@ -309,12 +309,12 @@ export function pageTitle(html: string): string | undefined {
 const PROBE_MS = 1500;
 const PROBE_BYTES = 16 * 1024;
 
-// GET / on the port, as the preview would (same host); null = not a page.
-function probePage(port: number): Promise<{ title?: string } | null> {
+// GET `path` (default /) on the port, as the preview would (same host); null = not a page.
+export function probePage(port: number, path = '/'): Promise<{ title?: string } | null> {
   return new Promise((resolve) => {
     let done = false;
     const finish = (v: { title?: string } | null) => { if (!done) { done = true; resolve(v); } };
-    const req = http.get({ host: 'localhost', port, path: '/', headers: { accept: 'text/html,*/*;q=0.8', 'user-agent': 'aie-studio-preview-probe' }, timeout: PROBE_MS }, (res) => {
+    const req = http.get({ host: 'localhost', port, path, headers: { accept: 'text/html,*/*;q=0.8', 'user-agent': 'aie-studio-preview-probe' }, timeout: PROBE_MS }, (res) => {
       const type = String(res.headers['content-type'] ?? '');
       const status = res.statusCode ?? 0;
       if (status >= 300 && status < 400) { res.destroy(); finish({}); return; }

@@ -3,6 +3,7 @@
 // same jsonl sessions as session.ts, but driven through the official Agent
 // SDK instead of a hand-rolled stream-json subprocess. Deliberately shares no
 // code with session.ts — projects/claude-sdk-session/design.md.
+import { probePage } from './preview.js';
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from '@fastify/websocket';
 import { randomUUID } from 'node:crypto';
@@ -461,7 +462,7 @@ function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: 
       pathToClaudeCodeExecutable: process.env.REMOTE_IDE_SDK_CLAUDE_PATH || undefined,
       stderr: (data) => broadcast(entry, { type: 'stderr', data }),
       canUseTool: makeCanUseTool(entry),
-      mcpServers: { ...(entry.childTools ? { aie: childToolsServer(entry) } : {}), aie_status: statusServer(), aie_progress: progressServer(), aie_watch: watchToolsServer(entry) },
+      mcpServers: { ...(entry.childTools ? { aie: childToolsServer(entry) } : {}), aie_status: statusServer(), aie_progress: progressServer(), aie_view: viewToolsServer(entry), aie_watch: watchToolsServer(entry) },
       outputFormat: entry.resultSchema ? { type: 'json_schema', schema: entry.resultSchema } : undefined,
     },
   });
@@ -1415,6 +1416,50 @@ configureWatches({
 
 // The watch tools, a server of their own (any SDK session has them, child
 // tools or not; its instructions are told once per server name).
+// Model: web.PreviewView — show the user a page served on this machine (the
+// app being built, a before/after comparison) in their side panel, instead of
+// a localhost link they cannot open from another device.
+export const VIEW_INSTRUCTIONS = [
+  'Showing pages to the user.',
+  'The user works in this app, often from another device, and cannot open localhost links or files on this machine.',
+  'To show them a web page served on this machine (the app you are building, a dev server, a before/after comparison page you put up), call show_preview with its port (and path): it opens as a Preview tab in the side panel next to this chat.',
+  'Serve static files with a local server first (for example python3 -m http.server <port> --bind 127.0.0.1 in their directory), keep it running while they look, and stop it when they are done.',
+  'Do not paste localhost URLs for the user to open, and once show_preview has opened the page there is no need to give a link to it as well.',
+].join(' ');
+
+// Pure: what show_preview tells Claude.
+export function showPreviewReply(port: number, path: string, page: { title?: string } | null, viewers: number): { text: string; isError: boolean } {
+  if (!page) return { text: `Nothing on port ${port} answers ${path} with a web page (or nothing is listening). Start the server first, then call show_preview again.`, isError: true };
+  const what = `port ${port}${path !== '/' ? ` (${path})` : ''}${page.title ? ` — "${page.title}"` : ''}`;
+  if (viewers === 0) return { text: `The page on ${what} is up, but nobody has this session open right now, so nothing was shown. Tell the user it is in ＋ → Preview of the side panel (port ${port}).`, isError: false };
+  return { text: `Opened ${what} as a Preview tab in the user's side panel. Keep its server running while they look.`, isError: false };
+}
+
+function viewToolsServer(entry: SdkEntry) {
+  return createSdkMcpServer({
+    name: 'aie_view',
+    version: '1.0.0',
+    instructions: VIEW_INSTRUCTIONS,
+    tools: [
+      tool(
+        'show_preview',
+        'Open a web page served on this machine as a Preview tab in the side panel of the user\'s view of this session (focusing it if already open). Use it to show the app you are building, a dev server, or a comparison page you serve. The server must already be running; it is checked first.',
+        {
+          port: z.number().int().min(1024).max(65535).describe('The local port the page is served on'),
+          path: z.string().optional().describe('Path to open, default "/"'),
+        },
+        async (args) => {
+          const path = !args.path ? '/' : args.path.startsWith('/') ? args.path : `/${args.path}`;
+          const page = await probePage(args.port, path);
+          if (page) broadcast(entry, { type: 'side_open', want: { kind: 'preview', port: args.port, path } });
+          const r = showPreviewReply(args.port, path, page, entry.clients.size);
+          return toolText(r.text, r.isError);
+        },
+      ),
+    ],
+  });
+}
+
 function watchToolsServer(entry: SdkEntry) {
   const who = () => entry.sessionId ? { sessionId: entry.sessionId, projectId: entry.owner.projectId, projectPath: entry.projectPath, cwd: entry.cwd } : null;
   return createSdkMcpServer({

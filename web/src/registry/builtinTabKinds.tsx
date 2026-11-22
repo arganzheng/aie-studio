@@ -112,7 +112,7 @@ registerTabKind({
 registerTabKind({
   id: 'claude-sdk',
   label: 'Claude (SDK)',
-  render: ({ tab, project, settings, updateTabs, registerExportApi, openTab, addComment, commentMarks, toggleBookmark, bookmarkedAnchors, focusComment, markBatchSent, registerPanelApi, reportActivity, openSideChat, openSideTool }) => {
+  render: ({ tab, project, settings, updateTabs, registerExportApi, openTab, addComment, commentMarks, toggleBookmark, bookmarkedAnchors, focusComment, markBatchSent, registerPanelApi, reportActivity, openSideChat, openSideTool, openSidePreview }) => {
     const t = asClaudeSdk(tab);
     return (
       <SdkPanel
@@ -147,6 +147,7 @@ registerTabKind({
         onActivity={reportActivity}
         onBtw={openSideChat ? (question) => { if (t.resumeId) openSideChat(t.resumeId, t.title || t.resumeId.slice(0, 8), question); return !!t.resumeId; } : undefined}
         onOpenProgress={openSideTool ? () => openSideTool('progress') : undefined}
+        onShowPreview={openSidePreview}
         onOpenSession={(sessionId, title) => openTab({ id: shortId(), type: 'claude-sdk', resumeId: sessionId, ...(title ? { title } : {}) })}
         onTitle={(title) => updateTabs((tabs) => tabs.map((x) => (x.id === t.id ? { ...x, title } : x)))}
         onSessionId={(uuid) => {
