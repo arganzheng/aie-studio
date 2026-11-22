@@ -4118,3 +4118,16 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   .palette-foot { display: none; }
   .palette-item { padding: 10px 16px; }
 }
+
+/* Model: Session.queue — queued messages above the chat input. */
+.queued { flex: 0 0 auto; margin: 0 10px 6px; border: 1px dashed var(--border); border-radius: 8px; background: var(--bg-elevated); font-size: 13px; max-height: 40vh; overflow-y: auto; }
+.queued-head { padding: 5px 10px; font-size: 11px; color: var(--fg-muted); border-bottom: 1px solid var(--border); }
+.queued-item { display: flex; align-items: flex-start; gap: 6px; padding: 6px 6px 6px 10px; }
+.queued-item + .queued-item { border-top: 1px solid var(--border); }
+.queued-text { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; word-break: break-word; color: var(--fg); cursor: text; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.queued-images { color: var(--fg-muted); }
+.queued-edit { flex: 1 1 auto; min-width: 0; font: inherit; color: var(--fg); background: var(--bg-input); border: 1px solid var(--accent); border-radius: 6px; padding: 4px 6px; resize: vertical; }
+.queued-actions { flex: none; display: flex; gap: 2px; }
+.queued-actions button { background: none; border: 1px solid transparent; border-radius: 5px; color: var(--fg-muted); cursor: pointer; font-size: 12px; padding: 2px 7px; line-height: 18px; }
+.queued-actions button:hover { color: var(--fg); background: var(--bg-hover); }
+.queued-actions .queued-now { border-color: var(--border); color: var(--fg); }

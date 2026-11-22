@@ -5,6 +5,7 @@
 // anything done here. Wire protocol: server ClaudeSdkSessionBridge
 // (projects/claude-sdk-session/design.md).
 import { Fragment, Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { QueuedMessages, parseQueue, type QueuedView } from './QueuedMessages';
 import ReactMarkdown from 'react-markdown';
 import { HistoryNotice, historyProblem } from './HistoryNotice';
 import { logDebug } from '../lib/debugLog';
@@ -400,6 +401,8 @@ export function SdkPanel({
   const [planAsk, setPlanAsk] = useState<{ id: string; plan: string } | null>(null);
   // Tool calls waiting for the user's leave (acceptEdits / auto).
   const [permAsks, setPermAsks] = useState<PermissionAsk[]>([]);
+  // Model: Session.queue — kept by the server, mirrored here.
+  const [queued, setQueued] = useState<QueuedView[]>([]);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [wireOn, setWireOn] = useState(false);
   // Context window reading, pushed by the server after each turn.
@@ -784,6 +787,7 @@ export function SdkPanel({
       setWireOn(m.wire === true);
       setWorktreeName(typeof m.worktree === 'string' && m.worktree ? m.worktree : null);
       setContextUsage(m.context ?? null);
+      setQueued(parseQueue(m.queue));
       if (typeof m.title === 'string' && m.title) onTitleRef.current?.(m.title);
       if (Array.isArray(m.commands)) setCatalog({ commands: m.commands, agents: m.agents ?? [], models: m.models ?? [] });
       showToast(m.resumed ? (m.attached ? 'Attached to live session' : 'Resumed session') : 'Session started');
@@ -796,6 +800,7 @@ export function SdkPanel({
       return;
     }
     if (m.type === 'context') { if (m.context) setContextUsage(m.context); return; }
+    if (m.type === 'queue') { setQueued(parseQueue(m.items)); return; }
     if (m.type === 'catalog') { setCatalog({ commands: m.commands ?? [], agents: m.agents ?? [], models: m.models ?? [] }); return; }
     if (m.type === 'title') { if (typeof m.title === 'string' && m.title) onTitleRef.current?.(m.title); return; }
     if (m.type === 'model') { if (typeof m.model === 'string') setModel(m.model); return; }
@@ -1006,6 +1011,13 @@ export function SdkPanel({
 
   function sendPrompt(text: string, images: readonly ImageAttachment[]) {
     const msgId = shortId();
+    // Model: Session.queue — during a turn it waits on the server, shown
+    // above the input, until the turn ends (the server decides: an open
+    // question or form takes it as the answer instead, echoed as usual).
+    if (statusRef.current === 'thinking') {
+      if (!wsSend({ type: 'user', text, images: toWireImages(images), msgId, queue: true })) showToast('Not connected — message not sent');
+      return;
+    }
     append({ id: msgId, role: 'user', text, images: images.length ? images.map((p) => p.dataUrl) : undefined });
     wsSend({ type: 'user', text, images: toWireImages(images), msgId });
     setStatus('thinking');
@@ -1497,6 +1509,14 @@ export function SdkPanel({
           )}
         </div>
       )}
+      <QueuedMessages
+        items={queued}
+        working={status === 'thinking'}
+        agent="Claude"
+        onEdit={(id, text) => wsSend({ type: 'queue_edit', id, text })}
+        onRemove={(id) => wsSend({ type: 'queue_remove', id })}
+        onSendNow={(id) => wsSend({ type: 'queue_send_now', id })}
+      />
       <ImageAttachmentStrip images={pendingImages} onRemove={attachments.remove} onOpen={setLightbox} />
       <FileAttachmentStrip files={fileAttachments.files} onRemove={fileAttachments.remove} />
       <ChatInput
@@ -1506,7 +1526,7 @@ export function SdkPanel({
         anyFile
         uploading={fileAttachments.files.some((f) => f.state === 'uploading')}
         readyPlaceholder={sendKeyHint(sendKey)}
-        thinkingPlaceholder="Claude is working — type to queue / send another"
+        thinkingPlaceholder="Claude is working — what you send now waits until this turn ends"
         commands={commands}
         onCommandsOpen={refreshCommands}
         onSend={send}

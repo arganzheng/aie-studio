@@ -55,6 +55,7 @@ import { encodeCwd } from './observe/transcript.js';
 import { duplexRoute } from './duplex.js';
 import { planToolCalls } from './plan-tools.js';
 import { taskToolsEnv, taskToolsOn } from './task-tools.js';
+import { MAX_QUEUED, MAX_QUEUED_TEXT, editQueued, mergeQueued, queueView, type QueuedPrompt } from './prompt-queue.js';
 
 // ----- input queue: one always-open async iterable per live query ---------
 
@@ -243,6 +244,8 @@ type SdkEntry = {
   // model — prepended to the next prompt (Claude Code bash-mode semantics:
   // the output joins the conversation but doesn't start a turn by itself).
   pendingBang: Array<{ id: string; result: BangResult }>;
+  // Model: Session.queue — written during a turn, sent when it ends.
+  queued: QueuedPrompt[];
   runningBang: Map<string, { command: string; run: RunningBang }>;
 };
 
@@ -592,6 +595,7 @@ function saveOwed(entry: SdkEntry) {
 }
 
 function onSdkMessage(entry: SdkEntry, m: any) {
+  let flush = false;
   touchActivity(entry);
   applyTaskEvent(entry.tasks, m);
   const activity = activityAfter(m, entry.cwd);
@@ -641,13 +645,48 @@ function onSdkMessage(entry: SdkEntry, m: any) {
     // Model: Session.status — what the agent said it is now waiting for.
     const said = parseStatus(m.result);
     const status = isTurnResult(m) && m.subtype === 'success' ? said.status : null;
-    if (entry.sessionId) void setSessionStatus(entry.owner.uid, `claude:${entry.sessionId}`, status);
-    if (entry.pendingAsks.size === 0) {
+    // Model: Session.queue — what the user wrote during the turn goes out
+    // now (below, after the result itself); the session is not done.
+    flush = isTurnResult(m) && m.subtype === 'success' && entry.queued.length > 0 && entry.pendingAsks.size === 0;
+    if (entry.sessionId && !flush) void setSessionStatus(entry.owner.uid, `claude:${entry.sessionId}`, status);
+    if (entry.pendingAsks.size === 0 && !flush) {
       if (status?.tone === 'needs-you') publishSessionEvent(entry.owner, 'awaiting', entry.sessionId, entry.title, status.label);
       else publishSessionEvent(entry.owner, 'done', entry.sessionId, entry.title, toSummary(said.text));
     }
   }
   broadcast(entry, { type: 'message', data: m });
+  if (flush) flushQueue(entry);
+}
+
+function broadcastQueue(entry: SdkEntry) {
+  broadcast(entry, { type: 'queue', items: queueView(entry.queued) });
+}
+
+// Send everything queued as one message.
+function flushQueue(entry: SdkEntry) {
+  const items = entry.queued.splice(0);
+  broadcastQueue(entry);
+  if (items.length === 0) return;
+  const { text, images } = mergeQueued(items);
+  deliverUser(entry, text, images, null);
+}
+
+// Model: Session.queue — the client messages that change it. True when
+// `msg` was one of them.
+function handleQueueMessage(entry: SdkEntry, msg: any): boolean {
+  const id = String(msg.id ?? '');
+  if (msg.type === 'queue_edit') entry.queued = editQueued(entry.queued, id, String(msg.text ?? ''));
+  else if (msg.type === 'queue_remove') entry.queued = entry.queued.filter((q) => q.id !== id);
+  else if (msg.type === 'queue_send_now') {
+    // Out of the queue and into the running turn (or a new one).
+    const item = entry.queued.find((q) => q.id === id);
+    entry.queued = entry.queued.filter((q) => q.id !== id);
+    broadcastQueue(entry);
+    if (item) deliverUser(entry, item.text, item.images, null);
+    return true;
+  } else return false;
+  broadcastQueue(entry);
+  return true;
 }
 
 // Re-read the context window and push it to every client. Summary detail
@@ -791,37 +830,52 @@ function attachClient(entry: SdkEntry, socket: WebSocket) {
   });
 }
 
+// Put a message the user wrote into the session: the running turn takes it
+// at its next step, or it starts a turn.
+function deliverUser(entry: SdkEntry, text: string, images: Array<{ mediaType?: string; data?: string }>, msgId: string | null) {
+  // Writing while a plan waits is the answer to it: the plan goes back and
+  // the message says why.
+  for (const [id, ask] of entry.pendingAsks) {
+    if (ask.kind === 'plan') settlePlan(entry, id, false);
+    // Same for a tool call waiting for leave: the reply stands in for "no".
+    else if (ask.kind === 'permission') settlePermission(entry, id, false, { note: 'they replied instead — see their next message' });
+  }
+  if (entry.sessionId) void unarchiveOnUse(entry.owner.uid, `claude:${entry.sessionId}`).then(() => setSessionStatus(entry.owner.uid, `claude:${entry.sessionId}`, null));
+  const uuid = randomUUID();
+  const bang = entry.pendingBang.splice(0).map((b) => b.result);
+  const um = userMessage(uuid, text, images, bang);
+  entry.thinking = true;
+  touchActivity(entry);
+  if (entry.userNotes.length < MAX_NOTES_PER_TURN) {
+    entry.userNotes.push([text, images.length > 0 ? `[${images.length} image${images.length === 1 ? '' : 's'} attached]` : ''].filter(Boolean).join('\n'));
+    saveOwed(entry);
+  }
+  // The SDK does not echo our own prompts back; every client (sender
+  // included) learns the uuid from this frame.
+  broadcast(entry, { type: 'user_echo', msgId, uuid, message: um.message });
+  entry.queue.push(um);
+}
+
 async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any) {
   if (msg.type === 'ping') { send(socket, { type: 'pong' }); return; }
   if (msg.type === 'bang') { handleBang(entry, msg); return; }
   if (msg.type === 'bang_interrupt') { entry.runningBang.get(String(msg.id ?? ''))?.run.interrupt(); return; }
   if (!entry.q) { send(socket, { type: 'error', message: 'session is not live' }); return; }
 
+  if (handleQueueMessage(entry, msg)) return;
   if (msg.type === 'user') {
     const text = String(msg.text ?? '');
     const images = Array.isArray(msg.images) ? msg.images : [];
     if (!text && images.length === 0) return;
-    // Writing while a plan waits is the answer to it: the plan goes back and
-    // the message says why.
-    for (const [id, ask] of entry.pendingAsks) {
-      if (ask.kind === 'plan') settlePlan(entry, id, false);
-      // Same for a tool call waiting for leave: the reply stands in for "no".
-      else if (ask.kind === 'permission') settlePermission(entry, id, false, { note: 'they replied instead — see their next message' });
+    // Model: Session.queue — written during a turn: it waits for the turn to
+    // end. Not while the agent waits on the user (then this is the answer).
+    if (msg.queue === true && entry.thinking && entry.pendingAsks.size === 0) {
+      if (entry.queued.length >= MAX_QUEUED) { send(socket, { type: 'error', message: `At most ${MAX_QUEUED} queued messages` }); return; }
+      entry.queued.push({ id: typeof msg.msgId === 'string' && msg.msgId ? msg.msgId : randomUUID(), text: text.slice(0, MAX_QUEUED_TEXT), images, at: Date.now() });
+      broadcastQueue(entry);
+      return;
     }
-    if (entry.sessionId) void unarchiveOnUse(entry.owner.uid, `claude:${entry.sessionId}`).then(() => setSessionStatus(entry.owner.uid, `claude:${entry.sessionId}`, null));
-    const uuid = randomUUID();
-    const bang = entry.pendingBang.splice(0).map((b) => b.result);
-    const um = userMessage(uuid, text, images, bang);
-    entry.thinking = true;
-    touchActivity(entry);
-    if (entry.userNotes.length < MAX_NOTES_PER_TURN) {
-      entry.userNotes.push([text, images.length > 0 ? `[${images.length} image${images.length === 1 ? '' : 's'} attached]` : ''].filter(Boolean).join('\n'));
-      saveOwed(entry);
-    }
-    // The SDK does not echo our own prompts back; every client (sender
-    // included) learns the uuid from this frame.
-    broadcast(entry, { type: 'user_echo', msgId: typeof msg.msgId === 'string' ? msg.msgId : null, uuid, message: um.message });
-    entry.queue.push(um);
+    deliverUser(entry, text, images, typeof msg.msgId === 'string' ? msg.msgId : null);
     return;
   }
   if (msg.type === 'stop') {
@@ -1002,6 +1056,7 @@ function startedFrame(entry: SdkEntry, attached: boolean) {
     context: entry.context,
     // The session's own git worktree, by name (null = the project directory).
     worktree: entry.cwd === entry.projectPath ? null : path.basename(entry.cwd),
+    queue: queueView(entry.queued),
     ...catalogOf(entry),
   };
 }
@@ -1099,6 +1154,7 @@ function newEntry(o: {
     lastActivity: Date.now(),
     externalNotified: false,
     pendingBang: [],
+    queued: [],
     runningBang: new Map(),
   };
 }
