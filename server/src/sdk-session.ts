@@ -647,7 +647,10 @@ function onSdkMessage(entry: SdkEntry, m: any) {
     const status = isTurnResult(m) && m.subtype === 'success' ? said.status : null;
     // Model: Session.queue — what the user wrote during the turn goes out
     // now (below, after the result itself); the session is not done.
-    flush = isTurnResult(m) && m.subtype === 'success' && entry.queued.length > 0 && entry.pendingAsks.size === 0;
+    // A turn the user interrupted to send something goes out whatever way
+    // the turn ended.
+    const interrupted = entry.queued.some((q) => q.interrupt);
+    flush = entry.queued.length > 0 && entry.pendingAsks.size === 0 && (interrupted || (isTurnResult(m) && m.subtype === 'success'));
     if (entry.sessionId && !flush) void setSessionStatus(entry.owner.uid, `claude:${entry.sessionId}`, status);
     if (entry.pendingAsks.size === 0 && !flush) {
       if (status?.tone === 'needs-you') publishSessionEvent(entry.owner, 'awaiting', entry.sessionId, entry.title, status.label);
@@ -867,12 +870,19 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
     const text = String(msg.text ?? '');
     const images = Array.isArray(msg.images) ? msg.images : [];
     if (!text && images.length === 0) return;
-    // Model: Session.queue — written during a turn: it waits for the turn to
-    // end. Not while the agent waits on the user (then this is the answer).
-    if (msg.queue === true && entry.thinking && entry.pendingAsks.size === 0) {
+    // Model: Session.queue — written during a turn, by default it goes
+    // straight in (read at the turn's next step). "queue": it waits for the
+    // turn to end. "interrupt": the turn is stopped and it goes out as soon
+    // as it has. Neither while the agent waits on the user: then this is
+    // the answer.
+    const mode = msg.mode === 'queue' || msg.queue === true ? 'queue' : msg.mode === 'interrupt' ? 'interrupt' : 'now';
+    if (mode !== 'now' && entry.thinking && entry.pendingAsks.size === 0) {
       if (entry.queued.length >= MAX_QUEUED) { send(socket, { type: 'error', message: `At most ${MAX_QUEUED} queued messages` }); return; }
-      entry.queued.push({ id: typeof msg.msgId === 'string' && msg.msgId ? msg.msgId : randomUUID(), text: text.slice(0, MAX_QUEUED_TEXT), images, at: Date.now() });
+      entry.queued.push({ id: typeof msg.msgId === 'string' && msg.msgId ? msg.msgId : randomUUID(), text: text.slice(0, MAX_QUEUED_TEXT), images, at: Date.now(), ...(mode === 'interrupt' ? { interrupt: true } : {}) });
       broadcastQueue(entry);
+      if (mode === 'interrupt') {
+        try { await entry.q.interrupt(); } catch (e) { send(socket, { type: 'error', message: `interrupt failed: ${String(e)}` }); }
+      }
       return;
     }
     deliverUser(entry, text, images, typeof msg.msgId === 'string' ? msg.msgId : null);

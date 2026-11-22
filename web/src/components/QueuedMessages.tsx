@@ -1,16 +1,17 @@
 import { useState } from 'react';
 
-// Model: Session.queue (web side) — the messages written while the agent was
-// in the middle of a turn, shown above the input. They wait on the server
-// and go out together, as one message, when the turn ends. Each can be
-// edited, dropped, or sent now (into the running turn, at its next step).
+// Model: Session.queue (web side) — messages the user chose to send after
+// the running turn (▾ next to Send), shown above the input. They wait on the
+// server and go out together, as one message, when the turn ends — or, once
+// the user has interrupted the turn to send one, as soon as it has stopped.
+// Each can be edited, dropped, or sent now (into the running turn).
 
-export type QueuedView = { id: string; text: string; images: number; at: number };
+export type QueuedView = { id: string; text: string; images: number; at: number; interrupt?: boolean };
 
 export function parseQueue(v: unknown): QueuedView[] {
   if (!Array.isArray(v)) return [];
   return v.flatMap((x) => (x && typeof x.id === 'string'
-    ? [{ id: x.id, text: typeof x.text === 'string' ? x.text : '', images: Number(x.images) || 0, at: Number(x.at) || 0 }]
+    ? [{ id: x.id, text: typeof x.text === 'string' ? x.text : '', images: Number(x.images) || 0, at: Number(x.at) || 0, ...(x.interrupt === true ? { interrupt: true } : {}) }]
     : []));
 }
 
@@ -35,7 +36,9 @@ export function QueuedMessages({ items, working, agent, onEdit, onRemove, onSend
   return (
     <div className="queued" aria-label="Queued messages">
       <div className="queued-head">
-        {working
+        {working && items.some((q) => q.interrupt)
+          ? `Stopping ${agent} · sent as one message as soon as it has stopped`
+          : working
           ? `Queued · sent as one message when ${agent} finishes this turn`
           : `Queued · ${agent} stopped before these went out`}
       </div>

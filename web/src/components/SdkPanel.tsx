@@ -6,6 +6,7 @@
 // (projects/claude-sdk-session/design.md).
 import { Fragment, Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { QueuedMessages, parseQueue, type QueuedView } from './QueuedMessages';
+import type { SendMode } from './ChatInput';
 import ReactMarkdown from 'react-markdown';
 import { HistoryNotice, historyProblem } from './HistoryNotice';
 import { logDebug } from '../lib/debugLog';
@@ -1009,13 +1010,15 @@ export function SdkPanel({
     if (others.length) fileAttachments.addFiles(others);
   }
 
-  function sendPrompt(text: string, images: readonly ImageAttachment[]) {
+  function sendPrompt(text: string, images: readonly ImageAttachment[], mode: SendMode = 'now') {
     const msgId = shortId();
-    // Model: Session.queue — during a turn it waits on the server, shown
-    // above the input, until the turn ends (the server decides: an open
-    // question or form takes it as the answer instead, echoed as usual).
-    if (statusRef.current === 'thinking') {
-      if (!wsSend({ type: 'user', text, images: toWireImages(images), msgId, queue: true })) showToast('Not connected — message not sent');
+    // Model: Session.queue — during a turn, "queue" and "interrupt" wait on
+    // the server, shown above the input: until the turn ends, or until the
+    // stop the server asks for lands. The server decides: an open question
+    // or form takes it as the answer instead, echoed as usual.
+    if (mode !== 'now' && statusRef.current === 'thinking') {
+      if (!wsSend({ type: 'user', text, images: toWireImages(images), msgId, mode })) showToast('Not connected — message not sent');
+      else if (mode === 'interrupt') showToast('Stopping Claude — your message goes out as soon as it has stopped');
       return;
     }
     append({ id: msgId, role: 'user', text, images: images.length ? images.map((p) => p.dataUrl) : undefined });
@@ -1041,7 +1044,7 @@ export function SdkPanel({
     upsertBang(bangId, { command });
   }
 
-  function send(raw: string) {
+  function send(raw: string, mode?: SendMode) {
     if (!wsRef.current || status === 'closed' || status === 'connecting' || status === 'reconnecting') return;
     if (isBangInput(raw)) {
       const cmd = bangCommand(raw);
@@ -1059,7 +1062,7 @@ export function SdkPanel({
     const go = () => {
       const pc = parentCtxRef.current;
       setParentCtx({ status: 'off' });
-      sendPrompt(pc.status === 'ready' ? withParentContext(pc.ctx, text) : text, images);
+      sendPrompt(pc.status === 'ready' ? withParentContext(pc.ctx, text) : text, images, mode);
     };
     if (parentCtxRef.current.status === 'loading' && parentCtxPromise.current) {
       showToast('Waiting for the parent summary…');
@@ -1526,10 +1529,11 @@ export function SdkPanel({
         anyFile
         uploading={fileAttachments.files.some((f) => f.state === 'uploading')}
         readyPlaceholder={sendKeyHint(sendKey)}
-        thinkingPlaceholder="Claude is working — what you send now waits until this turn ends"
+        thinkingPlaceholder="Claude is working — Send adds to this turn, ▾ for more"
         commands={commands}
         onCommandsOpen={refreshCommands}
         onSend={send}
+        sendModes
         insertion={insertion}
         onBatchSent={onBatchSent}
         onAddFiles={addAnyFiles}

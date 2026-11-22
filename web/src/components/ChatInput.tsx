@@ -47,6 +47,16 @@ function loadInputHeight(): number | null {
   return Number.isFinite(n) && n >= MIN_INPUT_HEIGHT ? n : null;
 }
 
+// Model: Session.queue — how a message written during a turn goes out:
+// into the running turn at its next step (the default), after stopping the
+// turn, or once the turn has ended (queued, editable until then).
+export type SendMode = 'now' | 'interrupt' | 'queue';
+const SEND_MODES: ReadonlyArray<{ mode: SendMode; label: string; hint: string }> = [
+  { mode: 'now', label: 'Send now', hint: 'Into the running turn — read at its next step (default)' },
+  { mode: 'interrupt', label: 'Interrupt and send', hint: 'Stop what it is doing now, even mid-command, and answer this' },
+  { mode: 'queue', label: 'Send after this turn', hint: 'Wait above the input, editable, until the turn ends' },
+];
+
 export const ChatInput = memo(function ChatInput({
   status,
   sendKey,
@@ -64,6 +74,7 @@ export const ChatInput = memo(function ChatInput({
   onStop,
   lock,
   bashMode = false,
+  sendModes = false,
 }: {
   status: ChatInputStatus;
   sendKey: SendKey;
@@ -81,7 +92,9 @@ export const ChatInput = memo(function ChatInput({
   // prompt actually goes out.
   insertion?: PromptInsertion | null;
   onBatchSent?: (batchId: string) => void;
-  onSend: (text: string) => void;
+  onSend: (text: string, mode?: SendMode) => void;
+  // While the agent works, a ▾ next to Send offers the other SendModes.
+  sendModes?: boolean;
   onAddFiles: (files: FileList | File[]) => void;
   // Model: web.FileAttachments. anyFile: the attach button and paste take
   // every kind of file, not only images. uploading: an attachment is still
@@ -225,10 +238,20 @@ export const ChatInput = memo(function ChatInput({
     });
   }, [insertion]);
 
-  function submit() {
+  const [modeMenu, setModeMenu] = useState(false);
+  useEffect(() => { if (status !== 'thinking') setModeMenu(false); }, [status]);
+  useEffect(() => {
+    if (!modeMenu) return;
+    const onDown = (e: Event) => { if (!(e.target as HTMLElement).closest?.('.send-modes')) setModeMenu(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('touchstart', onDown); };
+  }, [modeMenu]);
+  function submit(mode?: SendMode) {
+    setModeMenu(false);
     if (lock || uploading) return;
     if (!text.trim() && quotes.length === 0 && pendingImagesCount === 0) return;
-    onSend(composeQuotedPrompt(quotes, text));
+    onSend(composeQuotedPrompt(quotes, text), mode);
     // The panel drops sends while it has no live connection (!canSend); keep
     // the cards then, the user would have no way to get them back.
     if (canSend) {
@@ -406,7 +429,31 @@ export const ChatInput = memo(function ChatInput({
           title="Type in chat anyway — the form above stays open until you answer it"
         >Unlock</button>
       )}
-      <button onClick={submit} disabled={!canSend} title={uploading ? 'Waiting for the attached files to upload' : undefined}>{uploading ? 'Uploading…' : 'Send'}</button>
+      <button onClick={() => submit()} disabled={!canSend} title={uploading ? 'Waiting for the attached files to upload' : sendModes && status === 'thinking' ? 'Send into the running turn — read at its next step' : undefined}>{uploading ? 'Uploading…' : 'Send'}</button>
+      {sendModes && status === 'thinking' && (
+        <div className="send-modes">
+          <button
+            type="button"
+            className="send-modes-btn"
+            title="More ways to send while it works"
+            aria-label="More ways to send"
+            aria-expanded={modeMenu}
+            disabled={!canSend}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setModeMenu((v) => !v)}
+          >▾</button>
+          {modeMenu && (
+            <div className="send-modes-menu" role="menu">
+              {SEND_MODES.map((m) => (
+                <button key={m.mode} type="button" role="menuitem" className="overflow-action" onMouseDown={(e) => e.preventDefault()} onClick={() => submit(m.mode)}>
+                  <span className="send-modes-label">{m.label}</span>
+                  <span className="send-modes-hint">{m.hint}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {status === 'thinking' && (
         <button
           className="chat-stop"
