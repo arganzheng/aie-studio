@@ -5,6 +5,7 @@ import { imageFilesFromClipboard } from '../lib/imageAttachments';
 import { isSendKeyTrigger } from '../lib/sendKey';
 import { AttachImagesButton } from './ImageAttachments';
 import { isBangInput } from '../lib/bang';
+import { isSlashCommand } from '../lib/steering';
 import { addQuotes, composeQuotedPrompt, quoteCardLabel, quoteCardPreview, type ChatQuote } from '../lib/addToChat';
 import { dragHasFiles, droppedFiles } from '../lib/fileAttachments';
 
@@ -48,12 +49,14 @@ function loadInputHeight(): number | null {
 }
 
 // Model: Session.queue — how a message written during a turn goes out:
-// into the running turn at its next step (the default), after stopping the
-// turn, or once the turn has ended (queued, editable until then).
+// into the running turn at once (the default: a command or subagent running
+// in the foreground goes on in the background, so the turn reads it within
+// seconds), after stopping the turn, or once the turn has ended (queued,
+// editable until then).
 export type SendMode = 'now' | 'interrupt' | 'queue';
 const SEND_MODES: ReadonlyArray<{ mode: SendMode; label: string; hint: string }> = [
-  { mode: 'now', label: 'Send now', hint: 'Into the running turn — read at its next step (default)' },
-  { mode: 'interrupt', label: 'Interrupt and send', hint: 'Stop what it is doing now, even mid-command, and answer this' },
+  { mode: 'now', label: 'Send now', hint: 'Claude reads it within seconds; a running command keeps going in the background (default)' },
+  { mode: 'interrupt', label: 'Stop and send', hint: 'Stop everything it is doing, running commands included, and answer this' },
   { mode: 'queue', label: 'Send after this turn', hint: 'Wait above the input, editable, until the turn ends' },
 ];
 
@@ -269,6 +272,10 @@ export const ChatInput = memo(function ChatInput({
   const dragDepth = useRef(0);
   const canDrop = status !== 'closed' && !lock;
 
+  // A slash command written during a turn waits for the turn to end (the
+  // CLI runs it then), unlike text, which the turn reads at once.
+  const slashWaits = sendModes && status === 'thinking' && isSlashCommand(text);
+
   const canSend =
     !lock &&
     !uploading &&
@@ -343,6 +350,7 @@ export const ChatInput = memo(function ChatInput({
       }}
     >
       {dragOver && <div className="chat-input-drop" aria-hidden="true">{anyFile ? 'Drop files to attach' : 'Drop images to attach'}</div>}
+      {slashWaits && <span className="chat-input-slash-note" title="Slash commands run once this turn has ended. To run it now: ▾ → Stop and send, then tell Claude to carry on.">runs after this turn · ▾ Stop and send to run now</span>}
       {bashMode && isBangInput(text) && <span className="chat-input-bash-badge" title="Runs in the project directory; output goes to Claude with your next message">! bash</span>}
       <div
         className="chat-input-resize"
@@ -429,7 +437,7 @@ export const ChatInput = memo(function ChatInput({
           title="Type in chat anyway — the form above stays open until you answer it"
         >Unlock</button>
       )}
-      <button onClick={() => submit()} disabled={!canSend} title={uploading ? 'Waiting for the attached files to upload' : sendModes && status === 'thinking' ? 'Send into the running turn — read at its next step' : undefined}>{uploading ? 'Uploading…' : 'Send'}</button>
+      <button onClick={() => submit()} disabled={!canSend} title={uploading ? 'Waiting for the attached files to upload' : sendModes && status === 'thinking' ? (slashWaits ? 'Slash commands run once this turn has ended' : 'Claude reads it within seconds; a running command keeps going in the background') : undefined}>{uploading ? 'Uploading…' : 'Send'}</button>
       {sendModes && status === 'thinking' && (
         <div className="send-modes">
           <button

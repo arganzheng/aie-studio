@@ -38,6 +38,7 @@ import { ClaudeUsageBadge, refreshClaudeUsage } from './ClaudeUsage';
 import { ContextBadge, type ContextSnapshot } from './ContextUsage';
 import { childLinkOfTool } from '../lib/childLink';
 import { parseCompactNote } from '../lib/compactNote';
+import { isInterruptNote } from '../lib/steering';
 import { parseChildReports } from '../lib/childReport';
 import { parseWatchReport, type WatchItem } from '../lib/watchReport';
 import { parseParentContext, withParentContext, type ParentContext } from '../lib/parentContext';
@@ -1230,6 +1231,8 @@ export function SdkPanel({
                 </div>
               );
             }
+            // The CLI's record of a stopped turn: a note, not something the user typed.
+            if (!m.images?.length && isInterruptNote(m.text)) return <div key={m.id} className="msg msg-system" data-anchor={anchor ?? undefined}>Stopped by the user</div>;
             // What a compaction left behind: not typed by the user.
             const compact = m.images?.length ? null : parseCompactNote(m.text);
             if (compact?.kind === 'done') return null;
@@ -1568,7 +1571,7 @@ export function SdkPanel({
         anyFile
         uploading={fileAttachments.files.some((f) => f.state === 'uploading')}
         readyPlaceholder={sendKeyHint(sendKey)}
-        thinkingPlaceholder="Claude is working — Send adds to this turn, ▾ for more"
+        thinkingPlaceholder="Claude is working — Send steers it now, ▾ for more"
         commands={commands}
         onCommandsOpen={refreshCommands}
         onSend={send}

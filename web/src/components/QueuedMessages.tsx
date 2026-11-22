@@ -69,7 +69,7 @@ export function QueuedMessages({ items, working, agent, onEdit, onRemove, onSend
             <button
               type="button"
               className="queued-now"
-              title={working ? `Send it into the running turn now — ${agent} reads it at its next step` : 'Send it now'}
+              title={working ? `Send it into the running turn now — ${agent} reads it within seconds` : 'Send it now'}
               onClick={() => { if (editing?.id === q.id) save(); onSendNow(q.id); }}
             >{working ? 'Send now' : 'Send'}</button>
             <button type="button" title="Remove from the queue" aria-label="Remove from the queue" onClick={() => onRemove(q.id)}>×</button>

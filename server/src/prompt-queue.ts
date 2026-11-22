@@ -1,6 +1,6 @@
 // Model: Session.queue — messages the user chose to send after the running
 // turn (by default a message written during a turn goes straight into it,
-// read at its next step; see SendMode in web ChatInput). They wait on the server (so they still go out with the
+// read within seconds; see SendMode in web ChatInput). They wait on the server (so they still go out with the
 // page closed, and every attached device sees the same list), can be edited
 // or dropped, and go out together as one message when the turn ends. "Send
 // now" takes one out and puts it into the running turn instead.
@@ -33,4 +33,12 @@ export function mergeQueued(items: readonly QueuedPrompt[]): { text: string; ima
 export function editQueued(items: readonly QueuedPrompt[], id: string, text: string): QueuedPrompt[] {
   const t = text.slice(0, MAX_QUEUED_TEXT);
   return items.flatMap((q) => (q.id !== id ? [q] : t.trim() || q.images.length ? [{ ...q, text: t }] : []));
+}
+
+// Steering: a message written during a turn sends the command or subagent
+// running in the foreground to the background, so the turn reads it at once
+// instead of when that is done. Not for a slash command: the CLI runs those
+// only once the turn has ended, so moving work aside would gain nothing.
+export function steersRunningTurn(text: string): boolean {
+  return !/^\s*\/[A-Za-z][\w:-]*(\s|$)/.test(text);
 }

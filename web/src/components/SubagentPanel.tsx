@@ -4,6 +4,7 @@ import type { Theme } from '../types';
 import { BangBlock, buildFromEvents, MarkdownText, summarizeTool, ToolFields, type Msg } from './SdkPanel';
 import { shortTokens } from './ContextUsage';
 import { subagentStatusLabel } from '../lib/subagents';
+import { isInterruptNote } from '../lib/steering';
 
 // Model: web.SubagentPanel — one subagent of a Claude session: its own
 // conversation, read-only, followed live while it runs. A running one can be
@@ -133,7 +134,7 @@ export function SubagentPanel({
         {msgs.map((m) => {
           if (m.role === 'user') {
             // Claude records a stop as a user turn; it is a notice, not a prompt.
-            if (m.text.startsWith('[Request interrupted')) return <div key={m.id} className="msg msg-system">Stopped by the user</div>;
+            if (isInterruptNote(m.text)) return <div key={m.id} className="msg msg-system">Stopped by the user</div>;
             return <div key={m.id} className="msg msg-user subagent-task">{m.text}</div>;
           }
           if (m.role === 'assistant') {

@@ -55,7 +55,7 @@ import { encodeCwd } from './observe/transcript.js';
 import { duplexRoute } from './duplex.js';
 import { planToolCalls } from './plan-tools.js';
 import { taskToolsEnv, taskToolsOn } from './task-tools.js';
-import { MAX_QUEUED, MAX_QUEUED_TEXT, editQueued, mergeQueued, queueView, type QueuedPrompt } from './prompt-queue.js';
+import { MAX_QUEUED, MAX_QUEUED_TEXT, editQueued, mergeQueued, queueView, steersRunningTurn, type QueuedPrompt } from './prompt-queue.js';
 import { addWatch, cancelWatches, configureWatches, deliverToSession, watchesOf } from './watch-service.js';
 import { MAX_TIMEOUT_HOURS, WATCH_INSTRUCTIONS, watchView } from './watches.js';
 
@@ -687,7 +687,7 @@ function handleQueueMessage(entry: SdkEntry, msg: any): boolean {
     const item = entry.queued.find((q) => q.id === id);
     entry.queued = entry.queued.filter((q) => q.id !== id);
     broadcastQueue(entry);
-    if (item) deliverUser(entry, item.text, item.images, null, item.at);
+    if (item) void steerThenDeliver(entry, item.text, item.images, null, item.at);
     return true;
   } else return false;
   broadcastQueue(entry);
@@ -837,7 +837,8 @@ function attachClient(entry: SdkEntry, socket: WebSocket) {
 }
 
 // Put a message the user wrote into the session: the running turn takes it
-// at its next step, or it starts a turn.
+// at its next step (see steerThenDeliver for getting there at once), or it
+// starts a turn.
 function deliverUser(entry: SdkEntry, text: string, images: Array<{ mediaType?: string; data?: string }>, msgId: string | null, writtenAt = Date.now()) {
   // Model: Session.watches — the user's reply came first: what the session
   // was waiting on (set before they wrote) is no longer awaited.
@@ -865,6 +866,18 @@ function deliverUser(entry: SdkEntry, text: string, images: Array<{ mediaType?: 
   entry.queue.push(um);
 }
 
+// Steering: a message written during a turn should be read now, not when
+// the command or subagent running in the foreground is done. Those go on in
+// the background (Ctrl+B in the terminal) — nothing is cancelled — so the
+// turn reaches its next step at once and reads the message there. With
+// nothing running (the model is writing) it waits for that step.
+async function steerThenDeliver(entry: SdkEntry, text: string, images: Array<{ mediaType?: string; data?: string }>, msgId: string | null, writtenAt?: number) {
+  if (entry.q && entry.thinking && entry.pendingAsks.size === 0 && steersRunningTurn(text)) {
+    try { await entry.q.backgroundTasks(); } catch { /* background tasks off: read at the next step */ }
+  }
+  deliverUser(entry, text, images, msgId, writtenAt);
+}
+
 async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any) {
   if (msg.type === 'ping') { send(socket, { type: 'pong' }); return; }
   if (msg.type === 'bang') { handleBang(entry, msg); return; }
@@ -878,7 +891,7 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
     const images = Array.isArray(msg.images) ? msg.images : [];
     if (!text && images.length === 0) return;
     // Model: Session.queue — written during a turn, by default it goes
-    // straight in (read at the turn's next step). "queue": it waits for the
+    // straight in (steered: read within seconds). "queue": it waits for the
     // turn to end. "interrupt": the turn is stopped and it goes out as soon
     // as it has. Neither while the agent waits on the user: then this is
     // the answer.
@@ -892,7 +905,7 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
       }
       return;
     }
-    deliverUser(entry, text, images, typeof msg.msgId === 'string' ? msg.msgId : null);
+    await steerThenDeliver(entry, text, images, typeof msg.msgId === 'string' ? msg.msgId : null);
     return;
   }
   if (msg.type === 'stop') {
