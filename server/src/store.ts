@@ -89,6 +89,8 @@ export type Settings = {
   richCopy?: boolean;
   // Right-hand Review panel (web.ReviewPanel). Default off.
   review?: boolean;
+  // Model: server.TerminalBridge — a shell in the side panel. Default off.
+  terminal?: boolean;
   // Model: Session.children — give Claude (SDK) sessions the tools to open
   // and message child sessions. Default on (absent = on).
   childSessionTools?: boolean;

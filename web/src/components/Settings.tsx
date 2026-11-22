@@ -490,6 +490,13 @@ export function Settings({
                 text="Show the Review panel (bookmark messages; comment on AI output and send in batches)"
                 hint="Select text in a session (or 💬 a message) to comment; comments collect in batches you send to the AI when ready. Right-hand column on desktop, right drawer on mobile. Existing batches are kept while off."
               />
+              <Toggle
+                label="Terminal"
+                checked={settings.terminal ?? false}
+                onChange={(v) => commit({ ...settings, terminal: v })}
+                text="Allow a Terminal in the side panel (＋ → Tools → Terminal)"
+                hint="A real login shell (zsh) on this machine, in the project directory, as your user. Anyone who can sign in to this app as you can run any command there. The shell guard blocks the obviously destructive ones (sudo, rm -rf /, force-push to main…) but it is not a security boundary. Turning this off ends your open shells."
+              />
               {/* One group: the switch, and the two limits that only mean
                   something while it is on. */}
               <div className="settings-section">

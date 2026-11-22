@@ -2195,6 +2195,7 @@ export default function App() {
               onReveal={(sid, anchor) => { setReviewDrawerOpen(false); revealInSession({ type: 'session', key: sid }, anchor); }}
               onContinueAsChild={continueSideChatAsChild}
               reviewOn={reviewOn}
+              terminalOn={settings.terminal ?? false}
               reviewCount={draftComments}
               follow={follow}
               onAddToChat={addQuoteToChat}

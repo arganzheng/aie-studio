@@ -23,6 +23,7 @@ import {
 import { getUserId } from './auth.js';
 import { countWireRecords, wireDir } from './observe/wire.js';
 import { planToolCalls } from './plan-tools.js';
+import { killTerminals, terminalAllowed } from './terminal.js';
 import { sessionArtifacts, transcriptImage } from './artifacts.js';
 import { claudeProjectDir, findTranscript } from './claude-paths.js';
 
@@ -251,6 +252,9 @@ export function registerProjectRoutes(app: FastifyInstance) {
     if (!req.body || typeof req.body !== 'object') {
       return reply.code(400).send({ error: 'invalid body' });
     }
-    return putSettings(uid, req.body);
+    const saved = await putSettings(uid, req.body);
+    // Model: server.TerminalBridge — turning the Terminal off ends its shells.
+    if (!terminalAllowed(saved)) killTerminals(uid);
+    return saved;
   });
 }
