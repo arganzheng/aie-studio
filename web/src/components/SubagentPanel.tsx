@@ -142,6 +142,7 @@ export function SubagentPanel({
           }
           if (m.role === 'system') return <div key={m.id} className="msg msg-system">{m.text}</div>;
           if (m.role === 'bang') return <BangBlock key={m.id} msg={m} />;
+          if (m.role === 'thinking') return null;
           const isOpen = expanded.has(m.id);
           const summary = summarizeTool(m.name, m.input, rel);
           return (

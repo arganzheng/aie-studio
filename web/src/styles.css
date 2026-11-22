@@ -4383,3 +4383,42 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .side-launcher-more { display: block; margin: 6px 0 2px; padding: 4px 0; border: 0; background: none; color: var(--fg-muted); font: inherit; font-size: 12px; cursor: pointer; }
 .side-launcher-more:hover { color: var(--fg); }
 .preview-hint code { font-size: 0.95em; padding: 0 3px; border-radius: 3px; background: var(--bg-elevated); }
+
+/* Model: web.WorkGroups — Claude's work between messages, one group per
+   stretch: a header line, then light one-line rows. */
+.work-group { margin: 2px 0 4px; font-size: calc(12px * var(--font-scale)); line-height: 1.45; }
+.work-head { display: flex; align-items: baseline; gap: 6px; padding: 3px 4px; color: var(--fg-muted); cursor: pointer; user-select: none; border-radius: 4px; }
+.work-head:hover { background: var(--bg-hover); }
+.work-head-chev { width: 12px; flex: none; color: var(--fg-muted); }
+.work-head-title { color: var(--fg-soft); }
+.work-group.running .work-head-title { color: var(--fg); }
+.work-steps { color: var(--fg-muted); font-size: 0.92em; }
+.work-add { color: #4ec98a; font-variant-numeric: tabular-nums; }
+.work-del { color: var(--danger); font-variant-numeric: tabular-nums; }
+.work-body { margin: 2px 0 2px 9px; padding-left: 12px; border-left: 2px solid var(--border); }
+/* While running: a fixed window that follows the newest row, fading at the top. */
+.work-body.live { max-height: calc(12 * 1.9em); overflow-y: auto; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 2.5em); mask-image: linear-gradient(to bottom, transparent 0, #000 2.5em); }
+.work-row { display: flex; align-items: baseline; gap: 7px; padding: 2px 4px; min-width: 0; white-space: nowrap; overflow: hidden; cursor: pointer; border-radius: 3px; color: var(--fg-muted); }
+.work-row:hover { background: var(--bg-hover); }
+.work-verb { flex: none; color: var(--fg-muted); }
+.work-desc { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg-soft); }
+.work-cmd { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; color: var(--fg-muted); opacity: 0.75; }
+.work-chev { flex: none; margin-left: auto; padding-left: 6px; color: var(--fg-muted); font-size: 0.9em; opacity: 0.7; }
+.work-row.running .work-verb, .work-row.running .work-desc { color: var(--fg-strong); }
+.work-row.running .work-verb::after { content: ''; display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--accent); vertical-align: middle; animation: work-pulse 1s ease-in-out infinite; }
+@keyframes work-pulse { 50% { opacity: 0.25; } }
+.work-row.failed .work-verb { color: var(--danger); }
+.work-task { cursor: default; }
+.work-task .work-desc { color: var(--fg-muted); }
+.work-thought.empty { cursor: default; }
+.work-thought-text { margin: 2px 0 6px 4px; color: var(--fg-muted); white-space: pre-wrap; word-break: break-word; }
+.work-note { padding: 3px 4px; color: var(--fg-soft); white-space: pre-wrap; word-break: break-word; }
+.work-note p { margin: 0; }
+.work-batch { margin-left: 10px; padding-left: 8px; border-left: 1px dashed var(--border); }
+.work-detail { position: relative; margin: 2px 0 6px 4px; padding: 6px 8px; border: 1px solid var(--tool-border); border-radius: 5px; background: var(--tool-field-bg); white-space: pre-wrap; }
+.work-detail .tool-field-value { max-height: 260px; overflow: auto; }
+.work-detail-popout { position: absolute; top: 4px; right: 4px; }
+.work-images { margin: 2px 0 6px 4px; }
+.work-images .tool-image { max-height: 160px; cursor: zoom-in; }
+.work-open-child { flex: none; padding: 0 6px; border: 1px solid var(--border-strong); border-radius: 3px; background: none; color: var(--accent); font: inherit; font-size: 0.92em; cursor: pointer; }
+.work-group.thought-only .work-head-title { color: var(--fg-muted); }

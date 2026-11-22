@@ -38,6 +38,8 @@ import { ClaudeUsageBadge, refreshClaudeUsage } from './ClaudeUsage';
 import { ContextBadge, type ContextSnapshot } from './ContextUsage';
 import { childLinkOfTool } from '../lib/childLink';
 import { parseCompactNote } from '../lib/compactNote';
+import { groupWork, type WorkItem, type WorkMsg } from '../lib/workGroups';
+import { WorkGroupView } from './WorkGroupView';
 import { isCompactCommand, isInterruptNote, isSlashCommand } from '../lib/steering';
 import { parseChildReports } from '../lib/childReport';
 import { parseWatchReport, type WatchItem } from '../lib/watchReport';
@@ -63,10 +65,18 @@ export type Msg =
   | { id: string; role: 'user'; text: string; images?: string[]; uuid?: string }
   // uuid / blockIdx: the jsonl record + content block this text came from —
   // the comment anchor (model: Comment.anchor = a:<uuid>:<blockIdx>).
-  | { id: string; role: 'assistant'; text: string; uuid?: string; blockIdx?: number }
+  // at: when it was written (transcript timestamp, or arrival when live) —
+  // model: web.WorkGroups times a stretch of work from these.
+  | { id: string; role: 'assistant'; text: string; uuid?: string; blockIdx?: number; at?: number }
+  // Claude's thinking between steps. text may be empty (not every thinking
+  // block carries its text); ms: how long it took, when known.
+  | { id: string; role: 'thinking'; text: string; at?: number; ms?: number }
   | { id: string; role: 'system'; text: string }
   // outputImages: images the tool returned (e.g. Read on a .png).
-  | { id: string; role: 'tool'; name: string; input: any; toolUseId?: string; output?: string; outputImages?: string[] }
+  // at / doneAt: when the call was made / its result came back.
+  // step: the model response that made the call — calls made together in
+  // one response fold into one row of a work group.
+  | { id: string; role: 'tool'; name: string; input: any; toolUseId?: string; output?: string; outputImages?: string[]; at?: number; doneAt?: number; step?: string }
   // Model: web.BangCommand. bangId: the live command's id (absent when read
   // back from the transcript). pending: ran, but the model hasn't seen it yet
   // — it goes out with the next prompt.
@@ -99,6 +109,7 @@ function toExport(msgs: Msg[]): ExportMessage[] {
     if (m.role === 'user') return { kind: 'user', text: m.text, images: m.images };
     if (m.role === 'assistant') return { kind: 'assistant', text: m.text };
     if (m.role === 'system') return { kind: 'system', text: m.text };
+    if (m.role === 'thinking') return { kind: 'system', text: m.text ? `Thinking: ${m.text}` : 'Thinking' };
     if (m.role === 'bang') {
       const out = [m.result?.stdout, m.result?.stderr, m.result?.blocked && `Blocked: ${m.result.blocked}`].filter(Boolean).join('\n');
       return { kind: 'tool', name: 'Bash (!)', input: { command: m.command }, output: out };
@@ -109,7 +120,7 @@ function toExport(msgs: Msg[]): ExportMessage[] {
 
 type Delta =
   | { kind: 'append'; msg: Msg }
-  | { kind: 'tool_result'; toolUseId: string; output: string; images?: string[] }
+  | { kind: 'tool_result'; toolUseId: string; output: string; images?: string[]; at?: number }
   // Claude Code writes a `!` command's output as its own user record.
   | { kind: 'bang_output'; stdout: string; stderr: string };
 
@@ -118,12 +129,16 @@ type Delta =
 function renderEvent(ev: any): Delta[] {
   const out: Delta[] = [];
   const uuid = typeof ev?.uuid === 'string' ? ev.uuid : undefined;
+  // Transcript records carry when they were written; live messages don't.
+  const at = (typeof ev?.timestamp === 'string' && Date.parse(ev.timestamp)) || Date.now();
   if (ev?.type === 'assistant' && ev.message) {
     (ev.message.content ?? []).forEach((block: any, blockIdx: number) => {
       if (block?.type === 'text' && block.text) {
-        out.push({ kind: 'append', msg: { id: shortId(), role: 'assistant', text: block.text, uuid, blockIdx } });
+        out.push({ kind: 'append', msg: { id: shortId(), role: 'assistant', text: block.text, uuid, blockIdx, at } });
+      } else if (block?.type === 'thinking' || block?.type === 'redacted_thinking') {
+        out.push({ kind: 'append', msg: { id: shortId(), role: 'thinking', text: typeof block.thinking === 'string' ? block.thinking : '', at } });
       } else if (block?.type === 'tool_use') {
-        out.push({ kind: 'append', msg: { id: shortId(), role: 'tool', name: block.name, input: block.input, toolUseId: block.id } });
+        out.push({ kind: 'append', msg: { id: shortId(), role: 'tool', name: block.name, input: block.input, toolUseId: block.id, at, step: typeof ev.message.id === 'string' ? ev.message.id : undefined } });
       }
     });
   } else if (ev?.type === 'user' && ev.message && !isImageSizeNote(ev)) {
@@ -138,7 +153,7 @@ function renderEvent(ev: any): Delta[] {
         if (src?.type === 'base64' && src.data && src.media_type) images.push(`data:${src.media_type};base64,${src.data}`);
       } else if (block?.type === 'tool_result') {
         const r = parseToolResultContent(block.content);
-        out.push({ kind: 'tool_result', toolUseId: block.tool_use_id, output: r.text, images: r.images });
+        out.push({ kind: 'tool_result', toolUseId: block.tool_use_id, output: r.text, images: r.images, at });
       }
     }
     const prompt: string[] = [];
@@ -170,7 +185,7 @@ export function buildFromEvents(events: any[], orphanResults: Map<string, ToolOu
         attachBangOutput(msgs, d);
       } else {
         const target = pendingTools.get(d.toolUseId);
-        if (target && target.output === undefined) { target.output = d.output; target.outputImages = d.images; pendingTools.delete(d.toolUseId); }
+        if (target && target.output === undefined) { target.output = d.output; target.outputImages = d.images; target.doneAt = d.at; pendingTools.delete(d.toolUseId); }
         else orphanResults.set(d.toolUseId, { text: d.output, images: d.images });
       }
     }
@@ -191,7 +206,7 @@ function applyDeltas(prev: Msg[], deltas: Delta[]): Msg[] {
   for (const d of deltas) {
     if (d.kind === 'append') arr = [...arr, d.msg];
     else if (d.kind === 'bang_output') { arr = [...arr]; attachBangOutput(arr, d); }
-    else arr = arr.map((m) => (m.role === 'tool' && m.toolUseId === d.toolUseId && m.output === undefined ? { ...m, output: d.output, outputImages: d.images } : m));
+    else arr = arr.map((m) => (m.role === 'tool' && m.toolUseId === d.toolUseId && m.output === undefined ? { ...m, output: d.output, outputImages: d.images, doneAt: d.at } : m));
   }
   return arr;
 }
@@ -485,7 +500,7 @@ export function SdkPanel({
   const orphanResultsRef = useRef(new Map<string, ToolOutput>());
   const currentAssistantIdRef = useRef<string | null>(null);
   const streamedAssistantIdsRef = useRef(new Set<string>());
-  const streamBlocksRef = useRef(new Map<string, { ourMsgId: string; kind: 'text' | 'tool_use'; jsonBuf?: string; uuidAssigned?: boolean }>());
+  const streamBlocksRef = useRef(new Map<string, { ourMsgId: string; kind: 'text' | 'tool_use' | 'thinking'; jsonBuf?: string; uuidAssigned?: boolean; startedAt?: number }>());
 
   // Latest callbacks for the mount-time WS handlers.
   const onTitleRef = useRef(onTitle); onTitleRef.current = onTitle;
@@ -605,6 +620,8 @@ export function SdkPanel({
   });
 
   const generating = status === 'thinking';
+  // Model: web.WorkGroups — the work between messages, folded per stretch.
+  const workItems = useMemo(() => groupWork(msgs as WorkMsg[], generating) as WorkItem<Msg & WorkMsg>[], [msgs, generating]);
   const awaitingInput = forms.elicitations.some((e) => !e.recap) || planAsk !== null || permAsks.length > 0;
   useEffect(() => { onActivityRef.current?.({ generating, awaitingInput }); }, [generating, awaitingInput]);
   useEffect(() => () => onActivityRef.current?.(null), []);
@@ -979,12 +996,16 @@ export function SdkPanel({
       const idx: number = streamEv.index;
       const cb = streamEv.content_block;
       const ourMsgId = shortId();
+      const now = Date.now();
       if (cb?.type === 'text') {
         streamBlocksRef.current.set(blockKey(assistantId, idx), { ourMsgId, kind: 'text' });
-        setMsgs((prev) => [...prev, { id: ourMsgId, role: 'assistant', text: cb.text ?? '' }]);
+        setMsgs((prev) => [...prev, { id: ourMsgId, role: 'assistant', text: cb.text ?? '', at: now }]);
+      } else if (cb?.type === 'thinking' || cb?.type === 'redacted_thinking') {
+        streamBlocksRef.current.set(blockKey(assistantId, idx), { ourMsgId, kind: 'thinking', startedAt: now });
+        setMsgs((prev) => [...prev, { id: ourMsgId, role: 'thinking', text: typeof cb.thinking === 'string' ? cb.thinking : '', at: now }]);
       } else if (cb?.type === 'tool_use') {
         streamBlocksRef.current.set(blockKey(assistantId, idx), { ourMsgId, kind: 'tool_use', jsonBuf: '' });
-        setMsgs((prev) => [...prev, { id: ourMsgId, role: 'tool', name: cb.name, input: {}, toolUseId: cb.id }]);
+        setMsgs((prev) => [...prev, { id: ourMsgId, role: 'tool', name: cb.name, input: {}, toolUseId: cb.id, at: now, step: assistantId }]);
       }
       return;
     }
@@ -995,6 +1016,9 @@ export function SdkPanel({
       if (delta?.type === 'text_delta' && blk.kind === 'text') {
         const piece: string = delta.text ?? '';
         setMsgs((prev) => prev.map((m) => (m.id === blk.ourMsgId && m.role === 'assistant' ? { ...m, text: m.text + piece } : m)));
+      } else if (delta?.type === 'thinking_delta' && blk.kind === 'thinking') {
+        const piece: string = delta.thinking ?? '';
+        if (piece) setMsgs((prev) => prev.map((m) => (m.id === blk.ourMsgId && m.role === 'thinking' ? { ...m, text: m.text + piece } : m)));
       } else if (delta?.type === 'input_json_delta' && blk.kind === 'tool_use') {
         blk.jsonBuf = (blk.jsonBuf ?? '') + (delta.partial_json ?? '');
       }
@@ -1004,7 +1028,11 @@ export function SdkPanel({
       const key = blockKey(assistantId, streamEv.index);
       const blk = streamBlocksRef.current.get(key);
       if (!blk) return;
-      if (blk.kind === 'tool_use') {
+      if (blk.kind === 'thinking') {
+        const ms = Date.now() - (blk.startedAt ?? Date.now());
+        setMsgs((prev) => prev.map((m) => (m.id === blk.ourMsgId && m.role === 'thinking' ? { ...m, ms } : m)));
+        streamBlocksRef.current.delete(key);
+      } else if (blk.kind === 'tool_use') {
         if (blk.jsonBuf) {
           try {
             const parsed = JSON.parse(blk.jsonBuf);
@@ -1188,6 +1216,67 @@ export function SdkPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [oldestIdx, loadingMore]);
 
+  // One tool call as a block (header + detail on click): a question form or
+  // plan card in the conversation, or a row opened inside a work group.
+  function renderToolBlock(m: Msg & { role: 'tool' }) {
+    const anchor = msgAnchor(m);
+    const bmCls = canComment && !!anchor && commentedAnchors.has(anchor) ? ' commented' : '';
+    const isOpen = expanded.has(m.id);
+    const summary = summarizeTool(m.name, m.input, rel);
+    const child = onOpenSession ? childLinkOfTool(m.name, m.input, m.output) : null;
+    return (
+      <div key={m.id} className={`msg msg-tool ${isOpen ? 'open' : ''}${bmCls}`} data-anchor={anchor ?? undefined}>
+        <div
+          className="tool-header"
+          onClick={() => setExpanded((prev) => { const next = new Set(prev); if (next.has(m.id)) next.delete(m.id); else next.add(m.id); return next; })}
+        >
+          <span className="tool-chevron">{isOpen ? '▾' : '▸'}</span>
+          <span className="tool-name">{m.name}</span>
+          {summary && <span className="tool-summary">{summary}</span>}
+          {m.output === undefined && <span className="tool-pending">…</span>}
+          {child && <button type="button" className="tool-child-open" onClick={(e) => { e.stopPropagation(); onOpenSession!(child.sessionId, child.title); }} title="Open this child session in its own tab">⑂ Open child</button>}
+          <button className="tool-popout-btn" onClick={(e) => { e.stopPropagation(); setToolPopout(m); }} title="Open full details" aria-label="Open full details">⛶</button>
+        </div>
+        {isOpen && (
+          <div className="tool-detail">
+            <ToolFields input={m.input} rel={rel} />
+            {m.output !== undefined && (
+              <div className="tool-field">
+                <div className="tool-field-key">output</div>
+                <pre className="tool-field-value">{rel(m.output)}</pre>
+              </div>
+            )}
+          </div>
+        )}
+        {m.outputImages && m.outputImages.length > 0 && (
+          <div className="tool-images">
+            {m.outputImages.map((src, i) => (
+              <img key={i} src={src} className="tool-image" alt="" loading="lazy" onClick={() => setLightbox(src)} />
+            ))}
+          </div>
+        )}
+        {forms.renderFor(m.toolUseId)}
+      </div>
+    );
+  }
+
+  // A tool call's input and output, opened from its row in a work group.
+  function renderToolDetail(m: Msg & { role: 'tool' }) {
+    const anchor = msgAnchor(m);
+    return (
+      <div className="work-detail" data-anchor={anchor ?? undefined}>
+        <button className="tool-popout-btn work-detail-popout" onClick={() => setToolPopout(m)} title="Open full details" aria-label="Open full details">⛶</button>
+        <ToolFields input={m.input} rel={rel} />
+        {m.output !== undefined && (
+          <div className="tool-field">
+            <div className="tool-field-key">output</div>
+            <pre className="tool-field-value">{rel(m.output)}</pre>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function onMessagesScroll() {
     const el = scrollRef.current;
     if (!el) return;
@@ -1207,7 +1296,23 @@ export function SdkPanel({
             {loadingMore ? 'Loading…' : `↑ Load older (${oldestIdx} above)`}
           </button>
         )}
-        {msgs.map((m) => {
+        {workItems.map((item) => {
+          if (item.kind === 'group') {
+            return (
+              <WorkGroupView
+                key={item.id}
+                group={item}
+                rel={rel}
+                renderDetail={(t) => renderToolDetail(t as Msg & { role: 'tool' })}
+                renderForm={(id) => forms.renderFor(id)}
+                renderNote={(text) => <MarkdownText text={text} theme={theme} projectPath={projectPath} onOpenFile={openFile} />}
+                onOpenChild={onOpenSession ? (t) => { const c = childLinkOfTool(t.name, t.input, t.output); if (c) onOpenSession(c.sessionId, c.title); } : undefined}
+                childOf={onOpenSession ? (t) => !!childLinkOfTool(t.name, t.input, t.output) : undefined}
+                onImage={setLightbox}
+              />
+            );
+          }
+          const m = item.msg;
           const anchor = msgAnchor(m);
           const bmCls = canComment && !!anchor && commentedAnchors.has(anchor) ? ' commented' : '';
           if (m.role === 'user') {
@@ -1349,43 +1454,8 @@ export function SdkPanel({
               />
             );
           }
-          const isOpen = expanded.has(m.id);
-          const summary = summarizeTool(m.name, m.input, rel);
-          const child = onOpenSession ? childLinkOfTool(m.name, m.input, m.output) : null;
-          return (
-            <div key={m.id} className={`msg msg-tool ${isOpen ? 'open' : ''}${bmCls}`} data-anchor={anchor ?? undefined}>
-              <div
-                className="tool-header"
-                onClick={() => setExpanded((prev) => { const next = new Set(prev); if (next.has(m.id)) next.delete(m.id); else next.add(m.id); return next; })}
-              >
-                <span className="tool-chevron">{isOpen ? '▾' : '▸'}</span>
-                <span className="tool-name">{m.name}</span>
-                {summary && <span className="tool-summary">{summary}</span>}
-                {m.output === undefined && <span className="tool-pending">…</span>}
-                {child && <button type="button" className="tool-child-open" onClick={(e) => { e.stopPropagation(); onOpenSession!(child.sessionId, child.title); }} title="Open this child session in its own tab">⑂ Open child</button>}
-                <button className="tool-popout-btn" onClick={(e) => { e.stopPropagation(); setToolPopout(m); }} title="Open full details" aria-label="Open full details">⛶</button>
-              </div>
-              {isOpen && (
-                <div className="tool-detail">
-                  <ToolFields input={m.input} rel={rel} />
-                  {m.output !== undefined && (
-                    <div className="tool-field">
-                      <div className="tool-field-key">output</div>
-                      <pre className="tool-field-value">{rel(m.output)}</pre>
-                    </div>
-                  )}
-                </div>
-              )}
-              {m.outputImages && m.outputImages.length > 0 && (
-                <div className="tool-images">
-                  {m.outputImages.map((src, i) => (
-                    <img key={i} src={src} className="tool-image" alt="" loading="lazy" onClick={() => setLightbox(src)} />
-                  ))}
-                </div>
-              )}
-              {forms.renderFor(m.toolUseId)}
-            </div>
-          );
+          if (m.role === 'thinking') return null;
+          return renderToolBlock(m);
         })}
         {forms.renderOrphans()}
         {permAsks.map((a) => (
