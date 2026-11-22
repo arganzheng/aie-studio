@@ -4378,3 +4378,8 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 }
 
 .context-compact-btn.secondary { background: transparent; color: var(--accent); }
+
+/* Model: web.PreviewView launcher — other pages on this machine, folded. */
+.side-launcher-more { display: block; margin: 6px 0 2px; padding: 4px 0; border: 0; background: none; color: var(--fg-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.side-launcher-more:hover { color: var(--fg); }
+.preview-hint code { font-size: 0.95em; padding: 0 3px; border-radius: 3px; background: var(--bg-elevated); }
