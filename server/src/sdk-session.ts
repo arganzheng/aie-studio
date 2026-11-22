@@ -55,7 +55,7 @@ import { encodeCwd } from './observe/transcript.js';
 import { duplexRoute } from './duplex.js';
 import { planToolCalls } from './plan-tools.js';
 import { taskToolsEnv, taskToolsOn } from './task-tools.js';
-import { MAX_QUEUED, MAX_QUEUED_TEXT, editQueued, mergeQueued, queueView, steersRunningTurn, type QueuedPrompt } from './prompt-queue.js';
+import { CARRY_ON_AFTER_COMPACT, MAX_QUEUED, MAX_QUEUED_TEXT, batchQueued, editQueued, isCompactCommand, queueView, steersRunningTurn, type QueuedPrompt } from './prompt-queue.js';
 import { addWatch, cancelWatches, configureWatches, deliverToSession, watchesOf } from './watch-service.js';
 import { MAX_TIMEOUT_HOURS, WATCH_INSTRUCTIONS, watchView } from './watches.js';
 
@@ -667,13 +667,12 @@ function broadcastQueue(entry: SdkEntry) {
   broadcast(entry, { type: 'queue', items: queueView(entry.queued) });
 }
 
-// Send everything queued as one message.
+// Send everything queued: text as one message, each slash command on its
+// own (batchQueued), in the order written.
 function flushQueue(entry: SdkEntry) {
   const items = entry.queued.splice(0);
   broadcastQueue(entry);
-  if (items.length === 0) return;
-  const { text, images } = mergeQueued(items);
-  deliverUser(entry, text, images, null, Math.min(...items.map((q) => q.at)));
+  for (const b of batchQueued(items)) deliverUser(entry, b.text, b.images, null, b.at);
 }
 
 // Model: Session.queue — the client messages that change it. True when
@@ -899,6 +898,10 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
     if (mode !== 'now' && entry.thinking && entry.pendingAsks.size === 0) {
       if (entry.queued.length >= MAX_QUEUED) { send(socket, { type: 'error', message: `At most ${MAX_QUEUED} queued messages` }); return; }
       entry.queued.push({ id: typeof msg.msgId === 'string' && msg.msgId ? msg.msgId : randomUUID(), text: text.slice(0, MAX_QUEUED_TEXT), images, at: Date.now(), ...(mode === 'interrupt' ? { interrupt: true } : {}) });
+      // Stopped to compact: `/compact` starts no turn, so say to carry on.
+      if (mode === 'interrupt' && isCompactCommand(text) && entry.queued.length < MAX_QUEUED) {
+        entry.queued.push({ id: randomUUID(), text: CARRY_ON_AFTER_COMPACT, images: [], at: Date.now(), interrupt: true });
+      }
       broadcastQueue(entry);
       if (mode === 'interrupt') {
         try { await entry.q.interrupt(); } catch (e) { send(socket, { type: 'error', message: `interrupt failed: ${String(e)}` }); }

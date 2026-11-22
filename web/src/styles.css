@@ -4377,3 +4377,4 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   border-radius: 4px;
 }
 
+.context-compact-btn.secondary { background: transparent; color: var(--accent); }

@@ -38,7 +38,7 @@ import { ClaudeUsageBadge, refreshClaudeUsage } from './ClaudeUsage';
 import { ContextBadge, type ContextSnapshot } from './ContextUsage';
 import { childLinkOfTool } from '../lib/childLink';
 import { parseCompactNote } from '../lib/compactNote';
-import { isInterruptNote } from '../lib/steering';
+import { isCompactCommand, isInterruptNote, isSlashCommand } from '../lib/steering';
 import { parseChildReports } from '../lib/childReport';
 import { parseWatchReport, type WatchItem } from '../lib/watchReport';
 import { parseParentContext, withParentContext, type ParentContext } from '../lib/parentContext';
@@ -1023,13 +1023,17 @@ export function SdkPanel({
 
   function sendPrompt(text: string, images: readonly ImageAttachment[], mode: SendMode = 'now') {
     const msgId = shortId();
+    // A slash command written during a turn runs only once the turn has
+    // ended: queue it, where it shows and can be dropped, rather than let it
+    // wait unseen.
+    if (mode === 'now' && statusRef.current === 'thinking' && isSlashCommand(text)) mode = 'queue';
     // Model: Session.queue — during a turn, "queue" and "interrupt" wait on
     // the server, shown above the input: until the turn ends, or until the
     // stop the server asks for lands. The server decides: an open question
     // or form takes it as the answer instead, echoed as usual.
     if (mode !== 'now' && statusRef.current === 'thinking') {
       if (!wsSend({ type: 'user', text, images: toWireImages(images), msgId, mode })) showToast('Not connected — message not sent');
-      else if (mode === 'interrupt') showToast('Stopping Claude — your message goes out as soon as it has stopped');
+      else if (mode === 'interrupt') showToast(isCompactCommand(text) ? 'Stopping Claude — it compacts, then carries on' : 'Stopping Claude — your message goes out as soon as it has stopped');
       return;
     }
     append({ id: msgId, role: 'user', text, images: images.length ? images.map((p) => p.dataUrl) : undefined });
@@ -1430,9 +1434,10 @@ export function SdkPanel({
             <ContextBadge
               context={contextUsage}
               compact={{
-                run: () => send('/compact'),
-                blocked: status === 'thinking' ? (compacting ? 'Compacting…' : 'Wait for Claude to finish this turn')
-                  : status !== 'ready' ? 'Not connected' : null,
+                run: (when) => send('/compact', when),
+                working: status === 'thinking',
+                blocked: compacting ? 'Compacting…'
+                  : status !== 'ready' && status !== 'thinking' ? 'Not connected' : null,
               }}
             />
             {/* Always there: the model is only reported once the session has
