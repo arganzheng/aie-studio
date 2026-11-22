@@ -1,4 +1,6 @@
 import type React from 'react';
+import { CommandPalette, type PaletteAction } from './components/CommandPalette';
+import { cycleTab } from './lib/palette';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileTree } from './components/FileTree';
 import { ReviewPanel } from './components/ReviewPanel';
@@ -444,6 +446,29 @@ export default function App() {
   const askSide = (kind: SideRequest['kind']) => setSideRequest((prev) => ({ kind, seq: (prev?.seq ?? 0) + 1 }));
   // Comments and bookmarks land in Review: bring its tab forward.
   const showReview = () => { setReviewCollapsed(false); askSide('review'); };
+  // Model: web.CommandPalette — Cmd/Ctrl+K opens it; Option+J / Option+K move
+  // to the next / previous tab of the project (read through a ref: the
+  // listener is registered once).
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const tabCycleRef = useRef<{ pid: string | null; ids: string[]; active: string | null }>({ pid: null, ids: [], active: null });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.code === 'KeyK') {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+        return;
+      }
+      if (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && (e.code === 'KeyJ' || e.code === 'KeyK')) {
+        const { pid, ids, active } = tabCycleRef.current;
+        const next = cycleTab(ids, active, e.code === 'KeyJ' ? 1 : -1);
+        if (!pid || !next) return;
+        e.preventDefault();
+        setActiveSelectionRef.current(pid, next);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
   // Model: web.SidePanel — Option+T: a new launcher tab in the side panel.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -982,6 +1007,8 @@ export default function App() {
     });
   }
 
+  // For listeners registered once (Option+J / Option+K).
+  const setActiveSelectionRef = useRef<(projectId: string, tabId: string | null) => void>(() => {});
   function setActiveSelection(projectId: string, tabId: string | null) {
     setActive((a) => {
       const prevTab = a.tabs[projectId] ?? null;
@@ -1847,6 +1874,22 @@ export default function App() {
   // Model: web.ReviewPanel — the whole Review feature is opt-in (settings.review).
   const reviewOn = settings.review ?? false;
 
+  // Model: web.CommandPalette — what Option+J / Option+K cycle through, and
+  // the palette's actions.
+  setActiveSelectionRef.current = setActiveSelection;
+  tabCycleRef.current = { pid: activeProjectId, ids: tabs.map((t) => t.id), active: activeTabId };
+  const paletteActions: PaletteAction[] = [
+    ...(activeProject && localPrefs.enableClaude
+      ? [{ id: 'new-claude', title: 'New Claude session', detail: `in ${activeProject.name}`, run: () => { if (localPrefs.claudeBridge === 'sdk') openSdkTab(); else openSessionTab(); } }]
+      : []),
+    ...(activeProject && localPrefs.enableDevin
+      ? [{ id: 'new-devin', title: 'New Devin session', detail: `in ${activeProject.name}`, run: () => { openDevinTab(); } }]
+      : []),
+    { id: 'side-new', title: 'New side panel tab', detail: 'Changes, worktrees, Review · ⌥T', run: () => { setReviewCollapsed(false); setReviewDrawerOpen(true); askSide('launcher'); } },
+    { id: 'side-toggle', title: reviewCollapsed ? 'Show the side panel' : 'Hide the side panel', run: () => setReviewCollapsed((v) => !v) },
+    { id: 'settings', title: 'Open settings', run: () => setSettingsOpen(true) },
+  ];
+
   return (
     <div
       className={`app${sideMax && !reviewCollapsed ? ' side-maximized' : ''}`}
@@ -1990,6 +2033,7 @@ export default function App() {
           onMenuClick={() => { setReviewDrawerOpen(false); setDrawerOpen((v) => !v); }}
           reviewCount={draftComments}
           onReviewClick={() => { setDrawerOpen(false); setReviewDrawerOpen((v) => !v); }}
+          onSearch={() => setPaletteOpen(true)}
           activeProjectName={activeProject?.name ?? null}
           onRefresh={
             activeTab
@@ -2154,6 +2198,16 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {paletteOpen && (
+        <CommandPalette
+          projects={projects}
+          actions={paletteActions}
+          onOpenSession={(row) => { setDrawerOpen(false); openSessionRow(row); }}
+          onOpenProject={(id) => { setDrawerOpen(false); setActiveProject(id); }}
+          onClose={() => setPaletteOpen(false)}
+        />
+      )}
 
       {inboxOpen && (
         <InboxPanel
