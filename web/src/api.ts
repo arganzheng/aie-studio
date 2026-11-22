@@ -760,3 +760,13 @@ export async function fetchPrStatus(projectId: string, q: { worktree?: string | 
   if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
   return j;
 }
+
+// Model: web.PreviewView (server/src/preview.ts) — dev servers listening on
+// this machine; those started inside the project first.
+export type ListeningPort = { port: number; pid: number; command: string; cwd: string | null; inProject: boolean };
+export async function fetchPreviewPorts(projectId: string): Promise<ListeningPort[]> {
+  const r = await fetch(`/api/preview/ports?project=${encodeURIComponent(projectId)}`);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j.ports ?? [];
+}

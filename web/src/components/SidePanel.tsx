@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ChatQuote } from '../lib/addToChat';
 import {
-  FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, openTab, parseSideState, pick, visibleTabs,
+  FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, openTab, parseSideState, pick, updateTab, visibleTabs,
   type SideState, type SideTab, type SideWant,
 } from '../lib/sidePanel';
 import { ChangesView, type FollowInfo } from './ChangesView';
 import { SideLauncher } from './SideLauncher';
 import { SideChat } from './SideChat';
 import type { Theme } from '../types';
+import { PreviewView } from './PreviewView';
 
 // Model: web.SidePanel — the right-hand column (formerly only Review): its
 // own strip of tabs with "+", and on the right Maximize (take over the chat
@@ -45,6 +46,7 @@ function tabTitle(t: SideTab, projectName: string, reviewCount: number): string 
   if (t.kind === 'review') return reviewCount ? `Review (${reviewCount})` : 'Review';
   if (t.kind === 'launcher') return 'New tab';
   if (t.kind === 'btw') return `btw · ${t.label}`;
+  if (t.kind === 'preview') return `Preview :${t.port}`;
   if (t.target === FOLLOW) return 'Changes';
   return `Changes · ${t.target === ROOT ? projectName : t.target}`;
 }
@@ -117,6 +119,9 @@ export function SidePanel({
     body = renderReview();
   } else if (current.kind === 'btw') {
     body = null; // kept mounted below, so a side chat survives switching tabs
+  } else if (current.kind === 'preview') {
+    const id = current.id;
+    body = <PreviewView key={id} port={current.port} path={current.path} onPath={(path) => setState((s) => updateTab(s, id, { path }))} />;
   } else {
     body = <ChangesView key={current.id} projectId={projectId} projectName={projectName} target={current.target} follow={follow} active={!collapsed} onAddToChat={onAddToChat} />;
   }
