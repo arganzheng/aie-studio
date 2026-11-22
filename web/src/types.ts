@@ -223,4 +223,7 @@ export type Settings = {
   // web.ReviewPanel). Off by default: no third column / right drawer / 💬 on
   // messages. Batches data is kept while off.
   review?: boolean;
+  // Model: web.TerminalPanel — a shell in the side panel (server.TerminalBridge).
+  // Off by default; the server refuses a shell while it is off.
+  terminal?: boolean;
 };

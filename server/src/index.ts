@@ -1,3 +1,4 @@
+import { registerTerminalRoutes } from './terminal.js';
 import './env.js'; // must stay first: loads .env before any module reads process.env at top level
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
@@ -69,6 +70,7 @@ await app.register(websocket);
 await registerAuth(app);
 
 registerProjectRoutes(app);
+registerTerminalRoutes(app, { port: PORT });
 registerFsRoutes(app);
 registerSessionRoutes(app);
 registerSdkSessionRoutes(app);

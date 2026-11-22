@@ -9,6 +9,7 @@ import { SideLauncher } from './SideLauncher';
 import { SideChat } from './SideChat';
 import type { Theme } from '../types';
 import { PreviewView } from './PreviewView';
+import { TerminalPanel } from './TerminalPanel';
 import { AgentsView, ArtifactsView, FilesView, ProgressView } from './SideSessionViews';
 import { ObservePanel } from './ObservePanel';
 import type { SubagentInfo } from '../api';
@@ -58,6 +59,7 @@ function tabTitle(t: SideTab, projectName: string, reviewCount: number): string 
   if (t.kind === 'observe') return 'Observe';
   if (t.kind === 'artifacts') return 'Artifacts';
   if (t.kind === 'files') return 'Files';
+  if (t.kind === 'terminal') return 'Terminal';
   if (t.target === FOLLOW) return 'Changes';
   return `Changes · ${t.target === ROOT ? projectName : t.target}`;
 }
@@ -65,7 +67,7 @@ function tabTitle(t: SideTab, projectName: string, reviewCount: number): string 
 function storageKey(prefix: string, projectId: string) { return `${prefix}side:${projectId}`; }
 
 export function SidePanel({
-  lsPrefix, projectId, projectName, projectPath, theme, reviewOn, reviewCount, renderReview, follow, onAddToChat,
+  lsPrefix, projectId, projectName, projectPath, theme, reviewOn, terminalOn = false, reviewCount, renderReview, follow, onAddToChat,
   onOpenSession, onOpenSubagent, onReveal, onContinueAsChild,
   collapsed, maximized, onToggleCollapse, onToggleMax, onCloseDrawer, request,
 }: {
@@ -82,6 +84,8 @@ export function SidePanel({
   // Side chat: carry on in a child session of `sessionId`, told what was said.
   onContinueAsChild: (sessionId: string, label: string, conversation: string) => void;
   reviewOn: boolean;
+  // Model: web.TerminalPanel — settings.terminal.
+  terminalOn?: boolean;
   reviewCount: number;
   renderReview: () => ReactNode;
   follow: FollowInfo | null;
@@ -123,8 +127,8 @@ export function SidePanel({
     }
   }, [request, reviewOn]);
 
-  const tabs = visibleTabs(state, reviewOn);
-  const current = activeTab(state, reviewOn);
+  const tabs = visibleTabs(state, reviewOn, terminalOn);
+  const current = activeTab(state, reviewOn, terminalOn);
   // Keep the active tab in view when the strip scrolls sideways.
   const stripRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -133,13 +137,13 @@ export function SidePanel({
 
   let body: ReactNode;
   if (!current) {
-    body = <SideLauncher projectId={projectId} projectName={projectName} reviewOn={reviewOn} followLabel={follow?.label ?? null} followSessionId={follow?.sessionId ?? null} onPick={(want) => setState((s) => openTab(s, want))} />;
+    body = <SideLauncher projectId={projectId} projectName={projectName} reviewOn={reviewOn} terminalOn={terminalOn} followLabel={follow?.label ?? null} followSessionId={follow?.sessionId ?? null} onPick={(want) => setState((s) => openTab(s, want))} />;
   } else if (current.kind === 'launcher') {
-    body = <SideLauncher key={current.id} projectId={projectId} projectName={projectName} reviewOn={reviewOn} followLabel={follow?.label ?? null} followSessionId={follow?.sessionId ?? null} onPick={(want) => setState((s) => pick(s, current.id, want))} />;
+    body = <SideLauncher key={current.id} projectId={projectId} projectName={projectName} reviewOn={reviewOn} terminalOn={terminalOn} followLabel={follow?.label ?? null} followSessionId={follow?.sessionId ?? null} onPick={(want) => setState((s) => pick(s, current.id, want))} />;
   } else if (current.kind === 'review') {
     body = renderReview();
-  } else if (current.kind === 'btw') {
-    body = null; // kept mounted below, so a side chat survives switching tabs
+  } else if (current.kind === 'btw' || current.kind === 'terminal') {
+    body = null; // kept mounted below, so a side chat / shell survives switching tabs
   } else if (current.kind === 'progress') {
     body = <ProgressView projectId={projectId} follow={follow} active={!collapsed} />;
   } else if (current.kind === 'agents') {
@@ -179,7 +183,7 @@ export function SidePanel({
                   type="button"
                   className="side-tab-close"
                   aria-label="Close tab"
-                  onClick={(e) => { e.stopPropagation(); setState((s) => closeTab(s, t.id)); }}
+                  onClick={(e) => { e.stopPropagation(); if (t.kind === 'terminal') endTerminal(t.term); setState((s) => closeTab(s, t.id)); }}
                 >×</button>
               </div>
             ))}
@@ -217,7 +221,17 @@ export function SidePanel({
             />
           </div>
         ))}
+        {terminalOn && state.tabs.filter((t): t is Extract<SideTab, { kind: 'terminal' }> => t.kind === 'terminal').map((t) => (
+          <div key={t.id} className="side-keep side-terminal" style={t.id === current?.id && !collapsed ? undefined : { display: 'none' }}>
+            <TerminalPanel projectId={projectId} tabId={t.term} theme={theme} />
+          </div>
+        ))}
       </div>
     </>
   );
+}
+
+// Closing a Terminal tab ends its shell (server.TerminalBridge).
+function endTerminal(term: string) {
+  void fetch(`/api/terminal/${encodeURIComponent(term)}`, { method: 'DELETE' }).catch(() => {});
 }

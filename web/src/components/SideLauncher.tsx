@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchChangeTargets, fetchPreviewPorts, type CheckoutSummary, type ListeningPort } from '../api';
-import { FOLLOW, ROOT, isPreviewPort, type SideWant } from '../lib/sidePanel';
+import { sideTabId, FOLLOW, ROOT, isPreviewPort, type SideWant } from '../lib/sidePanel';
 
 // Model: web.SidePanel launcher — what "+" opens: a search box over the
 // tools the side panel offers, the dev servers running on this machine
@@ -24,10 +24,12 @@ function checkoutDetail(c: CheckoutSummary): string {
   return parts.join(' · ');
 }
 
-export function SideLauncher({ projectId, projectName, reviewOn, followLabel, followSessionId, onPick }: {
+export function SideLauncher({ projectId, projectName, reviewOn, terminalOn = false, followLabel, followSessionId, onPick }: {
   projectId: string;
   projectName: string;
   reviewOn: boolean;
+  // Model: web.TerminalPanel — offered only while settings.terminal is on.
+  terminalOn?: boolean;
   followLabel: string | null;
   // The Claude session the user is in (for a side chat about it).
   followSessionId?: string | null;
@@ -78,8 +80,9 @@ export function SideLauncher({ projectId, projectName, reviewOn, followLabel, fo
       want: { kind: 'btw', sessionId: followSessionId, label: followLabel ?? 'session' } as const,
     }] : []),
     { key: 'files', title: 'Files', detail: 'Browse and read the project beside the chat', words: 'files tree browse read code', want: { kind: 'files' } as const },
+    ...(terminalOn ? [{ key: 'terminal', title: 'Terminal', detail: 'A shell in the project directory', words: 'terminal shell zsh console command line', want: { kind: 'terminal', term: sideTabId() } as const }] : []),
     ...(reviewOn ? [{ key: 'review', title: 'Review', detail: 'Bookmarks and comment batches', words: 'review comments batches bookmarks', want: { kind: 'review' } as const }] : []),
-  ], [followLabel, followSessionId, reviewOn]);
+  ], [followLabel, followSessionId, reviewOn, terminalOn]);
 
   const checkouts: Item[] = useMemo(() => (targets ?? []).map((c) => ({
     key: c.worktree ?? ROOT,

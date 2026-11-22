@@ -27,6 +27,9 @@ export type SideWant =
   | { kind: 'artifacts' }
   // The project's files, read beside the chat.
   | { kind: 'files' }
+  // Model: web.TerminalPanel — a shell in the project directory; `term` keys
+  // it on the server (one shell per tab). Only while settings.terminal is on.
+  | { kind: 'terminal'; term: string }
   | { kind: 'launcher' };
 export type SideTab = SideWant & { id: string };
 export type SideState = { tabs: SideTab[]; active: string | null };
@@ -39,19 +42,21 @@ export function defaultSideState(reviewOn: boolean, id = sideTabId): SideState {
   return { tabs: reviewOn ? [changes, { id: id(), kind: 'review' }] : [changes], active: changes.id };
 }
 
-// Review tabs only exist while the Review feature is on.
-export function visibleTabs(s: SideState, reviewOn: boolean): SideTab[] {
-  return reviewOn ? s.tabs : s.tabs.filter((t) => t.kind !== 'review');
+// Review tabs only exist while the Review feature is on; Terminal tabs while
+// the Terminal is.
+export function visibleTabs(s: SideState, reviewOn: boolean, terminalOn = false): SideTab[] {
+  return s.tabs.filter((t) => (reviewOn || t.kind !== 'review') && (terminalOn || t.kind !== 'terminal'));
 }
 
 // The tab to show: the active one if visible, else the first visible.
-export function activeTab(s: SideState, reviewOn: boolean): SideTab | null {
-  const vis = visibleTabs(s, reviewOn);
+export function activeTab(s: SideState, reviewOn: boolean, terminalOn = false): SideTab | null {
+  const vis = visibleTabs(s, reviewOn, terminalOn);
   return vis.find((t) => t.id === s.active) ?? vis[0] ?? null;
 }
 
 function same(a: SideTab, b: SideWant): boolean {
   if (a.kind === 'btw' || b.kind === 'btw') return a.kind === 'btw' && b.kind === 'btw' && a.sessionId === b.sessionId;
+  if (a.kind === 'terminal' || b.kind === 'terminal') return a.kind === 'terminal' && b.kind === 'terminal' && a.term === b.term;
   if (a.kind === 'preview' || b.kind === 'preview') return a.kind === 'preview' && b.kind === 'preview' && a.port === b.port;
   if (a.kind === 'changes' || b.kind === 'changes') return a.kind === b.kind && a.kind === 'changes' && b.kind === 'changes' && a.target === b.target;
   return a.kind === b.kind;
@@ -104,6 +109,7 @@ export function parseSideState(raw: string | null, reviewOn: boolean): SideState
         t && typeof t.id === 'string' && (
           (t.kind === 'changes' && typeof t.target === 'string') || t.kind === 'review' || t.kind === 'launcher'
           || t.kind === 'progress' || t.kind === 'agents' || t.kind === 'observe' || t.kind === 'files' || t.kind === 'artifacts'
+          || (t.kind === 'terminal' && typeof t.term === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(t.term))
           || (t.kind === 'btw' && typeof t.sessionId === 'string' && typeof t.label === 'string')
           || (t.kind === 'preview' && isPreviewPort(t.port) && typeof t.path === 'string')
         ));
