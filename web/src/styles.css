@@ -4169,3 +4169,16 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .pr-check-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
 .pr-check-link { flex: none; color: var(--fg-muted); font-size: 11px; }
 .pr-check-link:hover { color: var(--accent); }
+
+/* Model: web.PreviewView — a dev server in a side panel tab. */
+.preview { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.preview-bar { flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.preview-bar > button, .preview-open { flex: none; background: none; border: none; color: var(--fg-muted); cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 4px; text-decoration: none; line-height: 18px; }
+.preview-bar > button:hover, .preview-open:hover { background: var(--bg-hover); color: var(--fg); }
+.preview-port { flex: none; font: 12px var(--font-mono, ui-monospace, monospace); color: var(--accent); }
+.preview-addr { flex: 1 1 auto; min-width: 0; font: 12px var(--font-mono, ui-monospace, monospace); color: var(--fg); background: var(--bg-input); border: 1px solid var(--border); border-radius: 5px; padding: 3px 7px; }
+.preview-frame { flex: 1 1 auto; width: 100%; border: none; background: #fff; }
+.side-card-port { font: 600 13px var(--font-mono, ui-monospace, monospace); color: var(--accent); }
+.side-launcher-port { display: flex; gap: 6px; margin: 4px 0 8px; }
+.side-launcher-port input { width: 110px; font: 13px var(--font-mono, ui-monospace, monospace); color: var(--fg); background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
+.side-launcher-port button { background: var(--bg-active-strong); color: #fff; border: none; border-radius: 6px; padding: 5px 12px; cursor: pointer; }
