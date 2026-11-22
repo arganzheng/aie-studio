@@ -29,7 +29,15 @@ export type SessionRow = {
   activity?: string;
   // What its agent said it is waiting for when its last turn ended.
   status?: SessionStatus;
+  // What the server watches for on its behalf: when one is met the session
+  // goes on by itself, unless the user replies first (Session.watches).
+  watches?: { id: string; label: string }[];
 };
+
+// "⏳ PR #49 merged" — what a waiting session will go on by itself at.
+export function watchesLabel(r: Pick<SessionRow, 'watches'>): string {
+  return r.watches?.length ? `⏳ ${r.watches.map((w) => w.label).join(', ')}` : '';
+}
 
 // Is the session stopped on the user: a form or prompt is open, or its agent
 // ended the turn on a question.
@@ -80,7 +88,9 @@ export type SessionTone = 'awaiting' | 'running' | 'ready' | 'unread' | 'idle';
 export function sessionStatus(r: SessionRow, unread: boolean, now: number): { tone: SessionTone; label: string } {
   if (r.state === 'awaiting') return { tone: 'awaiting', label: 'Needs your input' };
   if (r.state === 'running') return { tone: 'running', label: r.activity || 'Running…' };
-  if (r.status) return { tone: r.status.tone === 'needs-you' ? 'awaiting' : 'ready', label: r.status.label };
+  const w = watchesLabel(r);
+  if (r.status) return { tone: r.status.tone === 'needs-you' ? 'awaiting' : 'ready', label: w ? `${r.status.label} · ${w}` : r.status.label };
+  if (w) return { tone: 'idle', label: w };
   if (unread) return { tone: 'unread', label: `Finished · ${timeAgo(r.updatedAt, now)}` };
   return { tone: 'idle', label: timeAgo(r.updatedAt, now) };
 }

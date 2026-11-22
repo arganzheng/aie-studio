@@ -1017,6 +1017,14 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .child-report-flag { color: #d9a72c; border: 1px solid currentColor; border-radius: 9px; padding: 0 6px; font-size: 10px; line-height: 15px; }
 .msg-child-report blockquote { margin: 4px 0; padding: 2px 10px; border-left: 2px solid #d9a72c; color: var(--fg); }
 
+/* Watches (model: Session.watches): what the session goes on at by itself. */
+.watch-bar { display: flex; flex-direction: column; gap: 2px; padding: 4px 12px; border-top: 1px solid var(--border); background: var(--bg-elevated); font-size: 12px; }
+.watch-bar-item { display: flex; align-items: center; gap: 8px; min-height: 26px; }
+.watch-bar-text { flex: 1; min-width: 0; color: var(--fg-muted); }
+.watch-bar-text b { color: var(--fg); font-weight: 600; }
+.watch-bar-cancel { flex: none; background: transparent; border: none; color: var(--fg-muted); font-size: 16px; line-height: 1; padding: 4px 8px; cursor: pointer; border-radius: 3px; }
+.watch-bar-cancel:hover { background: var(--bg-hover); color: var(--fg); }
+
 .msg-system-error {
   color: var(--fg);
   font-style: normal;

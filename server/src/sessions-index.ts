@@ -3,6 +3,8 @@ import { deleteSession, renameSession } from '@anthropic-ai/claude-agent-sdk';
 import { listProjectSessions, removeWorktreeIfClean } from './worktrees.js';
 import { getUserId } from './auth.js';
 import { getProject, getSessionMeta, listProjects, putSessionMeta, type Project, type SessionMeta } from './store.js';
+import { cancelWatches, watchesOf } from './watch-service.js';
+import type { Watch } from './watches.js';
 import { liveBridge, type LiveState } from './live-sessions.js';
 import { cliLiveState, stopCliSession } from './session.js';
 import { sdkLiveDetail, sdkLiveState, stopSdkSession, userRenamedSdkSession } from './sdk-session.js';
@@ -43,7 +45,16 @@ export type SessionRow = {
   activity?: string;
   // What its agent said it is waiting for when its last turn ended.
   status?: SessionStatus;
+  // Claude: what the server is watching for on its behalf (Session.watches).
+  watches?: { id: string; label: string }[];
 };
+
+// Pure: each Claude row with the watches it is waiting on.
+export function applyWatches(rows: SessionRow[], watches: readonly Watch[]): SessionRow[] {
+  const by = new Map<string, { id: string; label: string }[]>();
+  for (const w of watches) by.set(w.sessionId, [...(by.get(w.sessionId) ?? []), { id: w.id, label: w.label }]);
+  return rows.map((r) => (r.kind === 'claude' && by.has(r.sessionId) ? { ...r, watches: by.get(r.sessionId) } : r));
+}
 
 export const MAX_TITLE_LENGTH = 200;
 
@@ -189,7 +200,7 @@ export function registerSessionIndexRoutes(app: FastifyInstance) {
       projects = [p];
     }
     const rows = (await Promise.all(projects.map(rowsFor))).flat();
-    return { sessions: applySessionMeta(rows, await getSessionMeta(uid)) };
+    return { sessions: applyWatches(applySessionMeta(rows, await getSessionMeta(uid)), await watchesOf(uid)) };
   });
 
   // Model: server.ArchiveSession — hide from the list; nothing is deleted.
@@ -261,6 +272,7 @@ export function registerSessionIndexRoutes(app: FastifyInstance) {
       }
       await deleteSession(t.sessionId, { dir: t.project.path });
       await putSessionMeta(uid, forgetSession(await getSessionMeta(uid), sessionKey(t.kind, t.sessionId)));
+      await cancelWatches(uid, t.sessionId);
       // Its worktree goes with it when nothing would be lost (no uncommitted
       // files, branch merged) and no other session lives there.
       let worktree: { name: string; removed: boolean; reason?: string } | undefined;
