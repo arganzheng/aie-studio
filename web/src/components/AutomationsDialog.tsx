@@ -1,16 +1,33 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  deleteAutomation, listAllSessions, listAutomations, rotateAutomationToken, runAutomationNow, saveAutomation,
-  type Automation, type AutomationDraft, type AutomationRun,
+  cancelWatch, deleteAutomation, listAllSessions, listAutomations, rotateAutomationToken, runAutomationNow, saveAutomation,
+  type Automation, type AutomationDraft, type AutomationRun, type ConditionKind, type WatchItem,
 } from '../api';
 import type { SessionRow } from '../lib/sessionList';
 import type { Project } from '../types';
 
 // Model: web.Automations — "when <trigger>, do <action>" (server/src/
-// automations.ts): a schedule (cron) or a webhook URL starts a new Claude
-// session with a prompt, or writes the prompt into an existing session.
-// The list shows each automation with its next run, "Run now", and the
-// webhook's URL; below it the recent runs, each opening its session.
+// automations.ts): a schedule (cron), a webhook URL, or a condition (a pull
+// request merged, its checks finished, it deployed here — once) starts a
+// new Claude session with a prompt, or writes the prompt into an existing
+// session. The list shows each automation with its next run or what it
+// last saw, "Run now", and the webhook's URL; then what sessions' agents
+// are waiting on (Session.watches), each can be stopped; then the recent
+// runs of both, each opening its session.
+
+const CONDITIONS: ReadonlyArray<[ConditionKind, string]> = [
+  ['pr_merged', 'merged'],
+  ['pr_checks', 'checks finished'],
+  ['deployed', 'deployed to this server'],
+];
+
+export function toDraft(a: Automation): AutomationDraft {
+  const t = a.trigger;
+  const trigger: AutomationDraft['trigger'] = t.kind === 'schedule' ? t
+    : t.kind === 'webhook' ? { kind: 'webhook' }
+    : { kind: 'condition', on: t.on, ref: t.repo && t.pr ? `${t.repo}#${t.pr}` : '', ...(t.commit ? { commit: t.commit } : {}), timeoutHours: t.timeoutHours };
+  return { name: a.name, enabled: a.enabled, trigger, action: a.action, prompt: a.prompt };
+}
 
 const PRESETS: ReadonlyArray<[string, string]> = [
   ['Every hour', '0 * * * *'],
@@ -71,9 +88,29 @@ function Editor({ projects, initial, id, onSaved, onCancel }: {
         <div className="sessions-seg">
           <button type="button" className={d.trigger.kind === 'schedule' ? 'on' : ''} onClick={() => setD({ ...d, trigger: { kind: 'schedule', cron: cron || '0 9 * * *' } })}>On a schedule</button>
           <button type="button" className={d.trigger.kind === 'webhook' ? 'on' : ''} onClick={() => setD({ ...d, trigger: { kind: 'webhook' } })}>On a webhook</button>
+          <button type="button" className={d.trigger.kind === 'condition' ? 'on' : ''} onClick={() => setD({ ...d, trigger: { kind: 'condition', on: 'pr_merged', ref: '', timeoutHours: 72 } })}>When a PR…</button>
         </div>
       </div>
-      {d.trigger.kind === 'schedule' ? (
+      {d.trigger.kind === 'condition' ? (() => {
+        const c = d.trigger;
+        const set = (patch: Partial<typeof c>) => setD({ ...d, trigger: { ...c, ...patch } });
+        return (
+          <div className="auto-field">
+            <span>Condition</span>
+            <div className="auto-cond">
+              <input className="auto-mono" value={c.ref} onChange={(e) => set({ ref: e.target.value })} placeholder="owner/repo#12 or the PR's URL" aria-label="Pull request" />
+              <select value={c.on} onChange={(e) => set({ on: e.target.value as ConditionKind })} aria-label="Condition">
+                {CONDITIONS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+              </select>
+            </div>
+            {c.on === 'deployed' && (
+              <input className="auto-mono" value={c.commit ?? ''} onChange={(e) => set({ commit: e.target.value })} placeholder="…or a commit instead of a PR (optional)" aria-label="Commit" />
+            )}
+            <label className="auto-inline">Give up after <input type="number" min={1} max={168} value={c.timeoutHours} onChange={(e) => set({ timeoutHours: Number(e.target.value) || 72 })} /> hours</label>
+            <div className="auto-hint">Checked on the server (with its gh login), every 30 s at first, then less often. It fires once — also when the PR is closed unmerged, saying so — and then turns itself off. What it saw goes into the prompt as {'{{body}}'}.</div>
+          </div>
+        );
+      })() : d.trigger.kind === 'schedule' ? (
         <div className="auto-field">
           <span>Schedule</span>
           <div className="auto-presets">
@@ -124,7 +161,7 @@ function Editor({ projects, initial, id, onSaved, onCancel }: {
         <span>Prompt</span>
         <textarea rows={6} value={d.prompt} onChange={(e) => setD({ ...d, prompt: e.target.value })} placeholder={'Look at the issues opened since yesterday ({{date}}), label them, and list the ones that need me.'} />
       </label>
-      <div className="auto-hint">{'{{date}}'} becomes the run's date and time; {'{{body}}'} the webhook's body (without it, the body is added after the prompt).</div>
+      <div className="auto-hint">{'{{date}}'} becomes the run's date and time; {'{{body}}'} the webhook's body, or what the condition saw (without it, that is added after the prompt).</div>
       {error && <div className="auto-error">{error}</div>}
       <div className="auto-buttons">
         <button type="button" onClick={onCancel}>Cancel</button>
@@ -140,7 +177,7 @@ export function AutomationsDialog({ projects, activeProjectId, onOpenSession, on
   onOpenSession: (projectId: string, sessionId: string) => void;
   onClose: () => void;
 }) {
-  const [data, setData] = useState<{ automations: Automation[]; runs: AutomationRun[] } | null>(null);
+  const [data, setData] = useState<{ automations: Automation[]; runs: AutomationRun[]; watches: WatchItem[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ id: string | null; draft: AutomationDraft } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -175,7 +212,7 @@ export function AutomationsDialog({ projects, activeProjectId, onOpenSession, on
         ) : (
           <div className="auto-body">
             <div className="auto-intro">
-              Start a Claude session on a schedule or when something calls a webhook — or write into one you already have. Runs show up in Sessions like any other session, and alert you when they finish.
+              Start a Claude session on a schedule, when something calls a webhook, or when a pull request is merged, passes CI or is deployed here — or write into one you already have. Runs show up in Sessions like any other session, and alert you when they finish. What sessions' agents are waiting on is listed here too.
               <button type="button" className="primary" disabled={!defaultProject} onClick={() => setEditing({ id: null, draft: emptyDraft(defaultProject) })}>＋ New automation</button>
             </div>
             {error && <div className="auto-error">{error}</div>}
@@ -185,17 +222,19 @@ export function AutomationsDialog({ projects, activeProjectId, onOpenSession, on
               <div key={a.id} className={`auto-item${a.enabled ? '' : ' off'}`}>
                 <div className="auto-item-head">
                   <label className="auto-toggle" title={a.enabled ? 'On — click to turn off' : 'Off — click to turn on'}>
-                    <input type="checkbox" checked={a.enabled} onChange={(e) => void act(a.id, () => saveAutomation(a.id, { ...a, enabled: e.target.checked }))} />
+                    <input type="checkbox" checked={a.enabled} onChange={(e) => void act(a.id, () => saveAutomation(a.id, { ...toDraft(a), enabled: e.target.checked }))} />
                   </label>
                   <span className="auto-name">{a.name}</span>
                   <button type="button" disabled={busy === a.id} onClick={() => void act(a.id, () => runAutomationNow(a.id))} title="Run it once now">{busy === a.id ? 'Running…' : '▶ Run now'}</button>
-                  <button type="button" onClick={() => setEditing({ id: a.id, draft: { name: a.name, enabled: a.enabled, trigger: a.trigger.kind === 'schedule' ? a.trigger : { kind: 'webhook' }, action: a.action, prompt: a.prompt } })}>Edit</button>
+                  <button type="button" onClick={() => setEditing({ id: a.id, draft: toDraft(a) })}>Edit</button>
                   <button type="button" className="danger" onClick={() => { if (window.confirm(`Delete "${a.name}"?`)) void act(a.id, () => deleteAutomation(a.id)); }}>Delete</button>
                 </div>
                 <div className="auto-item-sub">
                   {a.trigger.kind === 'schedule'
                     ? <>⏱ {a.schedule ?? a.trigger.cron}{a.nextRunAt ? <span className="auto-muted"> · next {when(a.nextRunAt)}</span> : null}</>
-                    : <>🔗 Webhook</>}
+                    : a.trigger.kind === 'condition'
+                      ? <>◎ When {a.condition}{a.enabled ? (a.lastSeen ? <span className="auto-muted"> · now: {a.lastSeen}</span> : <span className="auto-muted"> · waiting</span>) : <span className="auto-muted"> · off (fires once; turn on to wait again)</span>}</>
+                      : <>🔗 Webhook</>}
                   {' → '}
                   {a.action.kind === 'new-session'
                     ? <>new session in <b>{projectName(a.action.projectId)}</b>{a.action.worktree ? ' (own worktree)' : ''}{a.action.model ? ` · ${a.action.model}` : ''}</>
@@ -212,6 +251,20 @@ export function AutomationsDialog({ projects, activeProjectId, onOpenSession, on
                 <div className="auto-prompt" title={a.prompt}>{a.prompt}</div>
               </div>
             ))}
+            {data && data.watches.length > 0 && (
+              <>
+                <div className="auto-section" title="Conditions sessions' agents asked the server to watch (watch_until): when one is met, its session is told and goes on">Sessions waiting on</div>
+                {data.watches.map((w) => (
+                  <div key={w.id} className="auto-run">
+                    <span className="auto-run-mark auto-wait">⏳</span>
+                    <span className="auto-run-name" title={`Then: ${w.then}`}>{w.label}<span className="auto-muted"> · {w.lastSeen || 'not looked at yet'}</span></span>
+                    <span className="auto-muted">until {when(w.deadline)}</span>
+                    <button type="button" onClick={() => { onOpenSession(w.projectId, w.sessionId); onClose(); }}>Open session</button>
+                    <button type="button" title="Stop watching; the session keeps waiting for you" onClick={() => void act(w.id, () => cancelWatch(w.sessionId, w.id))}>Stop</button>
+                  </div>
+                ))}
+              </>
+            )}
             {data && data.runs.length > 0 && (
               <>
                 <div className="auto-section">Recent runs</div>
@@ -220,7 +273,7 @@ export function AutomationsDialog({ projects, activeProjectId, onOpenSession, on
                     <span className="auto-run-mark">{r.ok ? '✓' : '✗'}</span>
                     <span className="auto-run-when">{when(r.at)}</span>
                     <span className="auto-run-name">{r.name}</span>
-                    <span className="auto-muted">{r.source === 'manual' ? 'by hand' : r.source}</span>
+                    <span className="auto-muted">{r.source === 'manual' ? 'by hand' : r.source === 'watch' ? 'watch met' : r.source}</span>
                     {r.ok && r.sessionId
                       ? <button type="button" onClick={() => { onOpenSession(r.projectId, r.sessionId!); onClose(); }}>Open session</button>
                       : <span className="auto-run-error" title={r.error}>{r.error}</span>}

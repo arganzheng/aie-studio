@@ -4251,3 +4251,8 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .side-launcher-port { display: flex; gap: 6px; margin: 4px 0 8px; }
 .side-launcher-port input { width: 110px; font: 13px var(--font-mono, ui-monospace, monospace); color: var(--fg); background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
 .side-launcher-port button { background: var(--bg-active-strong); color: #fff; border: none; border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+.auto-cond { display: flex; gap: 6px; }
+.auto-cond input { flex: 1 1 auto; min-width: 0; }
+.auto-inline { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-muted); }
+.auto-inline input { width: 70px; }
+.auto-run-mark.auto-wait { color: #d29922; }

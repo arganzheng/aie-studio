@@ -13,7 +13,7 @@ describe('cleanAutomation', () => {
     expect(cleanAutomation({ ...base, name: ' ' })).toEqual({ error: 'Give it a name' });
     expect(cleanAutomation({ ...base, prompt: '' })).toEqual({ error: 'Write the prompt it sends' });
     expect((cleanAutomation({ ...base, trigger: { kind: 'schedule', cron: '61 * * * *' } }) as any).error).toMatch(/^Schedule: minute/);
-    expect(cleanAutomation({ ...base, trigger: { kind: 'x' } })).toEqual({ error: 'Pick a trigger: a schedule or a webhook' });
+    expect(cleanAutomation({ ...base, trigger: { kind: 'x' } })).toEqual({ error: 'Pick a trigger: a schedule, a webhook or a condition' });
     expect(cleanAutomation({ ...base, action: { kind: 'message', projectId: 'p1', sessionId: 'nope' } })).toEqual({ error: 'Pick the session to write to' });
   });
   it('gives a webhook a secret token and keeps it across edits', () => {
@@ -36,5 +36,33 @@ describe('renderPrompt', () => {
   });
   it('keys minutes so a schedule fires once per minute', () => {
     expect(minuteKey(new Date('2026-11-23T09:05:10'))).toBe(minuteKey(new Date('2026-11-23T09:05:50')));
+  });
+});
+
+describe('condition triggers', () => {
+  const cond = { ...base, trigger: { kind: 'condition', on: 'pr_merged', ref: 'https://github.com/o/r/pull/12' } };
+  it('reads a pull request as a URL or owner/repo#n', async () => {
+    const { parsePrInput } = await import('../automations.js');
+    expect(parsePrInput('https://github.com/o/r/pull/12/files')).toEqual({ repo: 'o/r', pr: 12 });
+    expect(parsePrInput('arganzheng/aie-studio#56')).toEqual({ repo: 'arganzheng/aie-studio', pr: 56 });
+    expect(parsePrInput('#56')).toBeNull();
+  });
+  it('arms when created, keeps waiting across edits, rearms when the condition changes or it is turned on again', () => {
+    const a = cleanAutomation(cond) as Automation;
+    expect(a.trigger).toMatchObject({ kind: 'condition', on: 'pr_merged', repo: 'o/r', pr: 12, timeoutHours: 72 });
+    const armed = (a.trigger as any).armedAt;
+    const renamed = cleanAutomation({ ...cond, name: 'x', trigger: { ...cond.trigger } }, { ...a, trigger: { ...a.trigger, armedAt: 1 } as any }) as Automation;
+    expect((renamed.trigger as any).armedAt).toBe(1);
+    const changed = cleanAutomation({ ...cond, trigger: { ...cond.trigger, on: 'pr_checks' } }, { ...a, trigger: { ...a.trigger, armedAt: 1 } as any }) as Automation;
+    expect((changed.trigger as any).armedAt).toBeGreaterThanOrEqual(armed);
+    const backOn = cleanAutomation({ ...cond, enabled: true }, { ...a, enabled: false, trigger: { ...a.trigger, armedAt: 1 } as any }) as Automation;
+    expect((backOn.trigger as any).armedAt).toBeGreaterThan(1);
+  });
+  it('a deploy condition takes a commit instead', () => {
+    expect(cleanAutomation({ ...base, trigger: { kind: 'condition', on: 'deployed', commit: 'abc1234' } })).toMatchObject({ trigger: { kind: 'condition', on: 'deployed', commit: 'abc1234' } });
+    expect((cleanAutomation({ ...base, trigger: { kind: 'condition', on: 'pr_merged', ref: 'nope' } }) as any).error).toMatch(/owner\/repo#12/);
+  });
+  it('labels what a condition saw in the prompt', () => {
+    expect(renderPrompt('Deploy it', { body: 'PR #12 was merged.', now: new Date(), label: 'What happened' })).toBe('Deploy it\n\n---\nWhat happened:\n```\nPR #12 was merged.\n```');
   });
 });

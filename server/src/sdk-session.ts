@@ -56,7 +56,7 @@ import { duplexRoute } from './duplex.js';
 import { planToolCalls } from './plan-tools.js';
 import { taskToolsEnv, taskToolsOn } from './task-tools.js';
 import { MAX_QUEUED, MAX_QUEUED_TEXT, editQueued, mergeQueued, queueView, type QueuedPrompt } from './prompt-queue.js';
-import { addWatch, cancelWatches, configureWatches, watchesOf } from './watch-service.js';
+import { addWatch, cancelWatches, configureWatches, deliverToSession, watchesOf } from './watch-service.js';
 import { MAX_TIMEOUT_HOURS, WATCH_INSTRUCTIONS, watchView } from './watches.js';
 
 // ----- input queue: one always-open async iterable per live query ---------
@@ -1371,11 +1371,12 @@ async function broadcastWatches(uid: string, sessionId: string) {
 configureWatches({
   changed: (uid, sessionId) => { void broadcastWatches(uid, sessionId); },
   // Into the session as a message, waking it; done when that turn is.
-  deliver: async (uid, w, text) => {
-    const entry = await wakeSession({ uid, projectId: w.projectId, projectPath: w.projectPath }, w.sessionId);
-    if (!entry) throw new Error('session not reachable');
+  deliver: async (uid, to, text, onInjected) => {
+    const entry = await wakeSession({ uid, projectId: to.projectId, projectPath: to.projectPath }, to.sessionId);
+    if (!entry) throw new Error('That session is open in a classic (CLI) tab, or is not yours');
     injectUserText(entry, text);
-    while (entry.thinking && byId.get(w.sessionId) === entry) await new Promise((r) => setTimeout(r, 2000));
+    onInjected?.();
+    while (entry.thinking && byId.get(to.sessionId) === entry) await new Promise((r) => setTimeout(r, 2000));
   },
 });
 
@@ -1786,11 +1787,15 @@ export async function startDetachedSession(o: {
 
 // Send `text` to one of the user's Claude sessions as if typed (into the
 // running turn if it is working), starting its process if needed.
+// Goes through the same queue as the watches' reports (a few sessions woken
+// at a time); resolves once the message is in.
 export async function sendToSession(o: { uid: string; projectId: string; projectPath: string; sessionId: string; text: string }): Promise<{ ok: boolean; error?: string }> {
-  const entry = await wakeSession({ uid: o.uid, projectId: o.projectId, projectPath: o.projectPath }, o.sessionId);
-  if (!entry) return { ok: false, error: 'That session is open in a classic (CLI) tab, or is not yours' };
-  deliverUser(entry, o.text, [], null);
-  return { ok: true };
+  try {
+    await deliverToSession(o.uid, { sessionId: o.sessionId, projectId: o.projectId, projectPath: o.projectPath }, o.text);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e as Error).message ?? e) };
+  }
 }
 
 // The model a live session runs (side chats fork with the same one, which
