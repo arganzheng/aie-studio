@@ -702,6 +702,9 @@ export type DiffFile = {
   hunks: DiffHunk[];
   truncated?: boolean;
   newLines?: number;
+  // Session scopes: the checkout (its directory) and whether the session edited the file.
+  repo?: string;
+  touched?: boolean;
 };
 export type CheckoutSummary = {
   worktree: string | null;
@@ -711,13 +714,30 @@ export type CheckoutSummary = {
   ahead: number;
   dirty: number;
 };
-export type ChangesScope = 'base' | 'uncommitted';
+// base / uncommitted: one checkout's git state. all / turn / seen: what the
+// session changed (in every checkout it worked in) since it began, since the
+// user's last message, since they last marked the changes seen.
+export type BranchScope = 'base' | 'uncommitted';
+export type SessionScope = 'all' | 'turn' | 'seen';
+export type ChangesScope = BranchScope | SessionScope;
+export type SessionPoints = { start: number | null; turn: number | null; seen: number | null };
+export type SessionChangesResult = {
+  session: true;
+  scope: SessionScope;
+  worktree: string | null;
+  // No snapshot yet: the session has not been written to since this existed.
+  none: boolean;
+  points: SessionPoints;
+  repos: Array<{ root: string; name: string; files: DiffFile[]; error?: string }>;
+};
 export type ChangesResult =
   | { git: false; worktree: string | null }
-  | ({ git: true; scope: ChangesScope; files: DiffFile[] } & CheckoutSummary);
+  | ({ git: true; scope: BranchScope; files: DiffFile[] } & CheckoutSummary);
 
 // Which checkout: a worktree by name, else the one a session runs in, else the project.
-export async function fetchChanges(projectId: string, q: { worktree?: string | null; session?: string | null; scope: ChangesScope }, signal?: AbortSignal): Promise<ChangesResult> {
+export async function fetchChanges(projectId: string, q: { worktree?: string | null; session?: string | null; scope: BranchScope }, signal?: AbortSignal): Promise<ChangesResult>;
+export async function fetchChanges(projectId: string, q: { worktree?: string | null; session?: string | null; scope: SessionScope }, signal?: AbortSignal): Promise<SessionChangesResult>;
+export async function fetchChanges(projectId: string, q: { worktree?: string | null; session?: string | null; scope: ChangesScope }, signal?: AbortSignal): Promise<ChangesResult | SessionChangesResult> {
   const p = new URLSearchParams({ scope: q.scope });
   if (q.worktree) p.set('worktree', q.worktree);
   if (q.session) p.set('session', q.session);
@@ -729,13 +749,20 @@ export async function fetchChanges(projectId: string, q: { worktree?: string | n
 
 // The new version of a changed file (same checkout choice as fetchChanges),
 // to open the unchanged lines between hunks.
-export async function fetchChangedFile(projectId: string, q: { worktree?: string | null; session?: string | null; path: string }): Promise<string> {
+export async function fetchChangedFile(projectId: string, q: { worktree?: string | null; session?: string | null; path: string; repo?: string }): Promise<string> {
   const p = new URLSearchParams({ path: q.path });
+  if (q.repo) p.set('repo', q.repo);
   if (q.worktree) p.set('worktree', q.worktree);
   if (q.session) p.set('session', q.session);
   const r = await fetch(`/api/projects/${encodeURIComponent(projectId)}/changes/file?${p}`);
   if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`); }
   return r.text();
+}
+
+// "Mark all changes as seen" for a session.
+export async function markChangesSeen(projectId: string, session: string): Promise<void> {
+  const r = await fetch(`/api/projects/${encodeURIComponent(projectId)}/changes/seen?session=${encodeURIComponent(session)}`, { method: 'POST' });
+  if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`); }
 }
 
 export async function fetchChangeTargets(projectId: string): Promise<{ git: boolean; targets: CheckoutSummary[] }> {

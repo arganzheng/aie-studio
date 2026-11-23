@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ChangesResult, DiffFile } from '../../api';
-import { fileGaps, gapView, keepUnchangedFiles, pairWordDiffs, splitPath, tokenize, wordDiff } from '../diffView';
+import type { DiffFile } from '../../api';
+import { fileGaps, fileKey, gapView, keepUnchangedFiles, pairWordDiffs, pointTime, sessionFiles, splitPath, tokenize, wordDiff } from '../diffView';
 
 const changed = (segs: { text: string; changed: boolean }[]) => segs.filter((s) => s.changed).map((s) => s.text);
 
@@ -96,15 +96,25 @@ describe('splitPath / keepUnchangedFiles', () => {
     expect(splitPath('README.md')).toEqual({ name: 'README.md', dir: '' });
   });
   it('keeps unchanged files as the same objects', () => {
-    const base = { git: true as const, scope: 'base' as const, worktree: null, branch: 'b', base: 'main', mergeBase: null, ahead: 0, dirty: 0 };
-    const prev: ChangesResult = { ...base, files: [file({ path: 'a' }), file({ path: 'b' })] };
-    const next: ChangesResult = { ...base, files: [file({ path: 'a' }), file({ path: 'b', additions: 5 })] };
-    const r = keepUnchangedFiles(prev, next);
-    if (!r.git || !prev.git) throw new Error();
-    expect(r.files[0]).toBe(prev.files[0]);
-    expect(r.files[1]).not.toBe(prev.files[1]);
-    const same = keepUnchangedFiles(prev, { ...base, files: [file({ path: 'a' }), file({ path: 'b' })] });
-    if (!same.git) throw new Error();
-    expect(same.files).toBe(prev.files);
+    const prev = [file({ path: 'a' }), file({ path: 'b' })];
+    const r = keepUnchangedFiles(prev, [file({ path: 'a' }), file({ path: 'b', additions: 5 })]);
+    expect(r[0]).toBe(prev[0]);
+    expect(r[1]).not.toBe(prev[1]);
+    expect(keepUnchangedFiles(prev, [file({ path: 'a' }), file({ path: 'b' })])).toBe(prev);
+    // Same path in another checkout is another file.
+    const other = keepUnchangedFiles(prev, [file({ path: 'a', repo: '/x' }), file({ path: 'b' })]);
+    expect(other[0]).not.toBe(prev[0]);
+  });
+  it('flattens a session result and tags each file with its checkout', () => {
+    const r = sessionFiles({ session: true, scope: 'all', worktree: null, none: false, points: { start: 1, turn: 2, seen: null }, repos: [
+      { root: '/a', name: 'a', files: [file({ path: 'x' })] },
+      { root: '/b', name: 'b', files: [file({ path: 'x' })] },
+    ] });
+    expect(r.map(fileKey)).toEqual(['/a\u0000x', '/b\u0000x']);
+  });
+  it('writes a point in time', () => {
+    const now = new Date(2026, 10, 23, 21, 0).getTime();
+    expect(pointTime(new Date(2026, 10, 23, 20, 52).getTime(), now)).toBe('8:52 PM');
+    expect(pointTime(new Date(2026, 10, 21, 20, 52).getTime(), now)).toBe('Nov 21, 8:52 PM');
   });
 });

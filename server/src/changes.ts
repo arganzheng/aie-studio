@@ -6,6 +6,8 @@ import { getUserId } from './auth.js';
 import { getProject } from './store.js';
 import { WORKTREES_DIR, isWorktreeName, realPath, sessionCwd, worktreePath } from './worktrees.js';
 import { readPrStatus } from './changes-pr.js';
+import { markSeen, readSessionChanges, sessionRepos, type SessionScope } from './session-changes.js';
+import { getSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 
 // Model: web.SidePanel / web.ChangesView — what a session changed, as the
 // side panel's Changes tab shows it. A checkout (the project itself, or a
@@ -36,6 +38,10 @@ export type DiffFile = {
   // Line count of the new version on disk (modified / renamed files), so the
   // unchanged stretch after the last hunk can say how long it is.
   newLines?: number;
+  // Session scopes: the checkout the file is in, and whether the session
+  // itself edited it (other sessions or the user may share the checkout).
+  repo?: string;
+  touched?: boolean;
 };
 
 export const FILE_LINE_CAP = 3000;
@@ -263,6 +269,12 @@ async function resolveDir(projectPath: string, q: { worktree?: string; session?:
   return { dir: project, worktree: null };
 }
 
+// The session is one of the project's (its own directory or a worktree's).
+async function sessionInProject(projectPath: string, sid: string): Promise<boolean> {
+  if (!/^[0-9a-f-]{8,64}$/i.test(sid)) return false;
+  try { return (await getSessionInfo(sid, { dir: projectPath })) != null; } catch { return false; }
+}
+
 async function isGitDir(dir: string): Promise<boolean> {
   return git(dir, ['rev-parse', '--is-inside-work-tree']).then((s) => s.trim() === 'true', () => false);
 }
@@ -276,8 +288,15 @@ export function registerChangesRoutes(app: FastifyInstance) {
       const project = await getProject(uid, req.params.id);
       if (!project) return reply.code(404).send({ error: 'project not found' });
       const { dir, worktree } = await resolveDir(project.path, req.query);
+      const sq = req.query.scope;
+      if (sq === 'all' || sq === 'turn' || sq === 'seen') {
+        const sid = req.query.session ?? '';
+        if (!await sessionInProject(project.path, sid)) return reply.code(404).send({ error: 'session not found' });
+        try { return { session: true, scope: sq, worktree, ...await readSessionChanges(sid, sq as SessionScope) }; }
+        catch (e) { return reply.code(500).send({ error: String((e as Error).message) }); }
+      }
       if (!await isGitDir(dir)) return { git: false, worktree };
-      const scope = req.query.scope === 'uncommitted' ? 'uncommitted' : 'base';
+      const scope = sq === 'uncommitted' ? 'uncommitted' : 'base';
       try { return { git: true, ...await readChanges(dir, worktree, scope) }; }
       catch (e) { return reply.code(500).send({ error: String((e as Error).message) }); }
     },
@@ -285,20 +304,38 @@ export function registerChangesRoutes(app: FastifyInstance) {
 
   // The new version of one changed file, for opening the unchanged
   // stretches between hunks (model: web.ChangesView "diff rendering").
-  app.get<{ Params: { id: string }; Querystring: { worktree?: string; session?: string; path?: string } }>(
+  // With `repo` (session scopes): that checkout, if the session has one there.
+  app.get<{ Params: { id: string }; Querystring: { worktree?: string; session?: string; path?: string; repo?: string } }>(
     '/api/projects/:id/changes/file',
     async (req, reply) => {
       const uid = getUserId(req);
       if (!uid) return reply.code(401).send({ error: 'unauthorized' });
       const project = await getProject(uid, req.params.id);
       if (!project) return reply.code(404).send({ error: 'project not found' });
-      const { dir } = await resolveDir(project.path, req.query);
+      let { dir } = await resolveDir(project.path, req.query);
+      if (req.query.repo) {
+        const sid = req.query.session ?? '';
+        if (!await sessionInProject(project.path, sid) || !(await sessionRepos(sid)).includes(req.query.repo)) return reply.code(404).send({ error: 'not a checkout of this session' });
+        dir = req.query.repo;
+      }
       try {
         const text = await readNewVersion(dir, req.query.path ?? '');
         return reply.type('text/plain; charset=utf-8').send(text);
       } catch (e) { return reply.code(404).send({ error: String((e as Error).message) }); }
     },
   );
+
+  // "Mark all changes as seen": "Since last seen" starts from now.
+  app.post<{ Params: { id: string }; Querystring: { session?: string } }>('/api/projects/:id/changes/seen', async (req, reply) => {
+    const uid = getUserId(req);
+    if (!uid) return reply.code(401).send({ error: 'unauthorized' });
+    const project = await getProject(uid, req.params.id);
+    if (!project) return reply.code(404).send({ error: 'project not found' });
+    const sid = req.query.session ?? '';
+    if (!await sessionInProject(project.path, sid)) return reply.code(404).send({ error: 'session not found' });
+    await markSeen(sid);
+    return { ok: true, at: Date.now() };
+  });
 
   // The pull request of the branch the checkout is on, with its CI checks
   // (model: web.ChangesView "pull request"). fresh=1 skips the 30 s cache.
