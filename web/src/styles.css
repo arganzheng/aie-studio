@@ -4015,19 +4015,34 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .diff-status.s-modified { color: #d29922; background: rgba(210, 153, 34, 0.15); }
 .diff-status.s-renamed { color: #58a6ff; background: rgba(88, 166, 255, 0.15); }
 .diff-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.diff-oldpath { color: var(--fg-muted); }
+.diff-name { font-weight: 500; }
+.diff-dir { margin-left: 8px; color: var(--fg-muted); font-size: 12px; }
+.diff-copy { flex: 0 0 auto; border: none; background: none; color: var(--fg-muted); cursor: pointer; padding: 0 4px; font-size: 13px; opacity: 0; }
+.diff-file-head:hover .diff-copy, .diff-copy:focus-visible { opacity: 1; }
+.diff-copy:hover { color: var(--fg); }
 .diff-counts, .diff-note { flex: 0 0 auto; font-size: 12px; color: var(--fg-muted); }
-.diff-body { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-x: auto; }
-.diff-hunk-head { padding: 2px 10px; color: var(--fg-muted); background: rgba(88, 166, 255, 0.08); white-space: pre; user-select: none; }
-.diff-line { display: grid; grid-template-columns: 3.2em 3.2em 1fr; min-width: max-content; }
+.diff-body { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* One line-number column (old number on removed lines, new elsewhere), the
+   sign, then the text, wrapped so prose stays readable in a narrow panel. */
+.diff-line { display: grid; grid-template-columns: 3.4em 1.4em 1fr; }
 .diff-ln { padding: 0 6px; text-align: right; color: var(--fg-muted); opacity: 0.7; user-select: none; }
-.diff-code { white-space: pre; padding-right: 12px; }
-.diff-code::before { display: inline-block; width: 1.4em; padding-left: 4px; color: var(--fg-muted); content: ' '; }
+.diff-sign { user-select: none; padding-left: 2px; }
+.diff-code { white-space: pre-wrap; overflow-wrap: anywhere; padding-right: 12px; min-width: 0; }
 .diff-line.add { background: rgba(63, 185, 80, 0.14); }
-.diff-line.add .diff-code::before { content: '+'; color: #3fb950; }
+.diff-line.add .diff-ln { box-shadow: inset 2px 0 #3fb950; }
+.diff-line.add .diff-sign { color: #3fb950; }
 .diff-line.del { background: rgba(248, 81, 73, 0.14); }
-.diff-line.del .diff-code::before { content: '−'; color: #f85149; }
+.diff-line.del .diff-ln { box-shadow: inset 2px 0 #f85149; }
+.diff-line.del .diff-sign { color: #f85149; }
 .diff-line.meta { color: var(--fg-muted); font-style: italic; }
+.diff-word { color: inherit; border-radius: 2px; }
+.diff-line.add .diff-word { background: rgba(63, 185, 80, 0.42); }
+.diff-line.del .diff-word { background: rgba(248, 81, 73, 0.4); }
+/* A folded stretch of unchanged lines, with buttons to open it. */
+.diff-fold { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 3px 10px 3px 3.4em; background: rgba(88, 166, 255, 0.08); color: var(--fg-muted); font: 12px system-ui, sans-serif; user-select: none; }
+.diff-fold button { border: none; background: none; padding: 0; color: var(--fg-muted); cursor: pointer; font: inherit; }
+.diff-fold button:hover { color: var(--accent, #58a6ff); }
+.diff-fold-error { color: #f85149; }
 .diff-truncated { padding: 6px 10px; color: var(--fg-muted); font-style: italic; }
 
 /* Model: web.HistoryNotice — in place of a blank chat when history failed to load. */

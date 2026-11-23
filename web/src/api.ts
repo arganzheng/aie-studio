@@ -701,6 +701,7 @@ export type DiffFile = {
   deletions: number;
   hunks: DiffHunk[];
   truncated?: boolean;
+  newLines?: number;
 };
 export type CheckoutSummary = {
   worktree: string | null;
@@ -724,6 +725,17 @@ export async function fetchChanges(projectId: string, q: { worktree?: string | n
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
   return j;
+}
+
+// The new version of a changed file (same checkout choice as fetchChanges),
+// to open the unchanged lines between hunks.
+export async function fetchChangedFile(projectId: string, q: { worktree?: string | null; session?: string | null; path: string }): Promise<string> {
+  const p = new URLSearchParams({ path: q.path });
+  if (q.worktree) p.set('worktree', q.worktree);
+  if (q.session) p.set('session', q.session);
+  const r = await fetch(`/api/projects/${encodeURIComponent(projectId)}/changes/file?${p}`);
+  if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`); }
+  return r.text();
 }
 
 export async function fetchChangeTargets(projectId: string): Promise<{ git: boolean; targets: CheckoutSummary[] }> {
