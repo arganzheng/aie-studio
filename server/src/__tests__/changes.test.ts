@@ -140,3 +140,19 @@ describe('readChanges (real git repo)', () => {
     expect(now.files.map((f) => f.path)).toEqual(['b.txt']);
   });
 });
+
+describe('new versions', () => {
+  it('counts lines with or without a final newline', async () => {
+    const { countLines } = await import('../changes.js');
+    expect(countLines('')).toBe(0);
+    expect(countLines('a\nb\n')).toBe(2);
+    expect(countLines('a\nb')).toBe(2);
+  });
+  it('keeps paths inside the checkout', async () => {
+    const { insideCheckout } = await import('../changes.js');
+    expect(insideCheckout('/r', 'a/b.md')).toBe('/r/a/b.md');
+    expect(insideCheckout('/r', '../x')).toBeNull();
+    expect(insideCheckout('/r', '/etc/passwd')).toBeNull();
+    expect(insideCheckout('/r', '')).toBeNull();
+  });
+});

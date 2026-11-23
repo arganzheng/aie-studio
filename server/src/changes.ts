@@ -33,6 +33,9 @@ export type DiffFile = {
   hunks: DiffHunk[];
   // Lines were cut to keep the response small (FILE_LINE_CAP / TOTAL_LINE_CAP).
   truncated?: boolean;
+  // Line count of the new version on disk (modified / renamed files), so the
+  // unchanged stretch after the last hunk can say how long it is.
+  newLines?: number;
 };
 
 export const FILE_LINE_CAP = 3000;
@@ -209,7 +212,40 @@ export async function readChanges(dir: string, worktree: string | null, scope: '
   const ref = !hasHead ? EMPTY_TREE : scope === 'base' && summary.mergeBase ? summary.mergeBase : 'HEAD';
   const text = await git(dir, ['diff', '--no-color', '--no-ext-diff', '-M', ref, '--']);
   const files = [...parseUnifiedDiff(text), ...await readUntracked(dir)];
+  for (const f of files) {
+    if (f.binary || f.truncated || (f.status !== 'modified' && f.status !== 'renamed')) continue;
+    const t = await readNewVersion(dir, f.path).catch(() => null);
+    if (t != null) f.newLines = countLines(t);
+  }
   return { ...summary, scope, files };
+}
+
+// Bigger new versions are not read (their stretches can't be opened).
+export const NEW_VERSION_BYTES_CAP = 4 * 1024 * 1024;
+
+// Pure: lines in a text file ("a\nb\n" and "a\nb" are both 2).
+export function countLines(text: string): number {
+  if (!text) return 0;
+  const n = text.split('\n').length;
+  return text.endsWith('\n') ? n - 1 : n;
+}
+
+// Pure: a diff path inside the checkout, or null when it would leave it.
+export function insideCheckout(dir: string, rel: string): string | null {
+  if (!rel || rel.includes('\0') || path.isAbsolute(rel)) return null;
+  const abs = path.resolve(dir, rel);
+  return abs.startsWith(dir + path.sep) ? abs : null;
+}
+
+// The new version of a changed file: what is on disk in the checkout now.
+export async function readNewVersion(dir: string, rel: string): Promise<string> {
+  const abs = insideCheckout(dir, rel);
+  if (!abs) throw new Error('bad path');
+  const real = await realPath(abs);
+  if (!real.startsWith(dir + path.sep)) throw new Error('bad path');
+  const st = await fs.stat(real);
+  if (!st.isFile() || st.size > NEW_VERSION_BYTES_CAP) throw new Error('not readable');
+  return fs.readFile(real, 'utf8');
 }
 
 // Where the Changes tab looks: a named worktree, the directory a session
@@ -244,6 +280,23 @@ export function registerChangesRoutes(app: FastifyInstance) {
       const scope = req.query.scope === 'uncommitted' ? 'uncommitted' : 'base';
       try { return { git: true, ...await readChanges(dir, worktree, scope) }; }
       catch (e) { return reply.code(500).send({ error: String((e as Error).message) }); }
+    },
+  );
+
+  // The new version of one changed file, for opening the unchanged
+  // stretches between hunks (model: web.ChangesView "diff rendering").
+  app.get<{ Params: { id: string }; Querystring: { worktree?: string; session?: string; path?: string } }>(
+    '/api/projects/:id/changes/file',
+    async (req, reply) => {
+      const uid = getUserId(req);
+      if (!uid) return reply.code(401).send({ error: 'unauthorized' });
+      const project = await getProject(uid, req.params.id);
+      if (!project) return reply.code(404).send({ error: 'project not found' });
+      const { dir } = await resolveDir(project.path, req.query);
+      try {
+        const text = await readNewVersion(dir, req.query.path ?? '');
+        return reply.type('text/plain; charset=utf-8').send(text);
+      } catch (e) { return reply.code(404).send({ error: String((e as Error).message) }); }
     },
   );
 
