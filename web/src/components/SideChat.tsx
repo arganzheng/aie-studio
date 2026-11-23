@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { openDuplex, type DuplexSocket } from '../lib/duplex';
 import type { Theme } from '../types';
 import { MarkdownText } from './SdkPanel';
+import { questionAbout } from '../lib/messageActions';
 
 // Model: SideChat (/btw) — a side panel tab for questions about a Claude
 // session without interrupting it (server/src/side-chat.ts): a read-only
@@ -9,7 +10,8 @@ import { MarkdownText } from './SdkPanel';
 // the session, or pick "Side chat" from "+". Questions asked before the fork
 // is up wait and go out in order.
 
-type Line = { role: 'user' | 'assistant' | 'tool' | 'note'; text: string };
+// branch: the message a side chat was opened about (model: web.MessageActions).
+type Line = { role: 'user' | 'assistant' | 'tool' | 'note' | 'branch'; text: string };
 
 // What each side chat showed, kept for this browser tab (sessionStorage):
 // the panel can be remounted or the page reloaded, and the lines should not
@@ -39,7 +41,9 @@ export function SideChat({ projectId, sessionId, label, theme, ask, onClose, onC
   label: string;
   theme: Theme;
   // A question sent from the session (`/btw …`); seq makes repeats distinct.
-  ask: { question: string; seq: number } | null;
+  // focus: a message the side chat was opened about — the next question
+  // goes out with it quoted.
+  ask: { question: string; seq: number; focus?: string } | null;
   onClose?: () => void;
   // Carry on in a child session (it can change things), told what was said here.
   onContinue?: (conversation: string) => void;
@@ -57,6 +61,9 @@ export function SideChat({ projectId, sessionId, label, theme, ask, onClose, onC
   const waiting = useRef<string[]>([]);
   const lastAsk = useRef(0);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  // The message the next question is about (Side chat from a message).
+  const [focus, setFocus] = useState<string | null>(null);
 
   const sendNow = useCallback((q: string) => {
     const ws = wsRef.current;
@@ -64,11 +71,12 @@ export function SideChat({ projectId, sessionId, label, theme, ask, onClose, onC
     ws.send(JSON.stringify({ type: 'ask', text: q }));
     setStatus('thinking');
   }, []);
-  const ask1 = useCallback((q: string) => {
+  const ask1 = useCallback((q: string, about: string | null = null) => {
     const t = q.trim();
     if (!t) return;
     setLines((l) => [...l, { role: 'user', text: t }]);
-    sendNow(t);
+    sendNow(about ? questionAbout(about, t) : t);
+    setFocus(null);
   }, [sendNow]);
 
   const connect = useCallback(() => {
@@ -109,6 +117,12 @@ export function SideChat({ projectId, sessionId, label, theme, ask, onClose, onC
   useEffect(() => {
     if (!ask || ask.seq === lastAsk.current) return;
     lastAsk.current = ask.seq;
+    if (ask.focus) {
+      setLines((l) => [...l, { role: 'branch', text: ask.focus! }]);
+      if (ask.question.trim()) ask1(ask.question, ask.focus);
+      else { setFocus(ask.focus); window.setTimeout(() => inputRef.current?.focus(), 50); }
+      return;
+    }
     ask1(ask.question);
   }, [ask, ask1]);
 
@@ -143,6 +157,12 @@ export function SideChat({ projectId, sessionId, label, theme, ask, onClose, onC
           l.role === 'user' ? <div key={i} className="btw-q">{l.text}</div>
             : l.role === 'tool' ? <div key={i} className="btw-tool">↳ {l.text}</div>
             : l.role === 'note' ? <div key={i} className="btw-note">{l.text}</div>
+            : l.role === 'branch' ? (
+              <div key={i} className="btw-branch">
+                <div className="btw-branch-label">Branched from message</div>
+                <div className="btw-branch-text"><MarkdownText text={l.text.length > 600 ? `${l.text.slice(0, 600)}…` : l.text} theme={theme} /></div>
+              </div>
+            )
             : <div key={i} className="btw-a"><MarkdownText text={l.text} theme={theme} /></div>
         ))}
         {stream && <div className="btw-a"><MarkdownText text={stream} theme={theme} /></div>}
@@ -150,15 +170,16 @@ export function SideChat({ projectId, sessionId, label, theme, ask, onClose, onC
         {status === 'connecting' && <div className="btw-note">Opening a copy of the session…</div>}
         {status === 'closed' && <div className="btw-note">The side chat ended. <button type="button" onClick={restart}>Start again</button></div>}
       </div>
-      <form className="btw-input" onSubmit={(e) => { e.preventDefault(); if (status === 'closed') return; ask1(text); setText(''); }}>
+      <form className="btw-input" onSubmit={(e) => { e.preventDefault(); if (status === 'closed') return; ask1(text, focus); setText(''); }}>
         <textarea
+          ref={inputRef}
           value={text}
           rows={2}
-          placeholder="Ask a side question…"
+          placeholder={focus ? 'Ask about this message…' : 'Ask a side question…'}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing) return;
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (status !== 'closed') { ask1(text); setText(''); } }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (status !== 'closed') { ask1(text, focus); setText(''); } }
           }}
         />
         {status === 'thinking'

@@ -146,6 +146,7 @@ registerTabKind({
         }}
         onActivity={reportActivity}
         onBtw={openSideChat ? (question) => { if (t.resumeId) openSideChat(t.resumeId, t.title || t.resumeId.slice(0, 8), question); return !!t.resumeId; } : undefined}
+        onSideChatAbout={openSideChat ? (quote) => { if (t.resumeId) openSideChat(t.resumeId, t.title || t.resumeId.slice(0, 8), '', quote); return !!t.resumeId; } : undefined}
         onOpenProgress={openSideTool ? () => openSideTool('progress') : undefined}
         onShowPreview={openSidePreview}
         onOpenSession={(sessionId, title) => openTab({ id: shortId(), type: 'claude-sdk', resumeId: sessionId, ...(title ? { title } : {}) })}

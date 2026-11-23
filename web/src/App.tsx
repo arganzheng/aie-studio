@@ -1,3 +1,4 @@
+import { messageLinkFromHash, type MessageLink } from './lib/messageActions';
 import { AutomationsDialog } from './components/AutomationsDialog';
 import type React from 'react';
 import { CommandPalette, type PaletteAction } from './components/CommandPalette';
@@ -168,7 +169,14 @@ function loadCurrentBatches(): Record<string, string> {
   } catch { return {}; }
 }
 
+// A message link the page was opened with (read before the project hash is
+// written over it).
+let initialMessageLink: MessageLink | null = messageLinkFromHash(window.location.hash);
+
 function projectIdFromHash(): string | null {
+  // A message link names its project (model: web.MessageActions).
+  const link = messageLinkFromHash(window.location.hash) ?? initialMessageLink;
+  if (link) return link.projectId;
   try {
     const h = decodeURIComponent(window.location.hash.slice(1));
     return h || null;
@@ -446,10 +454,11 @@ export default function App() {
   const [sideRequest, setSideRequest] = useState<SideRequest | null>(null);
   const askSide = (kind: 'review' | 'launcher') => setSideRequest((prev) => ({ kind, seq: (prev?.seq ?? 0) + 1 }));
   // Model: SideChat (/btw) — show the side panel with the side chat about a session.
-  const openSideChat = (sessionId: string, label: string, question: string) => {
+  // focus: a message it is about (model: web.MessageActions "Side chat").
+  const openSideChat = (sessionId: string, label: string, question: string, focus?: string) => {
     setReviewCollapsed(false);
     setReviewDrawerOpen(true);
-    setSideRequest((prev) => ({ kind: 'btw', sessionId, label, question, seq: (prev?.seq ?? 0) + 1 }));
+    setSideRequest((prev) => ({ kind: 'btw', sessionId, label, question, focus, seq: (prev?.seq ?? 0) + 1 }));
   };
   // Model: web.SidePanel — show a session tool tab (Progress, ...) beside the chat.
   const openSideTool = (kind: 'progress' | 'artifacts') => {
@@ -1766,6 +1775,40 @@ export default function App() {
   function revealInSession(origin: TabRef, anchor: string) {
     revealAt(origin, anchor, origin.key.slice(0, 8), 'observe', `reveal in ${origin.type} ${origin.key}`);
   }
+
+  // Model: web.MessageActions "Copy link" — /#msg=<project>/<session>/<anchor>:
+  // open that session (switching project first if need be) at the message.
+  const pendingMsgLinkRef = useRef<MessageLink | null>(null);
+  function openMessageLink(l: MessageLink) {
+    if (!projects.some((p) => p.id === l.projectId)) { showAppToast('That project is not in your list'); return; }
+    if (l.projectId !== activeProjectId) {
+      pendingMsgLinkRef.current = l;
+      setActiveProject(l.projectId);
+      return;
+    }
+    revealAt({ type: 'session', key: l.sessionId }, l.anchor, l.sessionId.slice(0, 8), 'link', `message link ${l.sessionId} ${l.anchor}`);
+  }
+  const openMessageLinkRef = useRef(openMessageLink);
+  openMessageLinkRef.current = openMessageLink;
+  useEffect(() => {
+    const l = pendingMsgLinkRef.current;
+    if (!l || l.projectId !== activeProjectId) return;
+    pendingMsgLinkRef.current = null;
+    openMessageLinkRef.current(l);
+  }, [activeProjectId]);
+  useEffect(() => {
+    if (!loaded) return;
+    const take = (l: MessageLink | null) => {
+      if (!l) return;
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+      openMessageLinkRef.current(l);
+    };
+    take(initialMessageLink);
+    initialMessageLink = null;
+    const onHash = () => take(messageLinkFromHash(window.location.hash));
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, [loaded]);
 
   // Model: web.AddToChat from the file viewer — append the composed quote to
   // the input of the session the user was last in (else the newest session

@@ -19,6 +19,9 @@ import type { SendKey, Theme } from '../types';
 import type { SessionPanelApi, TabActivity } from '../registry/tabRegistry';
 import { CommentComposer, flashMessage, sleep, type NewComment } from './CommentComposer';
 import { BookmarkButton, type NewBookmark } from './BookmarkButton';
+import { MessageActions } from './MessageActions';
+import { messageLink } from '../lib/messageActions';
+import { copyText } from '../lib/clipboard';
 import type { PromptInsertion } from './ChatInput';
 import { composeComment, type CommentMark, bookmarkLabel } from '../lib/review';
 import type { ChatQuote } from '../lib/addToChat';
@@ -62,7 +65,8 @@ import { openDuplex, type DuplexSocket } from '../lib/duplex';
 // ----- message model ------------------------------------------------------
 
 export type Msg =
-  | { id: string; role: 'user'; text: string; images?: string[]; uuid?: string }
+  // at: when it was written (model: web.MessageActions shows it).
+  | { id: string; role: 'user'; text: string; images?: string[]; uuid?: string; at?: number }
   // uuid / blockIdx: the jsonl record + content block this text came from —
   // the comment anchor (model: Comment.anchor = a:<uuid>:<blockIdx>).
   // at: when it was written (transcript timestamp, or arrival when live) —
@@ -163,7 +167,7 @@ function renderEvent(ev: any): Delta[] {
       else prompt.push(part.text);
     }
     if (prompt.length || images.length) {
-      out.push({ kind: 'append', msg: { id: shortId(), role: 'user', text: prompt.join('\n'), images: images.length ? images : undefined, uuid } });
+      out.push({ kind: 'append', msg: { id: shortId(), role: 'user', text: prompt.join('\n'), images: images.length ? images : undefined, uuid, at } });
     }
   }
   return out;
@@ -342,6 +346,7 @@ export function SdkPanel({
   onOpenFile,
   onActivity,
   onBtw,
+  onSideChatAbout,
   onOpenProgress,
   onShowPreview,
   onOpenSession,
@@ -379,6 +384,8 @@ export function SdkPanel({
   onActivity?: (a: TabActivity | null) => void;
   // Model: SideChat — `/btw …` opens the side chat about this session; false when it has no id yet.
   onBtw?: (question: string) => boolean;
+  // Model: web.MessageActions — a side chat about one message (quoted); false when the session has no id yet.
+  onSideChatAbout?: (quote: string) => boolean;
   // Model: web.PlanStrip — open the Progress tab beside the chat.
   onOpenProgress?: () => void;
   // Model: web.PreviewView — Claude's show_preview opens a page in the side panel.
@@ -568,6 +575,39 @@ export function SdkPanel({
   // Model: web.AddToChat — quote a selected passage as a card on our own input.
   function addToChat(quote: string) {
     setInsertion((prev) => ({ seq: (prev?.seq ?? 0) + 1, text: '', quotes: [{ quote, origin: 'Claude message' }] }));
+  }
+
+  // Model: web.MessageActions — on a phone (no hover) a tap on a message shows
+  // its row; a tap elsewhere hides it. Taps on links, buttons and form fields
+  // are left alone.
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root || !window.matchMedia('(hover: none)').matches) return;
+    const onTap = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.closest('a, button, input, textarea, summary, .msg-actions')) return;
+      const msg = t.closest<HTMLElement>('.msg-user, .msg-assistant');
+      root.querySelectorAll('.msg.actions-on').forEach((el) => { if (el !== msg) el.classList.remove('actions-on'); });
+      msg?.classList.toggle('actions-on');
+    };
+    root.addEventListener('click', onTap);
+    return () => root.removeEventListener('click', onTap);
+  }, []);
+
+  // Model: web.MessageActions — Copy, Copy link and Side chat over a message.
+  async function copyMessage(text: string) {
+    showToast((await copyText(text)) ? 'Copied ✓' : 'Copy failed');
+  }
+  const linkable = (anchor: string | null) => (anchor && activeSessionIdRef.current ? anchor : null);
+  async function copyMessageLink(anchor: string) {
+    const sid = activeSessionIdRef.current;
+    if (!sid) return;
+    const url = messageLink(window.location.origin + window.location.pathname, { projectId, sessionId: sid, anchor });
+    showToast((await copyText(url)) ? 'Link copied ✓' : 'Copy failed');
+  }
+  function sideChatAbout(text: string) {
+    if (!onSideChatAbout) return;
+    if (!onSideChatAbout(text)) showToast('Send a first message: a side chat needs the session to exist');
   }
 
   // Model: web.RichCopy — 🍚 on assistant messages when the setting is on.
@@ -1073,7 +1113,7 @@ export function SdkPanel({
       else if (mode === 'interrupt') showToast(isCompactCommand(text) ? 'Stopping Claude — it compacts, then carries on' : 'Stopping Claude — your message goes out as soon as it has stopped');
       return;
     }
-    append({ id: msgId, role: 'user', text, images: images.length ? images.map((p) => p.dataUrl) : undefined });
+    append({ id: msgId, role: 'user', text, images: images.length ? images.map((p) => p.dataUrl) : undefined, at: Date.now() });
     wsSend({ type: 'user', text, images: toWireImages(images), msgId });
     setStatus('thinking');
   }
@@ -1415,7 +1455,12 @@ export function SdkPanel({
                         </>
                       );
                     })()}
-                    {anchor && canBookmark && <BookmarkButton active={!!bookmarkedAnchors?.has(anchor)} className="msg-bookmark-btn-2nd" onClick={() => bookmark(anchor, m.text)} />}
+                    <MessageActions
+                      at={m.at}
+                      onCopy={() => void copyMessage(m.text)}
+                      onCopyLink={linkable(anchor) ? () => void copyMessageLink(anchor!) : undefined}
+                      extra={anchor && canBookmark ? <BookmarkButton active={!!bookmarkedAnchors?.has(anchor)} onClick={() => bookmark(anchor, m.text)} /> : null}
+                    />
                     {m.uuid && (
                       <button
                         type="button"
@@ -1439,8 +1484,16 @@ export function SdkPanel({
             return (
               <div key={m.id} className={`msg msg-assistant${bmCls}`} data-anchor={anchor ?? undefined}>
                 <MarkdownText text={m.text} theme={theme} projectPath={projectPath} onOpenFile={openFile} />
-                {anchor && canBookmark && <BookmarkButton active={!!bookmarkedAnchors?.has(anchor)} onClick={() => bookmark(anchor, m.text)} />}
-                {showRichCopy && <RichCopyButton onClick={() => copyRich(m.text)} />}
+                <MessageActions
+                  at={m.at}
+                  onCopy={() => void copyMessage(m.text)}
+                  onCopyLink={linkable(anchor) ? () => void copyMessageLink(anchor!) : undefined}
+                  onSideChat={onSideChatAbout ? () => sideChatAbout(m.text) : undefined}
+                  extra={<>
+                    {anchor && canBookmark && <BookmarkButton active={!!bookmarkedAnchors?.has(anchor)} onClick={() => bookmark(anchor, m.text)} />}
+                    {showRichCopy && <RichCopyButton onClick={() => copyRich(m.text)} />}
+                  </>}
+                />
               </div>
             );
           }
