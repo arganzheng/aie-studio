@@ -19,6 +19,7 @@ import {
   type Query,
   type SDKUserMessage,
   type CanUseTool,
+  type HookCallback,
   type PermissionResult,
   type PermissionUpdate,
   type SlashCommand,
@@ -26,6 +27,7 @@ import {
   createSdkMcpServer,
   tool, forkSession,
 } from '@anthropic-ai/claude-agent-sdk';
+import { SessionChanges } from './session-changes.js';
 import { z } from 'zod';
 import { mapContextUsage, type ContextSnapshot } from './context-usage.js';
 import {
@@ -167,6 +169,8 @@ export function applyTaskEvent(tasks: Map<string, SdkTask>, m: any): boolean {
 }
 
 type SdkEntry = {
+  // Snapshots for the Changes tab's session scopes (model: web.ChangesView "session scopes").
+  changes: SessionChanges;
   // Where claude runs: the project directory, or the session's own git
   // worktree under it (model: Session.worktree).
   cwd: string;
@@ -440,6 +444,22 @@ function denyAllAsks(entry: SdkEntry, message: string) {
 
 // ----- query lifecycle -----------------------------------------------------
 
+// Model: web.ChangesView "session scopes" — before a tool runs, the snapshot
+// of the user's last message is done; before a file edit in a checkout the
+// session has not been in, that checkout is snapshotted.
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+function changesHook(entry: SdkEntry): HookCallback {
+  return async (input) => {
+    try {
+      const i = input as { tool_name?: string; tool_input?: { file_path?: unknown; notebook_path?: unknown } };
+      const file = i.tool_input?.file_path ?? i.tool_input?.notebook_path;
+      if (i.tool_name && EDIT_TOOLS.has(i.tool_name) && typeof file === 'string' && file) await entry.changes.beforeEdit(file);
+      else await entry.changes.idle();
+    } catch { /* never block a tool on this */ }
+    return {};
+  };
+}
+
 function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: string }) {
   entry.generation++;
   const gen = entry.generation;
@@ -462,6 +482,7 @@ function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: 
       pathToClaudeCodeExecutable: process.env.REMOTE_IDE_SDK_CLAUDE_PATH || undefined,
       stderr: (data) => broadcast(entry, { type: 'stderr', data }),
       canUseTool: makeCanUseTool(entry),
+      hooks: { PreToolUse: [{ hooks: [changesHook(entry)] }] },
       mcpServers: { ...(entry.childTools ? { aie: childToolsServer(entry) } : {}), aie_status: statusServer(), aie_progress: progressServer(), aie_view: viewToolsServer(entry), aie_watch: watchToolsServer(entry) },
       outputFormat: entry.resultSchema ? { type: 'json_schema', schema: entry.resultSchema } : undefined,
     },
@@ -613,6 +634,7 @@ function onSdkMessage(entry: SdkEntry, m: any) {
       if (entry.sessionId) { byId.delete(entry.sessionId); unmarkLive(entry.sessionId, 'sdk'); }
       const oldId = entry.sessionId;
       entry.sessionId = sid;
+      void entry.changes.setSessionId(sid);
       void saveTerms(entry, oldId);
       byId.set(sid, entry);
       markLive(sid, 'sdk');
@@ -850,6 +872,8 @@ function deliverUser(entry: SdkEntry, text: string, images: Array<{ mediaType?: 
     // Same for a tool call waiting for leave: the reply stands in for "no".
     else if (ask.kind === 'permission') settlePermission(entry, id, false, { note: 'they replied instead — see their next message' });
   }
+  // The point "Last agent turn" counts from.
+  void entry.changes.onUserMessage();
   if (entry.sessionId) void unarchiveOnUse(entry.owner.uid, `claude:${entry.sessionId}`).then(() => setSessionStatus(entry.owner.uid, `claude:${entry.sessionId}`, null));
   const uuid = randomUUID();
   const bang = entry.pendingBang.splice(0).map((b) => b.result);
@@ -1150,6 +1174,7 @@ function newEntry(o: {
   resumeId?: string; parentSessionId?: string | null; observeWire?: boolean; model?: string; spawnedByAgent?: boolean; group?: string;
 }): SdkEntry {
   return {
+    changes: new SessionChanges(o.cwd, o.resumeId ?? null),
     cwd: o.cwd,
     projectPath: o.projectPath,
     owner: { uid: o.uid, projectId: o.projectId, tabType: 'claude-sdk' },

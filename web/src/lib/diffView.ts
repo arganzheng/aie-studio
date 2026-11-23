@@ -1,4 +1,4 @@
-import type { ChangesResult, DiffFile, DiffLine } from '../api';
+import type { DiffFile, DiffLine, SessionChangesResult } from '../api';
 
 // Model: web.ChangesView "diff rendering" — the pure parts of how a file's
 // diff is drawn: which words in a changed line actually changed, and the
@@ -167,17 +167,35 @@ export function splitPath(p: string): { name: string; dir: string } {
   return i < 0 ? { name: p, dir: '' } : { name: p.slice(i + 1), dir: p.slice(0, i) };
 }
 
-// Pure: the new poll result, with each file that did not change kept as the
-// same object, so its rendering (and word marks) is not redone every poll.
-export function keepUnchangedFiles(prev: ChangesResult | null, next: ChangesResult): ChangesResult {
-  if (!prev?.git || !next.git) return next;
-  const old = new Map(prev.files.map((f) => [f.path, f]));
-  let same = prev.files.length === next.files.length;
-  const files = next.files.map((f, i) => {
-    const o = old.get(f.path);
-    if (o && JSON.stringify(o) === JSON.stringify(f)) { if (prev.files[i] !== o) same = false; return o; }
+// Pure: a file's identity across checkouts (session scopes span several).
+export function fileKey(f: Pick<DiffFile, 'path' | 'repo'>): string {
+  return `${f.repo ?? ''}\u0000${f.path}`;
+}
+
+// Pure: the new poll's files, with each file that did not change kept as the
+// same object (and the same array when nothing changed), so its rendering
+// (and word marks) is not redone every poll.
+export function keepUnchangedFiles(prev: readonly DiffFile[] | null, next: DiffFile[]): DiffFile[] {
+  if (!prev) return next;
+  const old = new Map(prev.map((f) => [fileKey(f), f]));
+  let same = prev.length === next.length;
+  const files = next.map((f, i) => {
+    const o = old.get(fileKey(f));
+    if (o && JSON.stringify(o) === JSON.stringify(f)) { if (prev[i] !== o) same = false; return o; }
     same = false;
     return f;
   });
-  return { ...next, files: same ? prev.files : files };
+  return same ? (prev as DiffFile[]) : files;
+}
+
+// Pure: a session result's files in one list, each tagged with its checkout.
+export function sessionFiles(r: SessionChangesResult): DiffFile[] {
+  return r.repos.flatMap((x) => x.files.map((f) => (f.repo ? f : { ...f, repo: x.root })));
+}
+
+// Pure: "8:52 PM" today, "Nov 21, 8:52 PM" another day.
+export function pointTime(at: number, now = Date.now()): string {
+  const d = new Date(at);
+  const t = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return new Date(now).toDateString() === d.toDateString() ? t : `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${t}`;
 }
