@@ -486,6 +486,8 @@ export function SdkPanel({
   statusRef.current = status;
 
   const wsRef = useRef<DuplexSocket | null>(null);
+  // Model: web.WorkGroups "working in the background" — the session's commands and subagents still running.
+  const [bgTasks, setBgTasks] = useState<Array<{ taskId: string; description: string; subagent: boolean }>>([]);
   const activeSessionIdRef = useRef<string | null>(resumeId ?? null);
   const closedByUsRef = useRef(false);
   const sessionExitedRef = useRef(false);
@@ -660,8 +662,14 @@ export function SdkPanel({
   });
 
   const generating = status === 'thinking';
+  // Model: web.WorkGroups "working in the background" — the turn has ended
+  // but commands or subagents it started still run (the CLI hands each one's
+  // end back to Claude as a new turn). Still work going on, so the latest
+  // group stays open until they are done.
+  const inBackground = !generating && bgTasks.length > 0 && (status === 'ready');
+  const working = generating || inBackground;
   // Model: web.WorkGroups — the work between messages, folded per stretch.
-  const workItems = useMemo(() => groupWork(msgs as WorkMsg[], generating) as WorkItem<Msg & WorkMsg>[], [msgs, generating]);
+  const workItems = useMemo(() => groupWork(msgs as WorkMsg[], working) as WorkItem<Msg & WorkMsg>[], [msgs, working]);
   const awaitingInput = forms.elicitations.some((e) => !e.recap) || planAsk !== null || permAsks.length > 0;
   useEffect(() => { onActivityRef.current?.({ generating, awaitingInput }); }, [generating, awaitingInput]);
   useEffect(() => () => onActivityRef.current?.(null), []);
@@ -840,11 +848,13 @@ export function SdkPanel({
   function handleWsMsg(m: any) { handleWsMsgRef.current(m); }
   handleWsMsgRef.current = (m: any) => {
     if (m.type === 'pong') return;
+    if (m.type === 'bg_tasks') { setBgTasks(Array.isArray(m.running) ? m.running : []); return; }
     if (m.type === 'started') {
       gotStartedRef.current = true;
       failedConnectsRef.current = 0;
       if (m.resumed) pendingInitialPromptRef.current = null;
       setStatus(m.thinking ? 'thinking' : 'ready');
+      setBgTasks(Array.isArray(m.bgTasks) ? m.bgTasks : []);
       setCompacting(m.compacting === true);
       if (typeof m.sessionId === 'string' && m.sessionId) {
         activeSessionIdRef.current = m.sessionId;
@@ -1342,6 +1352,7 @@ export function SdkPanel({
               <WorkGroupView
                 key={item.id}
                 group={item}
+                background={item.running && inBackground ? bgTasks.length : 0}
                 rel={rel}
                 renderDetail={(t) => renderToolDetail(t as Msg & { role: 'tool' })}
                 renderForm={(id) => forms.renderFor(id)}
@@ -1545,14 +1556,20 @@ export function SdkPanel({
             <span className="thinking-dot" /><span className="thinking-dot" /><span className="thinking-dot" />
           </div>
         )}
-        {status !== 'thinking' && status !== 'replaying' && awaitingUser(msgs) && (
+        {inBackground && (
+          <div className="msg-awaiting bg" title={bgTasks.map((t) => `• ${t.description || (t.subagent ? 'subagent' : 'command')}`).join('\n')}>
+            <span className="msg-awaiting-dot working" aria-hidden="true" />
+            Working in the background — {bgTasks.length} task{bgTasks.length === 1 ? '' : 's'} still running{bgTasks[0]?.description ? `: ${bgTasks[0].description}${bgTasks.length > 1 ? ', …' : ''}` : ''}. Claude picks up again when {bgTasks.length === 1 ? 'it finishes' : 'they finish'}.
+          </div>
+        )}
+        {!inBackground && status !== 'thinking' && status !== 'replaying' && awaitingUser(msgs) && (
           <div className="msg-awaiting"><span className="msg-awaiting-dot" aria-hidden="true" />Claude is awaiting instructions</div>
         )}
       </div>
       {(() => {
         const label = toast ?? (
           compacting && status === 'thinking' ? 'Compacting the conversation…'
-            : status === 'ready' ? 'Ready'
+            : status === 'ready' ? (bgTasks.length ? `Ready · ${bgTasks.length} background task${bgTasks.length === 1 ? '' : 's'} running` : 'Ready')
             : status === 'connecting' ? 'Connecting…'
             : status === 'reconnecting' ? 'Reconnecting…'
             : status === 'replaying' ? 'Loading history…'

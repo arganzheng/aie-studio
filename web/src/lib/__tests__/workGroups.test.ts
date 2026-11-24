@@ -48,6 +48,19 @@ describe('work groups', () => {
     // The second thought: 20 s (previous call done) → 27 s.
     expect(g.rows[2]).toMatchObject({ kind: 'thought', ms: 7_000 });
   });
+  it("keeps the latest work running when a remark or the turn's reply follows it", () => {
+    // A report shown after the work while Claude (or its background tasks) still works.
+    const items = groupWork([user(), tool('Bash'), tool('Agent'), text('Both agents restarted:\n- one\n- two')], true);
+    expect(kinds(items)).toEqual(['U', 'G2', 'T']);
+    expect(items[1]).toMatchObject({ kind: 'group', running: true });
+    // Not across the user's own message, nor a question form.
+    const after = groupWork([user(), tool('Bash'), text('Done:\n- a\n- b'), user()], true);
+    expect(after[1]).toMatchObject({ kind: 'group', running: false });
+    const form = groupWork([user(), tool('Bash'), tool('AskUserQuestion')], true);
+    expect(form[1]).toMatchObject({ kind: 'group', running: false });
+    // Nothing is running once the work and its background tasks are over.
+    expect(groupWork([user(), tool('Bash'), text('Done:\n- a\n- b')], false)[1]).toMatchObject({ running: false });
+  });
   it('calls a group of only thinking a thought', () => {
     const items = groupWork([user(), think(1, 9_000), text('Sure.')], false);
     expect(items[1]).toMatchObject({ kind: 'group', thoughtOnly: true, steps: 0 });
