@@ -244,3 +244,14 @@ describe('claudeAnswersFrom', () => {
     expect(claudeAnswersFrom(r, buildContent(r, skipped))['Do you prefer option A or option B?']).toBe('(skipped)');
   });
 });
+
+describe('AskUserQuestion option previews', () => {
+  it('keeps an option\'s preview (a mockup shown under it), drops an empty one', () => {
+    const req = JSON.parse(JSON.stringify(CLAUDE_REQ));
+    req.request.input.questions[0].options[0].preview = '┌──┐\n│A │\n└──┘';
+    req.request.input.questions[0].options[1].preview = '   ';
+    const q = parseAskUserQuestion(req)!.questions[0];
+    expect(q.options[0].preview).toBe('┌──┐\n│A │\n└──┘');
+    expect(q.options[1].preview).toBeUndefined();
+  });
+});

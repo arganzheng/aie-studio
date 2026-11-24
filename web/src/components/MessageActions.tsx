@@ -21,12 +21,16 @@ export function MessageActions({ at, onCopy, onCopyLink, onSideChat, extra }: {
   extra?: ReactNode;
 }) {
   return (
-    <div className="msg-actions" onClick={(e) => e.stopPropagation()}>
-      {at != null && <span className="msg-actions-time" title={messageTimeFull(at)}>{messageTime(at)}</span>}
+    // Time and buttons are separate so the layout can put them on different
+    // sides of the message (Devin-style) or in one row under it.
+    <div className="msg-meta" onClick={(e) => e.stopPropagation()}>
+      {at != null && <span className="msg-time" title={messageTimeFull(at)}>{messageTime(at)}</span>}
+      <div className="msg-actions">
       <button type="button" className="msg-actions-btn" onClick={onCopy} title="Copy (Markdown)" aria-label="Copy the message as Markdown"><Icon d={COPY} /></button>
       {onCopyLink && <button type="button" className="msg-actions-btn" onClick={onCopyLink} title="Copy link to this message" aria-label="Copy a link to this message"><Icon d={LINK} /></button>}
       {onSideChat && <button type="button" className="msg-actions-btn" onClick={onSideChat} title="Side chat about this message — read-only, doesn't interrupt the session" aria-label="Open a side chat about this message"><Icon d={CHAT} /></button>}
       {extra}
+      </div>
     </div>
   );
 }
