@@ -2,6 +2,11 @@
 // (like Devin's): a strip of tabs with "+", maximize and collapse. A tab is
 // one of a few tools; "+" opens a launcher tab that turns into the tool
 // picked from it. One set of tabs per project, remembered on this device.
+//
+// Tabs that belong to one session (a page opened in it, by Claude's
+// show_preview or from "+"; a side chat about a session) show only while that session is the one the
+// user is in; the rest (Changes, Progress, Files, …) are shared and follow
+// the session by themselves. Each session remembers its own active tab.
 
 // target of a Changes tab: FOLLOW = whatever checkout the session the user
 // is working in runs in; ROOT = the project directory; else a worktree name.
@@ -17,8 +22,10 @@ export type SideWant =
   // while the tab is connected (a reload starts a fresh copy).
   | { kind: 'btw'; sessionId: string; label: string }
   // Model: web.PreviewView — a dev server on this machine, by port; path is
-  // where it was last (kept so the tab comes back to it).
-  | { kind: 'preview'; port: number; path: string }
+  // where it was last (kept so the tab comes back to it). owner: the session
+  // it was opened in (by Claude's show_preview or by the user from "+");
+  // none when no session was in front.
+  | { kind: 'preview'; port: number; path: string; owner?: string }
   // Model: web.SidePanel session tools — follow the session the user is in.
   | { kind: 'progress' }
   | { kind: 'agents' }
@@ -32,7 +39,25 @@ export type SideWant =
   | { kind: 'terminal'; term: string }
   | { kind: 'launcher' };
 export type SideTab = SideWant & { id: string };
-export type SideState = { tabs: SideTab[]; active: string | null };
+// activeBy: the tab each session had in front, by session id.
+export type SideState = { tabs: SideTab[]; active: string | null; activeBy?: Record<string, string> };
+
+// The session a tab belongs to; undefined for a shared tab.
+export function tabOwner(t: SideTab | SideWant): string | undefined {
+  if (t.kind === 'btw') return t.sessionId;
+  if (t.kind === 'preview') return t.owner;
+  return undefined;
+}
+
+// A tab picked while `session` is in front: a preview is that session's.
+export function ownWant(want: SideWant, session: string | null | undefined): SideWant {
+  return want.kind === 'preview' && !want.owner && session ? { ...want, owner: session } : want;
+}
+
+function ownedElsewhere(t: SideTab, session: string | null | undefined): boolean {
+  const o = tabOwner(t);
+  return o != null && o !== session;
+}
 
 let seq = 0;
 export function sideTabId(): string { return `s${Date.now().toString(36)}${(seq++).toString(36)}`; }
@@ -43,21 +68,36 @@ export function defaultSideState(reviewOn: boolean, id = sideTabId): SideState {
 }
 
 // Review tabs only exist while the Review feature is on; Terminal tabs while
-// the Terminal is.
-export function visibleTabs(s: SideState, reviewOn: boolean, terminalOn = false): SideTab[] {
-  return s.tabs.filter((t) => (reviewOn || t.kind !== 'review') && (terminalOn || t.kind !== 'terminal'));
+// the Terminal is; a session's own tabs while it is the session the user is in.
+export function visibleTabs(s: SideState, reviewOn: boolean, terminalOn = false, session?: string | null): SideTab[] {
+  return s.tabs.filter((t) => (reviewOn || t.kind !== 'review') && (terminalOn || t.kind !== 'terminal') && !ownedElsewhere(t, session));
 }
 
-// The tab to show: the active one if visible, else the first visible.
-export function activeTab(s: SideState, reviewOn: boolean, terminalOn = false): SideTab | null {
-  const vis = visibleTabs(s, reviewOn, terminalOn);
-  return vis.find((t) => t.id === s.active) ?? vis[0] ?? null;
+// The tab to show: the one this session had in front, else the active one,
+// else the first visible.
+export function activeTab(s: SideState, reviewOn: boolean, terminalOn = false, session?: string | null): SideTab | null {
+  const vis = visibleTabs(s, reviewOn, terminalOn, session);
+  const mine = session ? s.activeBy?.[session] : undefined;
+  return (mine ? vis.find((t) => t.id === mine) : undefined) ?? vis.find((t) => t.id === s.active) ?? vis[0] ?? null;
+}
+
+const ACTIVE_BY_MAX = 100;
+
+// Note the active tab as the one `session` has in front (when it can see it).
+export function remember(s: SideState, session: string | null | undefined): SideState {
+  if (!session || !s.active) return s;
+  const tab = s.tabs.find((t) => t.id === s.active);
+  if (!tab || ownedElsewhere(tab, session) || s.activeBy?.[session] === s.active) return s;
+  const { [session]: _old, ...rest } = s.activeBy ?? {};
+  const entries = Object.entries(rest);
+  const kept = entries.length >= ACTIVE_BY_MAX ? Object.fromEntries(entries.slice(entries.length - ACTIVE_BY_MAX + 1)) : rest;
+  return { ...s, activeBy: { ...kept, [session]: s.active } };
 }
 
 function same(a: SideTab, b: SideWant): boolean {
   if (a.kind === 'btw' || b.kind === 'btw') return a.kind === 'btw' && b.kind === 'btw' && a.sessionId === b.sessionId;
   if (a.kind === 'terminal' || b.kind === 'terminal') return a.kind === 'terminal' && b.kind === 'terminal' && a.term === b.term;
-  if (a.kind === 'preview' || b.kind === 'preview') return a.kind === 'preview' && b.kind === 'preview' && a.port === b.port;
+  if (a.kind === 'preview' || b.kind === 'preview') return a.kind === 'preview' && b.kind === 'preview' && a.port === b.port && a.owner === b.owner;
   if (a.kind === 'changes' || b.kind === 'changes') return a.kind === b.kind && a.kind === 'changes' && b.kind === 'changes' && a.target === b.target;
   return a.kind === b.kind;
 }
@@ -74,20 +114,20 @@ export function openTab(s: SideState, want: SideWant, id = sideTabId): SideState
   const at = s.tabs.findIndex((t) => t.id === s.active);
   const tabs = [...s.tabs];
   tabs.splice(at < 0 ? tabs.length : at + 1, 0, tab);
-  return { tabs, active: tab.id };
+  return { ...s, tabs, active: tab.id };
 }
 
 // "+" — always a fresh launcher tab at the end.
 export function addLauncher(s: SideState, id = sideTabId): SideState {
   const tab: SideTab = { id: id(), kind: 'launcher' };
-  return { tabs: [...s.tabs, tab], active: tab.id };
+  return { ...s, tabs: [...s.tabs, tab], active: tab.id };
 }
 
 // A launcher turns into what was picked from it. If that tool is already
 // open elsewhere, the launcher closes and that tab is focused instead.
 export function pick(s: SideState, launcherId: string, want: SideWant): SideState {
   const existing = s.tabs.find((t) => t.id !== launcherId && same(t, want));
-  if (existing) return { tabs: s.tabs.filter((t) => t.id !== launcherId), active: existing.id };
+  if (existing) return { ...s, tabs: s.tabs.filter((t) => t.id !== launcherId), active: existing.id };
   return { ...s, tabs: s.tabs.map((t) => (t.id === launcherId ? ({ ...want, id: t.id } as SideTab) : t)), active: launcherId };
 }
 
@@ -97,7 +137,7 @@ export function closeTab(s: SideState, id: string): SideState {
   if (i < 0) return s;
   const tabs = s.tabs.filter((t) => t.id !== id);
   const active = s.active !== id ? s.active : (tabs[i] ?? tabs[i - 1])?.id ?? null;
-  return { tabs, active };
+  return { ...s, tabs, active };
 }
 
 // Stored state from localStorage; anything malformed falls back to the default.
@@ -111,9 +151,14 @@ export function parseSideState(raw: string | null, reviewOn: boolean): SideState
           || t.kind === 'progress' || t.kind === 'agents' || t.kind === 'observe' || t.kind === 'files' || t.kind === 'artifacts'
           || (t.kind === 'terminal' && typeof t.term === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(t.term))
           || (t.kind === 'btw' && typeof t.sessionId === 'string' && typeof t.label === 'string')
-          || (t.kind === 'preview' && isPreviewPort(t.port) && typeof t.path === 'string')
+          || (t.kind === 'preview' && isPreviewPort(t.port) && typeof t.path === 'string' && (t.owner === undefined || typeof t.owner === 'string'))
         ));
-      return { tabs, active: typeof v.active === 'string' ? v.active : tabs[0]?.id ?? null };
+      const ids = new Set(tabs.map((t) => t.id));
+      const activeBy = v.activeBy && typeof v.activeBy === 'object'
+        ? Object.fromEntries(Object.entries(v.activeBy).filter(([k, id]) => k && typeof id === 'string' && ids.has(id))) as Record<string, string>
+        : {};
+      const out: SideState = { tabs, active: typeof v.active === 'string' ? v.active : tabs[0]?.id ?? null };
+      return Object.keys(activeBy).length ? { ...out, activeBy } : out;
     }
   } catch {}
   return defaultSideState(reviewOn);

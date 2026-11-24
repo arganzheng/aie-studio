@@ -246,7 +246,10 @@ export function ChangesView({ projectId, projectName, target, follow, active, on
       }
       setError(null);
     } catch (e) {
-      if (!ac.signal.aborted) setError(String((e as Error).message ?? e));
+      const msg = String((e as Error).message ?? e);
+      // A session just started is not on the server's list for a moment:
+      // the next poll finds it, so no red error in between.
+      if (!ac.signal.aborted && !(isSessionScope(scope) && /session not found/.test(msg))) setError(msg);
     } finally {
       if (inflight.current === ac) inflight.current = null;
       setLoading(false);
