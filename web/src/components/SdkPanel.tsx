@@ -44,6 +44,7 @@ import { childLinkOfTool } from '../lib/childLink';
 import { parseCompactNote } from '../lib/compactNote';
 import { groupWork, type WorkItem, type WorkMsg } from '../lib/workGroups';
 import { WorkGroupView } from './WorkGroupView';
+import { liveActivity } from '../lib/liveActivity';
 import { isCompactCommand, isInterruptNote, isSlashCommand } from '../lib/steering';
 import { parseChildReports } from '../lib/childReport';
 import { parseWatchReport, type WatchItem } from '../lib/watchReport';
@@ -1363,6 +1364,13 @@ export function SdkPanel({
     stickyBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
   }
 
+  // Model: web.LiveActivity — the newest work group shows its start time, and
+  // while Claude works one line at the foot says what it is doing.
+  let lastGroupId: string | undefined;
+  for (let i = workItems.length - 1; i >= 0; i--) { const it = workItems[i]; if (it.kind === 'group') { lastGroupId = it.id; break; } }
+  const waitingOnUser = forms.pendingCount > 0 || permAsks.length > 0 || !!planAsk;
+  const activityLine = generating && !waitingOnUser ? liveActivity(plan, msgs, rel) : null;
+
   // ----- render ----------------------------------------------------------
   return (
     <div className="chat">
@@ -1382,6 +1390,7 @@ export function SdkPanel({
               <WorkGroupView
                 key={item.id}
                 group={item}
+                latest={item.id === lastGroupId}
                 background={item.running && inBackground ? bgTasks.length : 0}
                 rel={rel}
                 renderDetail={(t) => renderToolDetail(t as Msg & { role: 'tool' })}
@@ -1607,7 +1616,12 @@ export function SdkPanel({
             </div>
           </div>
         )}
-        {status === 'thinking' && (
+        {activityLine ? (
+          <div className="live-activity" role="status" aria-live="polite">
+            <span className="live-activity-mark" aria-hidden="true"><i /><i /><i /></span>
+            <span className="live-activity-text">{activityLine}</span>
+          </div>
+        ) : status === 'thinking' && (
           <div className="msg msg-thinking" aria-label="Claude is thinking">
             <span className="thinking-dot" /><span className="thinking-dot" /><span className="thinking-dot" />
           </div>

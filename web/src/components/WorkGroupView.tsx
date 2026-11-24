@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { messageTime, messageTimeFull } from '../lib/messageActions';
 import { batchLabel, formatDuration, toolFailed, toolLine, type WorkGroup, type WorkMsg, type WorkRow } from '../lib/workGroups';
 
 type Tool = Extract<WorkMsg, { role: 'tool' }>;
@@ -6,8 +7,10 @@ type Tool = Extract<WorkMsg, { role: 'tool' }>;
 // Model: web.WorkGroups — one stretch of Claude's work between messages.
 // Running: open, a fixed-height window that follows the newest row. Done:
 // one line ("Worked for 2m 7s +303 −13"), opened on click.
-export function WorkGroupView({ group, background = 0, rel, renderDetail, renderForm, renderNote, onOpenChild, childOf, onImage }: {
+export function WorkGroupView({ group, latest = false, background = 0, rel, renderDetail, renderForm, renderNote, onOpenChild, childOf, onImage }: {
   group: WorkGroup;
+  // The newest group in the chat: its start time shows without hovering.
+  latest?: boolean;
   // The turn is over but this many background tasks it started still run.
   background?: number;
   rel: (s: string) => string;
@@ -160,9 +163,10 @@ export function WorkGroupView({ group, background = 0, rel, renderDetail, render
     const ms = group.start != null && group.end != null ? group.end - group.start : null;
     if (!group.running && !text && (ms == null || ms < 1000)) return null;
     return (
-      <div className="work-group thought-only">
+      <div className={`work-group thought-only${latest ? ' latest' : ''}`}>
         <div className="work-head" onClick={() => text && setUserOpen(!open)}>
-          <span className="work-head-chev" aria-hidden="true">{text ? (open ? '⌄' : '›') : ''}</span>
+          {group.start != null && <span className="work-head-time" title={messageTimeFull(group.start)}>{messageTime(group.start)}</span>}
+            <span className="work-head-chev" aria-hidden="true">{text ? (open ? '⌄' : '›') : ''}</span>
           <span className="work-head-title">{group.running ? 'Thinking' : 'Thought'}{took ? ` for ${took}` : ''}</span>
         </div>
         {open && text && <div className="work-body"><div className="work-thought-text">{text}</div></div>}
@@ -171,8 +175,9 @@ export function WorkGroupView({ group, background = 0, rel, renderDetail, render
   }
 
   return (
-    <div className={`work-group${group.running ? ' running' : ''}`}>
+    <div className={`work-group${group.running ? ' running' : ''}${latest ? ' latest' : ''}`}>
       <div className="work-head" onClick={() => setUserOpen(!open)}>
+        {group.start != null && <span className="work-head-time" title={messageTimeFull(group.start)}>{messageTime(group.start)}</span>}
         <span className="work-head-chev" aria-hidden="true">{open ? '⌄' : '›'}</span>
         <span className="work-head-title">{title}{took ? ` for ${took}` : ''}</span>
         {group.running && background > 0 && <span className="work-head-bg"> · in the background ({background} task{background === 1 ? '' : 's'})</span>}
