@@ -3,8 +3,8 @@
 // one of a few tools; "+" opens a launcher tab that turns into the tool
 // picked from it. One set of tabs per project, remembered on this device.
 //
-// Tabs that belong to one session (a page Claude showed with show_preview, a
-// side chat about a session) show only while that session is the one the
+// Tabs that belong to one session (a page opened in it, by Claude's
+// show_preview or from "+"; a side chat about a session) show only while that session is the one the
 // user is in; the rest (Changes, Progress, Files, …) are shared and follow
 // the session by themselves. Each session remembers its own active tab.
 
@@ -23,7 +23,8 @@ export type SideWant =
   | { kind: 'btw'; sessionId: string; label: string }
   // Model: web.PreviewView — a dev server on this machine, by port; path is
   // where it was last (kept so the tab comes back to it). owner: the session
-  // that showed it (show_preview); none when the user opened it.
+  // it was opened in (by Claude's show_preview or by the user from "+");
+  // none when no session was in front.
   | { kind: 'preview'; port: number; path: string; owner?: string }
   // Model: web.SidePanel session tools — follow the session the user is in.
   | { kind: 'progress' }
@@ -46,6 +47,11 @@ export function tabOwner(t: SideTab | SideWant): string | undefined {
   if (t.kind === 'btw') return t.sessionId;
   if (t.kind === 'preview') return t.owner;
   return undefined;
+}
+
+// A tab picked while `session` is in front: a preview is that session's.
+export function ownWant(want: SideWant, session: string | null | undefined): SideWant {
+  return want.kind === 'preview' && !want.owner && session ? { ...want, owner: session } : want;
 }
 
 function ownedElsewhere(t: SideTab, session: string | null | undefined): boolean {

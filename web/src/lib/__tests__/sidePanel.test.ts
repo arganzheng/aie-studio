@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, defaultSideState, openTab, parseSideState, pick, remember, tabOwner, visibleTabs, type SideState } from '../sidePanel';
+import { FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, defaultSideState, openTab, parseSideState, ownWant, pick, remember, tabOwner, visibleTabs, type SideState } from '../sidePanel';
 
 const ids = () => { let n = 0; return () => `t${++n}`; };
 
@@ -94,6 +94,11 @@ describe('tabs that belong to a session', () => {
     const s = parseSideState(raw, false);
     expect(s.tabs[1]).toEqual({ id: 'pa', kind: 'preview', port: 5000, path: '/', owner: 'A' });
     expect(s.activeBy).toEqual({ A: 'pa' });
+  });
+  it('a preview opened from "+" belongs to the session in front', () => {
+    expect(ownWant({ kind: 'preview', port: 7000, path: '/' }, 'B')).toEqual({ kind: 'preview', port: 7000, path: '/', owner: 'B' });
+    expect(ownWant({ kind: 'preview', port: 7000, path: '/' }, null)).toEqual({ kind: 'preview', port: 7000, path: '/' });
+    expect(ownWant({ kind: 'files' }, 'B')).toEqual({ kind: 'files' });
   });
   it('closing a tab keeps what the sessions remembered', () => {
     const s = closeTab(remember(base(), 'A'), 'pu');

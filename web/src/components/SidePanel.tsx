@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ChatQuote } from '../lib/addToChat';
 import {
-  FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, openTab, parseSideState, pick, remember, updateTab, visibleTabs,
+  FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, openTab, parseSideState, ownWant, pick, remember, updateTab, visibleTabs,
   type SideState, type SideTab, type SideWant,
 } from '../lib/sidePanel';
 import { ChangesView, type FollowInfo } from './ChangesView';
@@ -19,7 +19,8 @@ import type { SessionRow } from '../lib/sessionList';
 // own strip of tabs with "+", and on the right Maximize (take over the chat
 // area) and Collapse. Desktop: third grid column, resizable from its left
 // edge. Mobile: right-side drawer. One set of tabs per project, on this device;
-// a session's own tabs (its previews, side chats) show only while it is in front.
+// a session's own tabs (previews opened in it, side chats about it) show only
+// while it is in front.
 
 // Asks the panel to show a tab: Review (a comment was just added) or a new
 // launcher (Option+T). `seq` makes repeated asks distinct.
@@ -155,9 +156,9 @@ export function SidePanel({
 
   let body: ReactNode;
   if (!current) {
-    body = <SideLauncher projectId={projectId} projectName={projectName} reviewOn={reviewOn} terminalOn={terminalOn} followLabel={follow?.label ?? null} followSessionId={follow?.sessionId ?? null} onPick={(want) => change((s) => openTab(s, want))} />;
+    body = <SideLauncher projectId={projectId} projectName={projectName} reviewOn={reviewOn} terminalOn={terminalOn} followLabel={follow?.label ?? null} followSessionId={follow?.sessionId ?? null} onPick={(want) => change((s) => openTab(s, ownWant(want, session)))} />;
   } else if (current.kind === 'launcher') {
-    body = <SideLauncher key={current.id} projectId={projectId} projectName={projectName} reviewOn={reviewOn} terminalOn={terminalOn} followLabel={follow?.label ?? null} followSessionId={follow?.sessionId ?? null} onPick={(want) => change((s) => pick(s, current.id, want))} />;
+    body = <SideLauncher key={current.id} projectId={projectId} projectName={projectName} reviewOn={reviewOn} terminalOn={terminalOn} followLabel={follow?.label ?? null} followSessionId={follow?.sessionId ?? null} onPick={(want) => change((s) => pick(s, current.id, ownWant(want, session)))} />;
   } else if (current.kind === 'review') {
     body = renderReview();
   } else if (current.kind === 'btw' || current.kind === 'terminal') {
