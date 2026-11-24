@@ -6,7 +6,9 @@
 export type StatusTone = 'needs-you' | 'ready';
 export type SessionStatus = { tone: StatusTone; label: string };
 
-const MARKER_RE = /<!--\s*status\s+(needs-you|ready)\s*:\s*([^\n]*?)\s*-->/gi;
+// Any tone is hidden (a model now and then invents one, e.g. "working"); only
+// needs-you and ready count as a status.
+const MARKER_RE = /<!--\s*status\s+([a-z][\w-]*)\s*:\s*([^\n]*?)\s*-->/gi;
 const OPEN_TAIL_RE = /<!--(?:(?!-->)[\s\S])*$/;
 const OPEN_MARKER_RE = /^<!--\s*(s(t(a(t(u(s[\s\S]*)?)?)?)?)?)?$/i;
 
@@ -15,7 +17,8 @@ export function parseStatus(text: string): { text: string; status: SessionStatus
   let status: SessionStatus | null = null;
   const stripped = text.replace(MARKER_RE, (_all, tone: string, label: string) => {
     const l = label.replace(/\s+/g, ' ').trim();
-    if (l) status = { tone: tone.toLowerCase() as StatusTone, label: l };
+    const t = tone.toLowerCase();
+    if (l && (t === 'needs-you' || t === 'ready')) status = { tone: t, label: l };
     return '';
   });
   return { text: stripped === text ? text : stripped.replace(/\s+$/, ''), status };

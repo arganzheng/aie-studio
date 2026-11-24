@@ -15,8 +15,10 @@
 // own is its own row ("Ran <what for> <command>"), as are edits, task
 // changes, thoughts and notes.
 
+import { quietTaskNotes, type TaskNote } from './taskNotification';
+
 export type WorkMsg =
-  | { id: string; role: 'user' | 'system' | 'bang' }
+  | { id: string; role: 'user' | 'system' | 'bang'; text?: string; at?: number }
   | { id: string; role: 'assistant'; text: string; at?: number }
   | { id: string; role: 'thinking'; text: string; at?: number; ms?: number }
   | { id: string; role: 'tool'; name: string; input: any; output?: string; at?: number; doneAt?: number; step?: string };
@@ -31,7 +33,9 @@ export type WorkRow =
   | { kind: 'edit'; tool: Tool; add: number; del: number }
   | { kind: 'task'; tool: Tool; label: string }
   | { kind: 'thought'; thoughts: Thought[]; ms: number | null }
-  | { kind: 'note'; note: Note };
+  | { kind: 'note'; note: Note }
+  // Background tasks that finished (the CLI's notification): part of the work.
+  | { kind: 'notice'; notes: TaskNote[] };
 
 export type WorkGroup = {
   kind: 'group';
@@ -152,8 +156,10 @@ export function groupWork<M extends WorkMsg>(msgs: readonly M[], working: boolea
     cur = [];
   };
   msgs.forEach((m, i) => {
+    // A background task that finished is not something the user said.
+    const notice = m.role === 'user' && quietTaskNotes(m.text) != null;
     const visible =
-      m.role === 'user' || m.role === 'system' || m.role === 'bang'
+      (m.role === 'user' && !notice) || m.role === 'system' || m.role === 'bang'
       || (m.role === 'tool' && isCardTool(m.name))
       || (m.role === 'assistant' && isMessage(m.text, !followedByTool[i]));
     if (visible) { flush(); out.push({ kind: 'msg', msg: m }); }
@@ -210,6 +216,9 @@ function buildGroup(msgs: WorkMsg[], subjects: Map<string, string>): WorkGroup {
     } else if (m.role === 'assistant') {
       flushPlain(); flushThoughts();
       rows.push({ kind: 'note', note: m });
+    } else if (m.role === 'user') {
+      const notes = quietTaskNotes(m.text);
+      if (notes) { flushPlain(); flushThoughts(); rows.push({ kind: 'notice', notes }); }
     } else if (m.role === 'tool') {
       flushThoughts();
       steps++;

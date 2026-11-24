@@ -33,3 +33,10 @@ describe('awaitingUser', () => {
     expect(awaitingUser([])).toBe(false);
   });
 });
+
+describe('status lines of a tone the app does not know', () => {
+  it('are hidden but carry no status', () => {
+    expect(parseStatus('Running the build.\n<!--status working: Tier B+C running-->')).toEqual({ text: 'Running the build.', status: null });
+    expect(stripStatus('Done.\n<!--status ready: PR is ready-->')).toBe('Done.');
+  });
+});
