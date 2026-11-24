@@ -22,7 +22,9 @@ export const STATUS_INSTRUCTIONS = [
   'Write no status line when neither applies (a plain answer, a progress note), and never more than one.',
 ].join(' ');
 
-const MARKER_RE = /<!--\s*status\s+(needs-you|ready)\s*:\s*([^\n]*?)\s*-->/gi;
+// Any tone is hidden (a model now and then invents one, e.g. "working"); only
+// needs-you and ready count as a status.
+const MARKER_RE = /<!--\s*status\s+([a-z][\w-]*)\s*:\s*([^\n]*?)\s*-->/gi;
 // A marker still being streamed: an unclosed comment at the very end.
 const OPEN_TAIL_RE = /<!--(?:(?!-->)[\s\S])*$/;
 
@@ -38,7 +40,8 @@ export function parseStatus(text: unknown): { text: string; status: SessionStatu
   let status: SessionStatus | null = null;
   const stripped = text.replace(MARKER_RE, (_all, tone: string, label: string) => {
     const l = cleanLabel(label);
-    if (l) status = { tone: tone.toLowerCase() as StatusTone, label: l };
+    const t = tone.toLowerCase();
+    if (l && (t === 'needs-you' || t === 'ready')) status = { tone: t, label: l };
     return '';
   });
   return { text: stripped === text ? text : stripped.replace(/\s+$/, ''), status };

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { batchLabel, formatDuration, toolFailed, toolLine, type WorkGroup, type WorkMsg, type WorkRow } from '../lib/workGroups';
 
 type Tool = Extract<WorkMsg, { role: 'tool' }>;
@@ -133,6 +133,24 @@ export function WorkGroupView({ group, background = 0, rel, renderDetail, render
         );
       }
       case 'note': return <div key={key} className="work-item work-note">{renderNote(r.note.text)}</div>;
+      case 'notice': return (
+        <Fragment key={key}>
+          {r.notes.map((n, i) => {
+            const k = `${key}:${i}`;
+            const isOpen = openRows.has(k);
+            return (
+              <div key={k} className="work-item work-notice">
+                <div className="work-row" onClick={() => n.result && toggleRow(k)} title={n.ids.length ? `Task ${n.ids.join(', ')}` : undefined}>
+                  <span className={`work-notice-mark ${n.status === 'completed' ? 'ok' : 'off'}`} aria-hidden="true">{n.status === 'completed' ? '✓' : '■'}</span>
+                  <span className="work-desc">{n.summary}</span>
+                  {n.result && <span className="work-chev" aria-hidden="true">{isOpen ? '⌄' : '›'}</span>}
+                </div>
+                {isOpen && n.result && <div className="work-notice-result">{renderNote(n.result)}</div>}
+              </div>
+            );
+          })}
+        </Fragment>
+      );
     }
   };
 

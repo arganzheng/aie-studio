@@ -4517,3 +4517,20 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .tool-copy-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; }
 .tool-copy-btn + .tool-popout-btn { margin-left: 0; }
 .tool-popout-header .tool-copy-btn { margin-left: 0; }
+
+/* Claude Code's notice that background tasks ended (model: Session.tasks):
+   a finished one is a row of the work, one cut off or failed a card. */
+.work-notice-mark { flex: none; font-size: 11px; }
+.work-notice-mark.ok { color: #3fb950; }
+.work-notice-mark.off { color: var(--fg-muted); }
+.work-notice-result { margin: 2px 0 6px 18px; padding: 4px 10px; border-left: 2px solid var(--border); color: var(--fg-soft); white-space: normal; }
+.work-notice-result p { white-space: pre-wrap; margin: 4px 0; }
+.msg-task-note.cut { border-left-color: #d9a72c; }
+.msg-task-note.cut .child-report-mark { color: #d9a72c; }
+.task-note + .task-note { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.task-note-summary { white-space: pre-wrap; word-break: break-word; }
+.task-note-hint { margin-top: 2px; font-size: 12px; color: var(--fg-muted); }
+.task-note-raw { margin-top: 6px; font-size: 12px; color: var(--fg-muted); }
+.task-note-raw summary { cursor: pointer; }
+.task-note-raw pre { margin: 4px 0 0; padding: 6px 8px; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-all; background: var(--bg); border-radius: 4px; font-size: 11px; }
+.work-notice-result :is(h1, h2, h3, h4) { font-size: 13px; margin: 6px 0 2px; }

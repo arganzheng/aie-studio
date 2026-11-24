@@ -47,6 +47,7 @@ import { WorkGroupView } from './WorkGroupView';
 import { isCompactCommand, isInterruptNote, isSlashCommand } from '../lib/steering';
 import { parseChildReports } from '../lib/childReport';
 import { parseWatchReport, type WatchItem } from '../lib/watchReport';
+import { parseTaskNotifications, taskNoteFailed, taskNoteTitle } from '../lib/taskNotification';
 import { parseParentContext, withParentContext, type ParentContext } from '../lib/parentContext';
 import { summarizeSession } from '../api';
 import { ImageAttachmentStrip, useImageAttachments, type ImageAttachment } from './ImageAttachments';
@@ -1429,6 +1430,32 @@ export function SdkPanel({
                     <span className="child-report-state">watch {watchReport.state}</span>
                   </div>
                   <MarkdownText text={watchReport.body} theme={theme} projectPath={projectPath} onOpenFile={openFile} />
+                </div>
+              );
+            }
+            // Claude Code's word that background tasks ended, one of them not
+            // on its own (failed, or cut off when its session ended): a card.
+            // Ones that finished are rows of the work group (workGroups.ts).
+            const taskNotes = m.images?.length ? null : parseTaskNotifications(m.text);
+            if (taskNotes) {
+              return (
+                <div key={m.id} className={`msg msg-child-report msg-task-note${taskNotes.some((n) => n.status === 'failed') ? ' failed' : taskNotes.some(taskNoteFailed) ? ' cut' : ''}`} data-anchor={anchor ?? undefined}>
+                  {taskNotes.map((n, ni) => (
+                    <div key={ni} className="task-note">
+                      <div className="child-report-head">
+                        <span className="child-report-mark" aria-hidden="true">{taskNoteFailed(n) ? '⚠' : n.status === 'completed' ? '✓' : '■'}</span>
+                        <span className="child-report-title">{taskNoteTitle(n)}</span>
+                        {n.ids.length > 0 && <span className="child-report-state">{n.ids.length === 1 ? `task ${n.ids[0]}` : `${n.ids.length} tasks`}</span>}
+                      </div>
+                      <div className="task-note-summary">{n.summary}</div>
+                      {n.status === 'stopped' && <div className="task-note-hint">Its work may be unfinished: check what it left before relying on it.</div>}
+                      {n.result && <MarkdownText text={n.result} theme={theme} projectPath={projectPath} onOpenFile={openFile} />}
+                    </div>
+                  ))}
+                  <details className="task-note-raw">
+                    <summary>Notification as sent to Claude</summary>
+                    <pre>{m.text}</pre>
+                  </details>
                 </div>
               );
             }

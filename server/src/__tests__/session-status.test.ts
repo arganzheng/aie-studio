@@ -21,8 +21,9 @@ describe('parseStatus', () => {
     expect(parseStatus('x <!--status ready: -->')).toEqual({ text: 'x', status: null });
     expect(parseStatus(`<!--status ready: ${'w'.repeat(80)}-->`).status!.label.length).toBe(STATUS_LABEL_MAX);
   });
-  it('ignores unknown tones', () => {
-    expect(parseStatus('x <!--status busy: Working-->')).toEqual({ text: 'x <!--status busy: Working-->', status: null });
+  it('hides unknown tones but takes no status from them', () => {
+    expect(parseStatus('x <!--status busy: Working-->')).toEqual({ text: 'x', status: null });
+    expect(parseStatus('Running the build.\n<!--status working: Tier B+C running-->')).toEqual({ text: 'Running the build.', status: null });
   });
 });
 
