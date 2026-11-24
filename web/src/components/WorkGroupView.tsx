@@ -6,8 +6,10 @@ type Tool = Extract<WorkMsg, { role: 'tool' }>;
 // Model: web.WorkGroups — one stretch of Claude's work between messages.
 // Running: open, a fixed-height window that follows the newest row. Done:
 // one line ("Worked for 2m 7s +303 −13"), opened on click.
-export function WorkGroupView({ group, rel, renderDetail, renderForm, renderNote, onOpenChild, childOf, onImage }: {
+export function WorkGroupView({ group, background = 0, rel, renderDetail, renderForm, renderNote, onOpenChild, childOf, onImage }: {
   group: WorkGroup;
+  // The turn is over but this many background tasks it started still run.
+  background?: number;
   rel: (s: string) => string;
   renderDetail: (tool: Tool) => ReactNode;
   // A form a tool call waits on (an MCP elicitation): always shown.
@@ -155,6 +157,7 @@ export function WorkGroupView({ group, rel, renderDetail, renderForm, renderNote
       <div className="work-head" onClick={() => setUserOpen(!open)}>
         <span className="work-head-chev" aria-hidden="true">{open ? '⌄' : '›'}</span>
         <span className="work-head-title">{title}{took ? ` for ${took}` : ''}</span>
+        {group.running && background > 0 && <span className="work-head-bg"> · in the background ({background} task{background === 1 ? '' : 's'})</span>}
         {group.add > 0 && <span className="work-add">+{group.add}</span>}
         {group.del > 0 && <span className="work-del">−{group.del}</span>}
         {group.steps > 0 && <span className="work-steps">· {group.steps} step{group.steps === 1 ? '' : 's'}</span>}

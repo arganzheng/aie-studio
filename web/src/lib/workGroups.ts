@@ -160,10 +160,15 @@ export function groupWork<M extends WorkMsg>(msgs: readonly M[], working: boolea
     else cur.push(m);
   });
   flush();
-  // While Claude works, the work since the last thing shown is going on.
+  // While Claude works (or its background tasks do), the latest stretch of
+  // work since the user last wrote is going on — even when a remark Claude
+  // made along the way is shown after it.
   if (working) {
-    const last = out[out.length - 1];
-    if (last?.kind === 'group') last.running = true;
+    for (let i = out.length - 1; i >= 0; i--) {
+      const it = out[i];
+      if (it.kind === 'group') { it.running = true; break; }
+      if (it.msg.role !== 'assistant') break;
+    }
   }
   return out;
 }

@@ -466,6 +466,7 @@ function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: 
   entry.queue = makeInputQueue();
   // Tasks die with the process that ran them.
   for (const t of entry.tasks.values()) if (t.status === 'running') t.status = 'stopped';
+  broadcast(entry, { type: 'bg_tasks', running: [] });
   const q = query({
     prompt: entry.queue.iterable(),
     options: {
@@ -618,10 +619,16 @@ function saveOwed(entry: SdkEntry) {
   void editOwed(entry.owner.uid, (r) => { if (owed) r[id] = owed; else delete r[id]; });
 }
 
+// Pure: the tasks still running (background commands and subagents), as the
+// client shows them — model: web.WorkGroups "working in the background".
+export function runningTasks(tasks: Map<string, SdkTask>): Array<{ taskId: string; description: string; subagent: boolean }> {
+  return [...tasks.values()].filter((t) => t.status === 'running').map((t) => ({ taskId: t.taskId, description: t.description, subagent: !!t.subagentType }));
+}
+
 function onSdkMessage(entry: SdkEntry, m: any) {
   let flush = false;
   touchActivity(entry);
-  applyTaskEvent(entry.tasks, m);
+  if (applyTaskEvent(entry.tasks, m)) broadcast(entry, { type: 'bg_tasks', running: runningTasks(entry.tasks) });
   const activity = activityAfter(m, entry.cwd);
   if (activity !== null) entry.activity = activity;
   // A turn the CLI started on its own (a background task finished) is still
@@ -1104,6 +1111,7 @@ function startedFrame(entry: SdkEntry, attached: boolean) {
     attached,
     clients: entry.clients.size,
     thinking: entry.thinking,
+    bgTasks: runningTasks(entry.tasks),
     compacting: entry.compacting,
     model: entry.model,
     mode: entry.mode,

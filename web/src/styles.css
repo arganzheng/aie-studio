@@ -4507,3 +4507,7 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .btw-branch-label { color: var(--fg-muted); font-size: 11px; margin-bottom: 3px; }
 .btw-branch-text { font-size: 12px; max-height: 9em; overflow: hidden; }
 .btw-branch-text > *:first-child { margin-top: 0; }
+/* Model: web.WorkGroups "working in the background" — the turn is over, its background tasks are not. */
+.msg-awaiting-dot.working { background: #3fb950; animation: msg-bg-pulse 1.6s ease-in-out infinite; }
+@keyframes msg-bg-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.work-head-bg { color: var(--fg-muted); font-size: 12px; }
