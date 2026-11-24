@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ChatQuote } from '../lib/addToChat';
 import {
-  FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, openTab, parseSideState, pick, updateTab, visibleTabs,
+  FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, openTab, parseSideState, pick, remember, updateTab, visibleTabs,
   type SideState, type SideTab, type SideWant,
 } from '../lib/sidePanel';
 import { ChangesView, type FollowInfo } from './ChangesView';
@@ -18,7 +18,8 @@ import type { SessionRow } from '../lib/sessionList';
 // Model: web.SidePanel — the right-hand column (formerly only Review): its
 // own strip of tabs with "+", and on the right Maximize (take over the chat
 // area) and Collapse. Desktop: third grid column, resizable from its left
-// edge. Mobile: right-side drawer. One set of tabs per project, on this device.
+// edge. Mobile: right-side drawer. One set of tabs per project, on this device;
+// a session's own tabs (its previews, side chats) show only while it is in front.
 
 // Asks the panel to show a tab: Review (a comment was just added) or a new
 // launcher (Option+T). `seq` makes repeated asks distinct.
@@ -27,7 +28,8 @@ export type SideRequest =
   // Model: SideChat — open (or focus) the side chat about a session and ask.
   | { kind: 'btw'; sessionId: string; label: string; question: string; seq: number; focus?: string }
   // A session tool tab (the Plan strip's "open in side panel").
-  | { kind: 'tool'; want: { kind: 'progress' | 'artifacts' } | { kind: 'preview'; port: number; path: string }; seq: number };
+  // A preview's owner: the session that showed it (show_preview).
+  | { kind: 'tool'; want: { kind: 'progress' | 'artifacts' } | { kind: 'preview'; port: number; path: string; owner?: string }; seq: number };
 
 export function PanelIcon() {
   return (
@@ -112,6 +114,10 @@ export function SidePanel({
     try { localStorage.setItem(storageKey(lsPrefix, projectId), JSON.stringify(state)); } catch {}
   }, [state, projectId, lsPrefix]);
 
+  // The session the user is in: its own tabs show, and it remembers its tab.
+  const session = follow?.sessionId ?? null;
+  const change = (fn: (s: SideState) => SideState) => setState((s) => remember(fn(s), session));
+
   // The latest /btw question, for the side chat about that session.
   // Bumped by show_preview so the Preview tab loads again.
   const [previewLoad, setPreviewLoad] = useState(0);
@@ -120,25 +126,27 @@ export function SidePanel({
   useEffect(() => {
     if (!request || request.seq === lastSeq.current) return;
     lastSeq.current = request.seq;
-    if (request.kind === 'review' && reviewOn) setState((s) => openTab(s, { kind: 'review' }));
-    else if (request.kind === 'launcher') setState((s) => addLauncher(s));
+    if (request.kind === 'review' && reviewOn) change((s) => openTab(s, { kind: 'review' }));
+    else if (request.kind === 'launcher') change((s) => addLauncher(s));
     else if (request.kind === 'tool') {
       const want = request.want;
       if (want.kind === 'preview') {
         // Claude's show_preview: focus (or open) the port's tab, go to the
         // path, and load it afresh (the page may just have been rebuilt).
-        setState((s) => { const n = openTab(s, want); return n.active ? updateTab(n, n.active, { path: want.path }) : n; });
+        // It is that session's tab: in front when the user is there.
+        setState((s) => { const n = openTab(s, want); return remember(n.active ? updateTab(n, n.active, { path: want.path }) : n, want.owner ?? session); });
         setPreviewLoad(request.seq);
-      } else setState((s) => openTab(s, want));
+      } else change((s) => openTab(s, want));
     }
     else if (request.kind === 'btw') {
-      setState((s) => openTab(s, { kind: 'btw', sessionId: request.sessionId, label: request.label }));
+      setState((s) => remember(openTab(s, { kind: 'btw', sessionId: request.sessionId, label: request.label }), request.sessionId));
       if (request.question.trim() || request.focus) setBtwAsk({ sessionId: request.sessionId, question: request.question, seq: request.seq, focus: request.focus });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request, reviewOn]);
 
-  const tabs = visibleTabs(state, reviewOn, terminalOn);
-  const current = activeTab(state, reviewOn, terminalOn);
+  const tabs = visibleTabs(state, reviewOn, terminalOn, session);
+  const current = activeTab(state, reviewOn, terminalOn, session);
   // Keep the active tab in view when the strip scrolls sideways.
   const stripRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -147,9 +155,9 @@ export function SidePanel({
 
   let body: ReactNode;
   if (!current) {
-    body = <SideLauncher projectId={projectId} projectName={projectName} reviewOn={reviewOn} terminalOn={terminalOn} followLabel={follow?.label ?? null} followSessionId={follow?.sessionId ?? null} onPick={(want) => setState((s) => openTab(s, want))} />;
+    body = <SideLauncher projectId={projectId} projectName={projectName} reviewOn={reviewOn} terminalOn={terminalOn} followLabel={follow?.label ?? null} followSessionId={follow?.sessionId ?? null} onPick={(want) => change((s) => openTab(s, want))} />;
   } else if (current.kind === 'launcher') {
-    body = <SideLauncher key={current.id} projectId={projectId} projectName={projectName} reviewOn={reviewOn} terminalOn={terminalOn} followLabel={follow?.label ?? null} followSessionId={follow?.sessionId ?? null} onPick={(want) => setState((s) => pick(s, current.id, want))} />;
+    body = <SideLauncher key={current.id} projectId={projectId} projectName={projectName} reviewOn={reviewOn} terminalOn={terminalOn} followLabel={follow?.label ?? null} followSessionId={follow?.sessionId ?? null} onPick={(want) => change((s) => pick(s, current.id, want))} />;
   } else if (current.kind === 'review') {
     body = renderReview();
   } else if (current.kind === 'btw' || current.kind === 'terminal') {
@@ -185,7 +193,7 @@ export function SidePanel({
                 role="tab"
                 aria-selected={t.id === current?.id}
                 className={`side-tab${t.id === current?.id ? ' active' : ''}`}
-                onClick={() => setState((s) => activate(s, t.id))}
+                onClick={() => change((s) => activate(s, t.id))}
                 title={tabTitle(t, projectName, reviewCount)}
               >
                 <span className="side-tab-label">{tabTitle(t, projectName, reviewCount)}</span>
@@ -193,14 +201,14 @@ export function SidePanel({
                   type="button"
                   className="side-tab-close"
                   aria-label="Close tab"
-                  onClick={(e) => { e.stopPropagation(); if (t.kind === 'terminal') endTerminal(t.term); setState((s) => closeTab(s, t.id)); }}
+                  onClick={(e) => { e.stopPropagation(); if (t.kind === 'terminal') endTerminal(t.term); change((s) => closeTab(s, t.id)); }}
                 >×</button>
               </div>
             ))}
           </div>
         )}
         {/* Outside the scrolling strip, so it stays in reach however many tabs there are. */}
-        {!collapsed && <button type="button" className="side-add" onClick={() => setState((s) => addLauncher(s))} title="New tab (⌥T)" aria-label="New tab">+</button>}
+        {!collapsed && <button type="button" className="side-add" onClick={() => change((s) => addLauncher(s))} title="New tab (⌥T)" aria-label="New tab">+</button>}
         <div className="side-actions">
           {!collapsed && (
             <button type="button" className="side-icon side-max" onClick={onToggleMax} title={maximized ? 'Restore (show the chat again)' : 'Maximize over the chat area'} aria-label={maximized ? 'Restore' : 'Maximize'}>

@@ -467,10 +467,11 @@ export default function App() {
     setSideRequest((prev) => ({ kind: 'tool', want: { kind }, seq: (prev?.seq ?? 0) + 1 }));
   };
   // Model: web.PreviewView — Claude showed a page (show_preview): open it beside the chat.
-  const openSidePreview = (port: number, path: string) => {
+  // owner: the session that showed it; the tab is that session's.
+  const openSidePreview = (port: number, path: string, owner?: string) => {
     setReviewCollapsed(false);
     setReviewDrawerOpen(true);
-    setSideRequest((prev) => ({ kind: 'tool', want: { kind: 'preview', port, path }, seq: (prev?.seq ?? 0) + 1 }));
+    setSideRequest((prev) => ({ kind: 'tool', want: { kind: 'preview', port, path, ...(owner ? { owner } : {}) }, seq: (prev?.seq ?? 0) + 1 }));
   };
   // Comments and bookmarks land in Review: bring its tab forward.
   const showReview = () => { setReviewCollapsed(false); askSide('review'); };

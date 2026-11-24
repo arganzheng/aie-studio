@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, defaultSideState, openTab, parseSideState, pick, visibleTabs } from '../sidePanel';
+import { FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, defaultSideState, openTab, parseSideState, pick, remember, tabOwner, visibleTabs, type SideState } from '../sidePanel';
 
 const ids = () => { let n = 0; return () => `t${++n}`; };
 
@@ -51,5 +51,52 @@ describe('side panel tabs', () => {
     const raw = JSON.stringify({ tabs: [{ id: 'a', kind: 'changes', target: 'x' }, { id: 'b', kind: 'weird' }, { id: 'c', kind: 'review' }], active: 'c' });
     expect(parseSideState(raw, true)).toEqual({ tabs: [{ id: 'a', kind: 'changes', target: 'x' }, { id: 'c', kind: 'review' }], active: 'c' });
     expect(parseSideState('nope', false).tabs.map((t) => t.kind)).toEqual(['changes']);
+  });
+});
+
+describe('tabs that belong to a session', () => {
+  // Changes (shared) + A's preview + a side chat about B.
+  const base = (): SideState => ({
+    tabs: [
+      { id: 'c', kind: 'changes', target: FOLLOW },
+      { id: 'pa', kind: 'preview', port: 5000, path: '/', owner: 'A' },
+      { id: 'bb', kind: 'btw', sessionId: 'B', label: 'B' },
+      { id: 'pu', kind: 'preview', port: 6000, path: '/' },
+    ],
+    active: 'pa',
+  });
+  it("show only in their session; shared ones everywhere", () => {
+    expect(visibleTabs(base(), false, false, 'A').map((t) => t.id)).toEqual(['c', 'pa', 'pu']);
+    expect(visibleTabs(base(), false, false, 'B').map((t) => t.id)).toEqual(['c', 'bb', 'pu']);
+    expect(visibleTabs(base(), false, false, null).map((t) => t.id)).toEqual(['c', 'pu']);
+    expect(tabOwner(base().tabs[1])).toBe('A');
+  });
+  it("another session's tab in front falls back to a shared one", () => {
+    expect(activeTab(base(), false, false, 'A')?.id).toBe('pa');
+    expect(activeTab(base(), false, false, 'B')?.id).toBe('c');
+  });
+  it('each session comes back to the tab it had in front', () => {
+    let s = remember(base(), 'A');
+    s = remember(activate(s, 'bb'), 'B');
+    expect(s.activeBy).toEqual({ A: 'pa', B: 'bb' });
+    expect(activeTab(s, false, false, 'A')?.id).toBe('pa');
+    expect(activeTab(s, false, false, 'B')?.id).toBe('bb');
+    // A session never remembers a tab it cannot see.
+    expect(remember(activate(s, 'bb'), 'A').activeBy?.A).toBe('pa');
+  });
+  it('the same port shown by two sessions is two tabs', () => {
+    const s = openTab(base(), { kind: 'preview', port: 5000, path: '/', owner: 'B' }, () => 'pb');
+    expect(s.tabs.map((t) => t.id)).toContain('pb');
+    expect(openTab(s, { kind: 'preview', port: 5000, path: '/x', owner: 'A' }).active).toBe('pa');
+  });
+  it('keeps owner and activeBy across a reload, dropping stale entries', () => {
+    const raw = JSON.stringify({ ...base(), activeBy: { A: 'pa', B: 'gone' } });
+    const s = parseSideState(raw, false);
+    expect(s.tabs[1]).toEqual({ id: 'pa', kind: 'preview', port: 5000, path: '/', owner: 'A' });
+    expect(s.activeBy).toEqual({ A: 'pa' });
+  });
+  it('closing a tab keeps what the sessions remembered', () => {
+    const s = closeTab(remember(base(), 'A'), 'pu');
+    expect(s.activeBy).toEqual({ A: 'pa' });
   });
 });
