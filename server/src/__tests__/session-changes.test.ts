@@ -26,7 +26,8 @@ let other: string;
 beforeAll(() => { main = repo('main'); other = repo('other'); });
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-describe('session changes', () => {
+// Real git runs: dozens of processes per test, slow when the whole suite runs in parallel.
+describe('session changes', { timeout: 30_000 }, () => {
   it('knows nothing before the first message', async () => {
     const r = await readSessionChanges(SID, 'all');
     expect(r.none).toBe(true);
