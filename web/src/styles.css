@@ -4447,36 +4447,38 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .work-open-child { flex: none; padding: 0 6px; border: 1px solid var(--border-strong); border-radius: 3px; background: none; color: var(--accent); font: inherit; font-size: 0.92em; cursor: pointer; }
 .work-group.thought-only .work-head-title { color: var(--fg-muted); }
 
-/* Model: web.MessageActions — the row over a message (like Devin's): time,
-   Copy, Copy link, Side chat, bookmark, rich copy. Shown on hover; on a
-   phone a tap on the message shows it (.actions-on). */
+/* Model: web.MessageActions — a message's time and its buttons (Copy, Copy
+   link, Side chat, bookmark, rich copy), shown on hover (on a phone, a tap on
+   the message: .actions-on). Desktop, like Devin: they sit beside the message,
+   in gutters on both sides of the conversation, not over the text — your
+   message: buttons on its left, time on its right; Claude's: time on its
+   left, buttons at its top-right. Phone: one row under the message. */
 .msg-user, .msg-assistant { position: relative; }
-.msg-actions {
-  position: absolute;
-  top: -22px;
-  right: 8px;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  padding: 2px 3px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
-  white-space: nowrap;
-  font-size: 11px;
-  line-height: 1;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.12s ease;
-}
-/* Claude's bubbles sit on the left and can be narrow: the row grows rightwards from their left edge. */
-.msg-assistant > .msg-actions { left: 8px; right: auto; }
-.msg:hover > .msg-actions, .msg-actions:focus-within, .msg.actions-on > .msg-actions { opacity: 1; pointer-events: auto; }
+.msg-meta { font-size: 11px; line-height: 1; white-space: nowrap; }
+.msg-time { color: var(--fg); font-variant-numeric: tabular-nums; }
+.msg-actions { display: flex; align-items: center; gap: 1px; }
+.msg-meta .msg-time, .msg-meta .msg-actions { opacity: 0; pointer-events: none; transition: opacity 0.12s ease; }
+.msg:hover > .msg-meta .msg-time, .msg.actions-on > .msg-meta .msg-time, .msg-meta:focus-within .msg-time { opacity: 0.6; }
+.msg:hover > .msg-meta .msg-actions, .msg.actions-on > .msg-meta .msg-actions, .msg-meta:focus-within .msg-actions { opacity: 1; pointer-events: auto; }
 /* A bookmarked message keeps its ★ in sight. */
-.msg:has(.msg-actions .msg-bookmark-btn.active) > .msg-actions { opacity: 1; pointer-events: auto; }
-.msg-actions-time { color: var(--fg-muted); padding: 0 6px 0 5px; font-variant-numeric: tabular-nums; }
+.msg:has(.msg-actions .msg-bookmark-btn.active) > .msg-meta .msg-actions { opacity: 1; pointer-events: auto; }
+@media (min-width: 769px) {
+  /* Only chats whose messages carry them (the Claude SDK chat) get the gutters. */
+  .chat-messages:has(> .msg > .msg-meta) { padding-left: 46px; padding-right: 46px; }
+  .msg-meta { display: contents; }
+  .msg-time { position: absolute; top: 10px; }
+  .msg-actions { position: absolute; z-index: 3; top: 3px; }
+  .msg-user > .msg-meta .msg-time { left: calc(100% + 8px); }
+  .msg-user > .msg-meta .msg-actions { right: calc(100% + 4px); }
+  .msg-assistant > .msg-meta .msg-time { right: calc(100% + 8px); }
+  .msg-assistant > .msg-meta .msg-actions { right: 3px; padding: 1px; border-radius: 6px; background: var(--bg-hover); box-shadow: -10px 0 10px -4px var(--bg-hover); }
+}
+@media (max-width: 768px) {
+  .msg:has(> .msg-meta) { margin-bottom: 22px; }
+  .msg-meta { position: absolute; top: calc(100% + 3px); display: flex; align-items: center; gap: 4px; }
+  .msg-user > .msg-meta { right: 2px; }
+  .msg-assistant > .msg-meta { left: 2px; }
+}
 .msg-actions-btn {
   width: 26px;
   height: 24px;
@@ -4487,9 +4489,11 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   border: none;
   border-radius: 5px;
   background: transparent;
-  color: var(--fg-muted);
+  color: var(--fg);
+  opacity: 0.75;
   cursor: pointer;
 }
+.msg-actions-btn:hover, .msg-actions-btn:focus-visible { opacity: 1; }
 .msg-actions-btn:hover, .msg-actions-btn:focus-visible { background: var(--bg-hover); color: var(--fg-strong); outline: none; }
 .msg-actions .msg-bookmark-btn, .msg-actions .msg-richcopy-btn {
   position: static;
@@ -4534,3 +4538,6 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .task-note-raw summary { cursor: pointer; }
 .task-note-raw pre { margin: 4px 0 0; padding: 6px 8px; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-all; background: var(--bg); border-radius: 4px; font-size: 11px; }
 .work-notice-result :is(h1, h2, h3, h4) { font-size: 13px; margin: 6px 0 2px; }
+
+/* Model: web.ElicitationForm — an option's mockup (AskUserQuestion `preview`). */
+.elicit-option-preview { display: block; margin: 6px 0 0; padding: 6px 8px; max-height: 240px; overflow: auto; border-radius: 4px; background: var(--bg); color: var(--fg); font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }

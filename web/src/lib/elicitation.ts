@@ -7,7 +7,9 @@
 // Values outside the enum are accepted by Devin when _meta allowOther is set
 // (observed default: true), which is how the trailing "Other" free text works.
 
-export type ElicitationOption = { value: string; description?: string };
+// preview: Claude's AskUserQuestion may attach a mockup to an option (ASCII art, a
+// code snippet), shown under it in a monospace block.
+export type ElicitationOption = { value: string; description?: string; preview?: string };
 
 export type ElicitationQuestion = {
   key: string;
@@ -220,7 +222,11 @@ export function parseAskUserQuestion(ev: any): ElicitationRequest | null {
     const options: ElicitationOption[] = [];
     for (const o of Array.isArray(q.options) ? q.options : []) {
       if (typeof o?.label !== 'string') continue;
-      options.push({ value: o.label, description: typeof o.description === 'string' && o.description !== o.label ? o.description : undefined });
+      options.push({
+        value: o.label,
+        description: typeof o.description === 'string' && o.description !== o.label ? o.description : undefined,
+        ...(typeof o.preview === 'string' && o.preview.trim() ? { preview: o.preview } : {}),
+      });
     }
     return {
       key: `q${i}`,

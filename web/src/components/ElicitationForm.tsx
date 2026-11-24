@@ -113,6 +113,7 @@ function QuestionBlock({ q, a, allowOther, onChange, onPasteFiles, sendKey, onSu
               <span className="elicit-option-body">
                 <span className="elicit-option-label">{o.value}</span>
                 {o.description && <span className="elicit-option-desc">{o.description}</span>}
+                {o.preview && <span className="elicit-option-preview">{o.preview}</span>}
               </span>
             </button>
           );
