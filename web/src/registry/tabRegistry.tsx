@@ -75,7 +75,7 @@ export type TabRenderContext = {
   // (EditorPanel uses it to confirm discarding unsaved changes).
   registerCloseGuard: (guard: (() => boolean) | null) => void;
   // Model: SideChat (/btw) — open the side chat about a Claude session and ask.
-  openSideChat?: (sessionId: string, label: string, question: string) => void;
+  openSideChat?: (sessionId: string, label: string, question: string, focus?: string) => void;
   // Model: web.SidePanel — show (or focus) a session tool tab beside the chat.
   openSideTool?: (kind: 'progress' | 'artifacts') => void;
   // Model: web.PreviewView — Claude's show_preview: a page beside the chat.

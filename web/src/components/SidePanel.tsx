@@ -25,7 +25,7 @@ import type { SessionRow } from '../lib/sessionList';
 export type SideRequest =
   | { kind: 'review' | 'launcher'; seq: number }
   // Model: SideChat — open (or focus) the side chat about a session and ask.
-  | { kind: 'btw'; sessionId: string; label: string; question: string; seq: number }
+  | { kind: 'btw'; sessionId: string; label: string; question: string; seq: number; focus?: string }
   // A session tool tab (the Plan strip's "open in side panel").
   | { kind: 'tool'; want: { kind: 'progress' | 'artifacts' } | { kind: 'preview'; port: number; path: string }; seq: number };
 
@@ -115,7 +115,7 @@ export function SidePanel({
   // The latest /btw question, for the side chat about that session.
   // Bumped by show_preview so the Preview tab loads again.
   const [previewLoad, setPreviewLoad] = useState(0);
-  const [btwAsk, setBtwAsk] = useState<{ sessionId: string; question: string; seq: number } | null>(null);
+  const [btwAsk, setBtwAsk] = useState<{ sessionId: string; question: string; seq: number; focus?: string } | null>(null);
   const lastSeq = useRef(request?.seq ?? 0);
   useEffect(() => {
     if (!request || request.seq === lastSeq.current) return;
@@ -133,7 +133,7 @@ export function SidePanel({
     }
     else if (request.kind === 'btw') {
       setState((s) => openTab(s, { kind: 'btw', sessionId: request.sessionId, label: request.label }));
-      if (request.question.trim()) setBtwAsk({ sessionId: request.sessionId, question: request.question, seq: request.seq });
+      if (request.question.trim() || request.focus) setBtwAsk({ sessionId: request.sessionId, question: request.question, seq: request.seq, focus: request.focus });
     }
   }, [request, reviewOn]);
 
@@ -226,7 +226,7 @@ export function SidePanel({
               sessionId={t.sessionId}
               label={t.label}
               theme={theme}
-              ask={btwAsk && btwAsk.sessionId === t.sessionId ? { question: btwAsk.question, seq: btwAsk.seq } : null}
+              ask={btwAsk && btwAsk.sessionId === t.sessionId ? { question: btwAsk.question, seq: btwAsk.seq, focus: btwAsk.focus } : null}
               onContinue={(conversation) => onContinueAsChild(t.sessionId, t.label, conversation)}
             />
           </div>
