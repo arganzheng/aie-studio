@@ -4440,7 +4440,8 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .work-batch { margin-left: 10px; padding-left: 8px; border-left: 1px dashed var(--border); }
 .work-detail { position: relative; margin: 2px 0 6px 4px; padding: 6px 8px; border: 1px solid var(--tool-border); border-radius: 5px; background: var(--tool-field-bg); white-space: pre-wrap; }
 .work-detail .tool-field-value { max-height: 260px; overflow: auto; }
-.work-detail-popout { position: absolute; top: 4px; right: 4px; }
+.work-detail-actions { position: absolute; top: 4px; right: 4px; display: flex; gap: 2px; }
+.work-detail-actions .tool-popout-btn { margin-left: 0; background: var(--tool-field-bg); }
 .work-images { margin: 2px 0 6px 4px; }
 .work-images .tool-image { max-height: 160px; cursor: zoom-in; }
 .work-open-child { flex: none; padding: 0 6px; border: 1px solid var(--border-strong); border-radius: 3px; background: none; color: var(--accent); font: inherit; font-size: 0.92em; cursor: pointer; }
@@ -4511,3 +4512,8 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .msg-awaiting-dot.working { background: #3fb950; animation: msg-bg-pulse 1.6s ease-in-out infinite; }
 @keyframes msg-bg-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .work-head-bg { color: var(--fg-muted); font-size: 12px; }
+
+/* Model: web.ToolCopy — Copy sits just before ⛶ (which keeps pushing right). */
+.tool-copy-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; }
+.tool-copy-btn + .tool-popout-btn { margin-left: 0; }
+.tool-popout-header .tool-copy-btn { margin-left: 0; }
