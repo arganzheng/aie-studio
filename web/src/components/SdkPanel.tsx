@@ -22,6 +22,7 @@ import { BookmarkButton, type NewBookmark } from './BookmarkButton';
 import { MessageActions } from './MessageActions';
 import { messageLink } from '../lib/messageActions';
 import { copyText } from '../lib/clipboard';
+import { toolMarkdown } from '../lib/toolMarkdown';
 import type { PromptInsertion } from './ChatInput';
 import { composeComment, type CommentMark, bookmarkLabel } from '../lib/review';
 import type { ChatQuote } from '../lib/addToChat';
@@ -98,6 +99,30 @@ type BangOutcome = {
 type Status = 'connecting' | 'replaying' | 'ready' | 'thinking' | 'reconnecting' | 'closed';
 
 function shortId() { return Math.random().toString(36).slice(2, 9); }
+
+// Model: web.ToolCopy — Copy on an opened tool call: the call (and its
+// output) as Markdown; ✓ for a moment once copied.
+function ToolCopyButton({ name, input, output, rel }: { name: string; input: any; output?: string; rel: (s: string) => string }) {
+  const [done, setDone] = useState<null | boolean>(null);
+  return (
+    <button
+      type="button"
+      className="tool-popout-btn tool-copy-btn"
+      onClick={(e) => {
+        e.stopPropagation();
+        void copyText(toolMarkdown(name, input, output, rel)).then((ok) => { setDone(ok); window.setTimeout(() => setDone(null), 1200); });
+      }}
+      title={done === false ? 'Copy failed' : 'Copy as Markdown (the call and its output)'}
+      aria-label="Copy as Markdown"
+    >
+      {done ? '✓' : (
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 0 1 2-2h9" />
+        </svg>
+      )}
+    </button>
+  );
+}
 
 // Stable per-message anchor for Review comments — same shape as ChatPanel so
 // a comment made in either Claude tab kind resolves in the other.
@@ -1285,6 +1310,7 @@ export function SdkPanel({
           {summary && <span className="tool-summary">{summary}</span>}
           {m.output === undefined && <span className="tool-pending">…</span>}
           {child && <button type="button" className="tool-child-open" onClick={(e) => { e.stopPropagation(); onOpenSession!(child.sessionId, child.title); }} title="Open this child session in its own tab">⑂ Open child</button>}
+          <ToolCopyButton name={m.name} input={m.input} output={m.output} rel={rel} />
           <button className="tool-popout-btn" onClick={(e) => { e.stopPropagation(); setToolPopout(m); }} title="Open full details" aria-label="Open full details">⛶</button>
         </div>
         {isOpen && (
@@ -1315,7 +1341,10 @@ export function SdkPanel({
     const anchor = msgAnchor(m);
     return (
       <div className="work-detail" data-anchor={anchor ?? undefined}>
-        <button className="tool-popout-btn work-detail-popout" onClick={() => setToolPopout(m)} title="Open full details" aria-label="Open full details">⛶</button>
+        <div className="work-detail-actions">
+          <ToolCopyButton name={m.name} input={m.input} output={m.output} rel={rel} />
+          <button className="tool-popout-btn" onClick={() => setToolPopout(m)} title="Open full details" aria-label="Open full details">⛶</button>
+        </div>
         <ToolFields input={m.input} rel={rel} />
         {m.output !== undefined && (
           <div className="tool-field">
@@ -1759,6 +1788,7 @@ export function SdkPanel({
             <div className="tool-popout-header">
               <span className="tool-name">{toolPopout.name}</span>
               <span className="tool-summary">{summarizeTool(toolPopout.name, toolPopout.input, rel)}</span>
+              <ToolCopyButton name={toolPopout.name} input={toolPopout.input} output={toolPopout.output} rel={rel} />
               <button className="tool-popout-close" onClick={() => setToolPopout(null)} aria-label="Close">×</button>
             </div>
             <div className="tool-popout-body">
