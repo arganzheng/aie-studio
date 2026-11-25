@@ -75,3 +75,12 @@ export function batchQueued(items: readonly QueuedPrompt[]): Array<{ text: strin
   close();
   return out.filter((b) => b.text || b.images.length);
 }
+
+// Pure: does the queue go out now that a result came in? When the turn ended
+// well (a command like /compact counts: it runs no turn of the model, but
+// it is done), or, if the user interrupted the turn to send something,
+// whatever way it ended. Not while Claude waits on an answer from the user.
+export function flushesQueue(items: readonly QueuedPrompt[], pendingAsks: number, result: { subtype?: unknown }): boolean {
+  if (items.length === 0 || pendingAsks > 0) return false;
+  return items.some((q) => q.interrupt) || result.subtype === 'success';
+}

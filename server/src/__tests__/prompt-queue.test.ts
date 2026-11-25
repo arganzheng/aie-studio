@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { batchQueued, editQueued, isCompactCommand, mergeQueued, queueView, steersRunningTurn, type QueuedPrompt } from '../prompt-queue.js';
+import { batchQueued, editQueued, flushesQueue, isCompactCommand, mergeQueued, queueView, steersRunningTurn, type QueuedPrompt } from '../prompt-queue.js';
 
 const img = { mediaType: 'image/png', data: 'AAA' };
 const q = (id: string, text: string, images = 0): QueuedPrompt => ({ id, text, images: Array.from({ length: images }, () => img), at: 1 });
@@ -42,5 +42,24 @@ describe('prompt queue', () => {
     expect(isCompactCommand(' /compact keep the plan')).toBe(true);
     expect(isCompactCommand('/compacted')).toBe(false);
     expect(isCompactCommand('please /compact')).toBe(false);
+  });
+});
+
+describe('flushesQueue', () => {
+  const q = (interrupt?: boolean): QueuedPrompt => ({ id: 'a', text: 'next', images: [], at: 0, ...(interrupt ? { interrupt } : {}) });
+  it('goes out after a turn that ended well', () => {
+    expect(flushesQueue([q()], 0, { subtype: 'success' })).toBe(true);
+  });
+  it('goes out after /compact, which runs no turn of the model', () => {
+    // What the CLI reports for /compact: num_turns 0, no text.
+    expect(flushesQueue([q()], 0, { subtype: 'success', num_turns: 0, result: '' } as { subtype: string })).toBe(true);
+  });
+  it('waits when the turn failed or was stopped, unless the user stopped it to send', () => {
+    expect(flushesQueue([q()], 0, { subtype: 'error_during_execution' })).toBe(false);
+    expect(flushesQueue([q(true)], 0, { subtype: 'error_during_execution' })).toBe(true);
+  });
+  it('waits while Claude waits on an answer, and has nothing to send when empty', () => {
+    expect(flushesQueue([q()], 1, { subtype: 'success' })).toBe(false);
+    expect(flushesQueue([], 0, { subtype: 'success' })).toBe(false);
   });
 });
