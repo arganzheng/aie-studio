@@ -34,6 +34,18 @@ function agentItem(name: string, description: string): CommandItem {
   return { group: AGENTS_GROUP, name, label: name, description, insert: agentInsertText(name) };
 }
 
+// What a Claude (SDK) session has reported about its CLI, as the catalog
+// toCommandItems gates on. A session that has reported no command at all has
+// not been told yet (the CLI is still starting: its lists are empty until
+// then), which is not the same as a CLI without commands: null, so the
+// built-ins are listed blind instead of all being hidden.
+export function sdkCliCatalog(
+  reported: { commands: ReadonlyArray<{ name: string }>; agents: readonly string[] } | null,
+): ClaudeCliCatalog | null {
+  if (!reported || reported.commands.length === 0) return null;
+  return { slashCommands: reported.commands.map((c) => c.name), skills: [], agents: [...reported.agents], terminalSlashCommands: [] };
+}
+
 // Claude sessions. Three groups:
 //  - Skills: project skills scanned from .claude/skills (server.ListSkills,
 //    with descriptions) ∪ CLI-bundled skills from the init catalog (static
