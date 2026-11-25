@@ -1820,8 +1820,8 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
 
   // Model: server.ReadSdkTranscript — getSessionMessages() paged the same
   // way as ReadTranscript: events + startIndex/endIndex/total.
-  // turn=1: the page reaches back to the start of the turn in progress.
-  app.get<{ Params: { id: string; sid: string }; Querystring: { limit?: string; before?: string; turn?: string } }>(
+  // A page starts where a turn starts, so it can hold more than `limit`.
+  app.get<{ Params: { id: string; sid: string }; Querystring: { limit?: string; before?: string } }>(
     '/api/projects/:id/sdk-sessions/:sid/transcript',
     async (req, reply) => {
       const uid = getUserId(req);
@@ -1835,7 +1835,7 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
       const limit = Math.min(500, Math.max(1, Number(req.query.limit ?? 20) || 20));
       const before = req.query.before != null ? Number(req.query.before) : total;
       const endIndex = Math.max(0, Math.min(total, Number.isFinite(before) ? before : total));
-      const startIndex = pageStart(msgs, endIndex, limit, req.query.turn === '1');
+      const startIndex = pageStart(msgs, endIndex, limit);
       // timestamp: when the record was written (the SDK returns it, its type
       // doesn't say so) — model: web.WorkGroups times the work from it.
       const events = msgs.slice(startIndex, endIndex).map((m) => ({ type: m.type, uuid: m.uuid, message: m.message, timestamp: (m as { timestamp?: unknown }).timestamp }));

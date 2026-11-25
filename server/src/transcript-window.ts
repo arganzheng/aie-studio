@@ -1,8 +1,8 @@
 // Model: server.ReadSdkTranscript — which records a page of the transcript
-// starts at. The first page reaches back to the start of the turn in
-// progress (the user's last message), so the chat shows that stretch of
-// work whole: its time and step count are right from the start instead of
-// growing as older pages come in.
+// starts at. Every page starts where a turn starts (a message the user
+// wrote), so the chat never holds part of a stretch of work: its time and
+// step count are right as soon as it shows, instead of growing as older
+// pages come in.
 
 type Rec = { type?: unknown; message?: unknown };
 
@@ -19,14 +19,14 @@ export function isPrompt(r: Rec): boolean {
     && !c.some((b) => b && typeof b === 'object' && (b as { type?: unknown }).type === 'tool_result');
 }
 
-// Pure: where a page ending at `end` starts. `limit` records at least; with
-// `wholeTurn`, back to the last prompt before that if it is within `cap`.
-export function pageStart(recs: readonly Rec[], end: number, limit: number, wholeTurn: boolean, cap = 500): number {
+// Pure: where a page ending at `end` starts. `limit` records at least, then
+// back to the prompt that opens the turn the cut falls in, so no page starts
+// in the middle of a turn. A turn longer than `cap` records is cut anyway.
+export function pageStart(recs: readonly Rec[], end: number, limit: number, cap = 500): number {
   const start = Math.max(0, end - limit);
-  if (!wholeTurn) return start;
   const floor = Math.max(0, end - cap);
-  for (let i = end - 1; i >= floor; i--) {
-    if (isPrompt(recs[i])) return Math.min(start, i);
+  for (let i = start; i >= floor; i--) {
+    if (i === 0 || isPrompt(recs[i])) return i;
   }
   return start;
 }

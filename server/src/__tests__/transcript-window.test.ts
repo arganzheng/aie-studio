@@ -16,16 +16,24 @@ describe('isPrompt', () => {
 });
 
 describe('pageStart', () => {
-  // prompt, then 60 records of work.
-  const recs = [prompt('old'), tool(), result(), prompt('do it'), ...Array.from({ length: 60 }, (_, i) => (i % 2 ? result() : tool()))];
-  it('reaches back to the start of the turn in progress', () => {
-    expect(pageStart(recs, recs.length, 20, true)).toBe(3);
+  const work = (n: number) => Array.from({ length: n }, (_, i) => (i % 2 ? result() : tool()));
+  // 0: prompt, 2 of work; 3: prompt, 60 of work; 64: prompt, 4 of work.
+  const recs = [prompt('old'), ...work(2), prompt('do it'), ...work(60), prompt('and now'), ...work(4)];
+  it('reaches back to the start of the turn the cut falls in', () => {
+    expect(pageStart(recs, recs.length, 20)).toBe(3);
+    expect(pageStart(recs, 64, 20)).toBe(3);
   });
-  it('is just the last `limit` records otherwise, or when the turn starts within them', () => {
-    expect(pageStart(recs, recs.length, 20, false)).toBe(recs.length - 20);
-    expect(pageStart(recs.slice(0, 10), 10, 20, true)).toBe(0);
+  it('an older page starts at a turn start too, and pages meet', () => {
+    expect(pageStart(recs, 3, 20)).toBe(0);
+    expect(pageStart(recs, 64, 80)).toBe(0);
   });
-  it('gives up beyond the cap', () => {
-    expect(pageStart(recs, recs.length, 20, true, 30)).toBe(recs.length - 20);
+  it('stays at `limit` when the cut is a prompt', () => {
+    expect(pageStart(recs, recs.length, 5)).toBe(64);
+  });
+  it('goes to the very start when no prompt opens the transcript', () => {
+    expect(pageStart(work(30), 30, 20)).toBe(0);
+  });
+  it('cuts a turn longer than the cap', () => {
+    expect(pageStart(recs, 60, 20, 30)).toBe(40);
   });
 });
