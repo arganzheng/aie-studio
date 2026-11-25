@@ -60,6 +60,7 @@ import { encodeCwd } from './observe/transcript.js';
 import { duplexRoute } from './duplex.js';
 import { planToolCalls } from './plan-tools.js';
 import { taskToolsEnv, taskToolsOn } from './task-tools.js';
+import { pageStart } from './transcript-window.js';
 import { CARRY_ON_AFTER_COMPACT, MAX_QUEUED, MAX_QUEUED_TEXT, batchQueued, editQueued, flushesQueue, isCompactCommand, queueView, steersRunningTurn, type QueuedPrompt } from './prompt-queue.js';
 import { addWatch, cancelWatches, configureWatches, deliverToSession, watchesOf } from './watch-service.js';
 import { MAX_TIMEOUT_HOURS, WATCH_INSTRUCTIONS, watchView } from './watches.js';
@@ -1828,6 +1829,7 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
 
   // Model: server.ReadSdkTranscript — getSessionMessages() paged the same
   // way as ReadTranscript: events + startIndex/endIndex/total.
+  // A page starts where a turn starts, so it can hold more than `limit`.
   app.get<{ Params: { id: string; sid: string }; Querystring: { limit?: string; before?: string } }>(
     '/api/projects/:id/sdk-sessions/:sid/transcript',
     async (req, reply) => {
@@ -1842,7 +1844,7 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
       const limit = Math.min(500, Math.max(1, Number(req.query.limit ?? 20) || 20));
       const before = req.query.before != null ? Number(req.query.before) : total;
       const endIndex = Math.max(0, Math.min(total, Number.isFinite(before) ? before : total));
-      const startIndex = Math.max(0, endIndex - limit);
+      const startIndex = pageStart(msgs, endIndex, limit);
       // timestamp: when the record was written (the SDK returns it, its type
       // doesn't say so) — model: web.WorkGroups times the work from it.
       const events = msgs.slice(startIndex, endIndex).map((m) => ({ type: m.type, uuid: m.uuid, message: m.message, timestamp: (m as { timestamp?: unknown }).timestamp }));
