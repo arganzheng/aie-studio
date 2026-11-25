@@ -48,6 +48,7 @@ import { liveActivity } from '../lib/liveActivity';
 import { isCompactCommand, isInterruptNote, isSlashCommand } from '../lib/steering';
 import { parseChildReports } from '../lib/childReport';
 import { parseWatchReport, type WatchItem } from '../lib/watchReport';
+import { withArrivedDuring } from '../lib/refetchMerge';
 import { parseTaskNotifications, taskNoteFailed, taskNoteTitle } from '../lib/taskNotification';
 import { parseParentContext, withParentContext, type ParentContext } from '../lib/parentContext';
 import { summarizeSession } from '../api';
@@ -704,6 +705,7 @@ export function SdkPanel({
   // ----- transcript ------------------------------------------------------
   async function refetchTranscript(sid: string) {
     let r: Response | null = null;
+    const shownBefore = new Set(msgsRef.current.map((m) => m.id));
     try {
       r = await fetch(`/api/projects/${projectId}/sdk-sessions/${sid}/transcript?limit=20`);
       if (!r.ok) {
@@ -715,7 +717,8 @@ export function SdkPanel({
       logDebug('history', `sdk ${sid.slice(0, 8)}: ${events?.length ?? 0} of ${total ?? '?'} messages`);
       setHistoryError(historyProblem(r, events?.length ?? 0, total ?? null));
       orphanResultsRef.current = new Map();
-      setMsgs(buildFromEvents(events, orphanResultsRef.current));
+      const fetched = buildFromEvents(events, orphanResultsRef.current);
+      setMsgs((prev) => withArrivedDuring(fetched, prev, shownBefore));
       setOldestIdx(startIndex ?? 0);
       setPlanBefore(Array.isArray(planTools) ? planTools : []);
     } catch (e) {

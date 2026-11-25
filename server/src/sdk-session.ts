@@ -58,7 +58,7 @@ import { encodeCwd } from './observe/transcript.js';
 import { duplexRoute } from './duplex.js';
 import { planToolCalls } from './plan-tools.js';
 import { taskToolsEnv, taskToolsOn } from './task-tools.js';
-import { CARRY_ON_AFTER_COMPACT, MAX_QUEUED, MAX_QUEUED_TEXT, batchQueued, editQueued, isCompactCommand, queueView, steersRunningTurn, type QueuedPrompt } from './prompt-queue.js';
+import { CARRY_ON_AFTER_COMPACT, MAX_QUEUED, MAX_QUEUED_TEXT, batchQueued, editQueued, flushesQueue, isCompactCommand, queueView, steersRunningTurn, type QueuedPrompt } from './prompt-queue.js';
 import { addWatch, cancelWatches, configureWatches, deliverToSession, watchesOf } from './watch-service.js';
 import { MAX_TIMEOUT_HOURS, WATCH_INSTRUCTIONS, watchView } from './watches.js';
 
@@ -681,8 +681,8 @@ function onSdkMessage(entry: SdkEntry, m: any) {
     // now (below, after the result itself); the session is not done.
     // A turn the user interrupted to send something goes out whatever way
     // the turn ended.
-    const interrupted = entry.queued.some((q) => q.interrupt);
-    flush = entry.queued.length > 0 && entry.pendingAsks.size === 0 && (interrupted || (isTurnResult(m) && m.subtype === 'success'));
+    // A command that runs no turn (/compact) counts as done too.
+    flush = flushesQueue(entry.queued, entry.pendingAsks.size, m);
     if (entry.sessionId && !flush) void setSessionStatus(entry.owner.uid, `claude:${entry.sessionId}`, status);
     if (entry.pendingAsks.size === 0 && !flush) {
       if (status?.tone === 'needs-you') publishSessionEvent(entry.owner, 'awaiting', entry.sessionId, entry.title, status.label);
