@@ -40,6 +40,8 @@ import {
   type HeldReports, type OwedReports, type Settings,
   unarchiveOnUse,
   setSessionStatus,
+  setShownPage,
+  shownPageOf,
 } from './store.js';
 import { getUserId } from './auth.js';
 import { runBang, bangContextBlocks, type BangResult, type RunningBang } from './shell-exec.js';
@@ -840,6 +842,9 @@ function attachClient(entry: SdkEntry, socket: WebSocket) {
   entry.clients.add(socket);
   disarmAllAsks(entry);
   if (entry.sessionId) void watchesOf(entry.owner.uid, entry.sessionId).then((ws) => send(socket, { type: 'watches', items: ws.map(watchView) }));
+  // The page the agent last showed, in case this viewer missed it (the
+  // panel opens it once; `at` tells it whether it has already).
+  if (entry.sessionId) void shownPageOf(entry.owner.uid, `claude:${entry.sessionId}`).then((p) => { if (p) send(socket, { type: 'side_open', want: { kind: 'preview', port: p.port, path: p.path }, at: p.at }); });
 
   let alive = true;
   const pingTimer = setInterval(() => {
@@ -1464,7 +1469,7 @@ export const VIEW_INSTRUCTIONS = [
 export function showPreviewReply(port: number, path: string, page: { title?: string } | null, viewers: number): { text: string; isError: boolean } {
   if (!page) return { text: `Nothing on port ${port} answers ${path} with a web page (or nothing is listening). Start the server first, then call show_preview again.`, isError: true };
   const what = `port ${port}${path !== '/' ? ` (${path})` : ''}${page.title ? ` — "${page.title}"` : ''}`;
-  if (viewers === 0) return { text: `The page on ${what} is up, but nobody has this session open right now, so nothing was shown. Tell the user it is in ＋ → Preview of the side panel (port ${port}).`, isError: false };
+  if (viewers === 0) return { text: `The page on ${what} is up. Nobody has this session open right now: it opens in the user's side panel the next time they open this session, so there is no need to give a link. Keep its server running until they have looked.`, isError: false };
   return { text: `Opened ${what} as a Preview tab in the user's side panel. Keep its server running while they look.`, isError: false };
 }
 
@@ -1484,7 +1489,11 @@ function viewToolsServer(entry: SdkEntry) {
         async (args) => {
           const path = !args.path ? '/' : args.path.startsWith('/') ? args.path : `/${args.path}`;
           const page = await probePage(args.port, path);
-          if (page) broadcast(entry, { type: 'side_open', want: { kind: 'preview', port: args.port, path } });
+          if (page) {
+            const at = Date.now();
+            broadcast(entry, { type: 'side_open', want: { kind: 'preview', port: args.port, path }, at });
+            if (entry.sessionId) void setShownPage(entry.owner.uid, `claude:${entry.sessionId}`, { port: args.port, path, at });
+          }
           const r = showPreviewReply(args.port, path, page, entry.clients.size);
           return toolText(r.text, r.isError);
         },

@@ -25,7 +25,9 @@ export type SideWant =
   // where it was last (kept so the tab comes back to it). owner: the session
   // it was opened in (by Claude's show_preview or by the user from "+");
   // none when no session was in front.
-  | { kind: 'preview'; port: number; path: string; owner?: string }
+  // byClaude: Claude opened it (show_preview); a session keeps one such tab,
+  // each new page replaces it.
+  | { kind: 'preview'; port: number; path: string; owner?: string; byClaude?: boolean }
   // Model: web.SidePanel session tools — follow the session the user is in.
   | { kind: 'progress' }
   | { kind: 'agents' }
@@ -40,7 +42,9 @@ export type SideWant =
   | { kind: 'launcher' };
 export type SideTab = SideWant & { id: string };
 // activeBy: the tab each session had in front, by session id.
-export type SideState = { tabs: SideTab[]; active: string | null; activeBy?: Record<string, string> };
+// shownBy: per session, when the page it last showed was shown (the server's
+// time) — that page is opened here once, even if the user wasn't looking.
+export type SideState = { tabs: SideTab[]; active: string | null; activeBy?: Record<string, string>; shownBy?: Record<string, number> };
 
 // The session a tab belongs to; undefined for a shared tab.
 export function tabOwner(t: SideTab | SideWant): string | undefined {
@@ -117,6 +121,29 @@ export function openTab(s: SideState, want: SideWant, id = sideTabId): SideState
   return { ...s, tabs, active: tab.id };
 }
 
+// Model: web.PreviewView — Claude's show_preview, live or replayed when the
+// user comes back to the session. Null: this device already showed it.
+// Otherwise the port's tab is focused (at the new path); failing that, the
+// session's previous Claude page is replaced; failing that, a tab opens.
+export function showPage(s: SideState, want: { port: number; path: string; owner?: string }, at?: number, id = sideTabId): SideState | null {
+  const owner = want.owner;
+  if (owner && at != null && (s.shownBy?.[owner] ?? 0) >= at) return null;
+  const tab: SideWant = { kind: 'preview', port: want.port, path: want.path, ...(owner ? { owner } : {}), byClaude: true };
+  const found = s.tabs.find((t) => same(t, tab));
+  const old = found ? undefined : s.tabs.find((t) => t.kind === 'preview' && t.byClaude && t.owner === owner);
+  let next: SideState;
+  if (found) next = { ...s, tabs: s.tabs.map((t) => (t.id === found.id ? ({ ...t, path: want.path } as SideTab) : t)), active: found.id };
+  else if (old) next = { ...s, tabs: s.tabs.map((t) => (t.id === old.id ? ({ ...tab, id: old.id } as SideTab) : t)), active: old.id };
+  else next = openTab(s, tab, id);
+  if (owner && at != null) {
+    const { [owner]: _old, ...rest } = s.shownBy ?? {};
+    const entries = Object.entries(rest);
+    const kept = entries.length >= ACTIVE_BY_MAX ? Object.fromEntries(entries.slice(entries.length - ACTIVE_BY_MAX + 1)) : rest;
+    next = { ...next, shownBy: { ...kept, [owner]: at } };
+  }
+  return next;
+}
+
 // "+" — always a fresh launcher tab at the end.
 export function addLauncher(s: SideState, id = sideTabId): SideState {
   const tab: SideTab = { id: id(), kind: 'launcher' };
@@ -157,8 +184,11 @@ export function parseSideState(raw: string | null, reviewOn: boolean): SideState
       const activeBy = v.activeBy && typeof v.activeBy === 'object'
         ? Object.fromEntries(Object.entries(v.activeBy).filter(([k, id]) => k && typeof id === 'string' && ids.has(id))) as Record<string, string>
         : {};
+      const shownBy = v.shownBy && typeof v.shownBy === 'object'
+        ? Object.fromEntries(Object.entries(v.shownBy).filter(([k, at]) => k && typeof at === 'number' && Number.isFinite(at))) as Record<string, number>
+        : {};
       const out: SideState = { tabs, active: typeof v.active === 'string' ? v.active : tabs[0]?.id ?? null };
-      return Object.keys(activeBy).length ? { ...out, activeBy } : out;
+      return { ...out, ...(Object.keys(activeBy).length ? { activeBy } : {}), ...(Object.keys(shownBy).length ? { shownBy } : {}) };
     }
   } catch {}
   return defaultSideState(reviewOn);

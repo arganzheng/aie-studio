@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ChatQuote } from '../lib/addToChat';
 import {
-  FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, openTab, parseSideState, ownWant, pick, remember, updateTab, visibleTabs,
+  FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, openTab, parseSideState, ownWant, pick, remember, showPage, updateTab, visibleTabs,
   type SideState, type SideTab, type SideWant,
 } from '../lib/sidePanel';
 import { ChangesView, type FollowInfo } from './ChangesView';
@@ -30,7 +30,7 @@ export type SideRequest =
   | { kind: 'btw'; sessionId: string; label: string; question: string; seq: number; focus?: string }
   // A session tool tab (the Plan strip's "open in side panel").
   // A preview's owner: the session that showed it (show_preview).
-  | { kind: 'tool'; want: { kind: 'progress' | 'artifacts' } | { kind: 'preview'; port: number; path: string; owner?: string }; seq: number };
+  | { kind: 'tool'; want: { kind: 'progress' | 'artifacts' } | { kind: 'preview'; port: number; path: string; owner?: string; at?: number }; seq: number };
 
 export function PanelIcon() {
   return (
@@ -135,8 +135,10 @@ export function SidePanel({
         // Claude's show_preview: focus (or open) the port's tab, go to the
         // path, and load it afresh (the page may just have been rebuilt).
         // It is that session's tab: in front when the user is there.
-        setState((s) => { const n = openTab(s, want); return remember(n.active ? updateTab(n, n.active, { path: want.path }) : n, want.owner ?? session); });
-        setPreviewLoad(request.seq);
+        // A page already shown on this device (a replay on reconnect) is left alone.
+        const owner = want.owner ?? session ?? undefined;
+        const n = showPage(state, { port: want.port, path: want.path, owner }, want.at);
+        if (n) { setState(remember(n, owner)); setPreviewLoad(request.seq); }
       } else change((s) => openTab(s, want));
     }
     else if (request.kind === 'btw') {

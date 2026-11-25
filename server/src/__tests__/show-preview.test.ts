@@ -19,7 +19,7 @@ describe('show_preview', () => {
   it('says when nobody is looking', () => {
     const r = showPreviewReply(5173, '/', {}, 0);
     expect(r.isError).toBe(false);
-    expect(r.text).toContain('nobody has this session open');
+    expect(r.text).toContain('next time they open this session');
   });
   it('is one of the app\'s own tools (no permission prompt), and tells Claude not to paste localhost links', () => {
     expect(isOwnTool('mcp__aie_view__show_preview')).toBe(true);

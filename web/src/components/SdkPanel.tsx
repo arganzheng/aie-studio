@@ -417,7 +417,7 @@ export function SdkPanel({
   // Model: web.PlanStrip — open the Progress tab beside the chat.
   onOpenProgress?: () => void;
   // Model: web.PreviewView — Claude's show_preview opens a page in the side panel.
-  onShowPreview?: (port: number, path: string) => void;
+  onShowPreview?: (port: number, path: string, at?: number) => void;
   // Open one of this project's sessions in its own tab (a child session).
   onOpenSession?: (sessionId: string, title?: string) => void;
   onExportApi?: (api: { open: () => void; canExport: boolean } | null) => void;
@@ -918,7 +918,7 @@ export function SdkPanel({
     if (m.type === 'title') { if (typeof m.title === 'string' && m.title) onTitleRef.current?.(m.title); return; }
     if (m.type === 'side_open') {
       const w = m.want;
-      if (w?.kind === 'preview' && Number.isInteger(w.port) && w.port >= 1024 && w.port <= 65535) onShowPreviewRef.current?.(w.port, typeof w.path === 'string' && w.path.startsWith('/') ? w.path : '/');
+      if (w?.kind === 'preview' && Number.isInteger(w.port) && w.port >= 1024 && w.port <= 65535) onShowPreviewRef.current?.(w.port, typeof w.path === 'string' && w.path.startsWith('/') ? w.path : '/', typeof m.at === 'number' ? m.at : undefined);
       return;
     }
     if (m.type === 'model') { if (typeof m.model === 'string') setModel(m.model); return; }

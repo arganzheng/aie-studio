@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, defaultSideState, openTab, parseSideState, ownWant, pick, remember, tabOwner, visibleTabs, type SideState } from '../sidePanel';
+import { FOLLOW, ROOT, activate, activeTab, addLauncher, closeTab, defaultSideState, openTab, parseSideState, ownWant, pick, remember, showPage, tabOwner, visibleTabs, type SideState } from '../sidePanel';
 
 const ids = () => { let n = 0; return () => `t${++n}`; };
 
@@ -103,5 +103,47 @@ describe('tabs that belong to a session', () => {
   it('closing a tab keeps what the sessions remembered', () => {
     const s = closeTab(remember(base(), 'A'), 'pu');
     expect(s.activeBy).toEqual({ A: 'pa' });
+  });
+});
+
+describe('showPage (show_preview, live or replayed)', () => {
+  let n = 0;
+  const id = () => `t${n++}`;
+  const base = (): SideState => ({ tabs: [{ id: 'c', kind: 'changes', target: FOLLOW }], active: 'c' });
+
+  it('opens the page once per showing; a replay of the same showing is ignored', () => {
+    const a = showPage(base(), { port: 5001, path: '/', owner: 's1' }, 100, id)!;
+    const tab = a.tabs.find((t) => t.kind === 'preview')!;
+    expect(tab).toMatchObject({ port: 5001, owner: 's1', byClaude: true });
+    expect(a.active).toBe(tab.id);
+    expect(a.shownBy).toEqual({ s1: 100 });
+    expect(showPage(a, { port: 5001, path: '/', owner: 's1' }, 100, id)).toBeNull();
+  });
+
+  it("replaces the session's previous Claude page instead of adding a tab", () => {
+    const a = showPage(base(), { port: 5001, path: '/', owner: 's1' }, 100, id)!;
+    const b = showPage(a, { port: 5002, path: '/x', owner: 's1' }, 200, id)!;
+    const previews = b.tabs.filter((t) => t.kind === 'preview');
+    expect(previews).toHaveLength(1);
+    expect(previews[0]).toMatchObject({ port: 5002, path: '/x' });
+    expect(b.active).toBe(previews[0].id);
+  });
+
+  it("leaves pages the user opened and other sessions' pages alone", () => {
+    const s: SideState = { tabs: [{ id: 'u', kind: 'preview', port: 3000, path: '/', owner: 's1' }, { id: 'o', kind: 'preview', port: 5001, path: '/', owner: 's2', byClaude: true }], active: 'u' };
+    const b = showPage(s, { port: 5002, path: '/', owner: 's1' }, 1, id)!;
+    expect(b.tabs.map((t) => t.kind === 'preview' && t.port)).toEqual([3000, 5002, 5001]);
+  });
+
+  it('focuses a tab already on that port, at the new path', () => {
+    const s: SideState = { tabs: [{ id: 'u', kind: 'preview', port: 3000, path: '/', owner: 's1' }], active: null };
+    const b = showPage(s, { port: 3000, path: '/a', owner: 's1' }, 1, id)!;
+    expect(b.tabs).toHaveLength(1);
+    expect(b).toMatchObject({ active: 'u', tabs: [{ path: '/a' }] });
+  });
+
+  it('keeps shownBy across a reload', () => {
+    const a = showPage(base(), { port: 5001, path: '/', owner: 's1' }, 100, id)!;
+    expect(parseSideState(JSON.stringify(a), false).shownBy).toEqual({ s1: 100 });
   });
 });

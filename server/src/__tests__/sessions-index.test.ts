@@ -118,3 +118,18 @@ describe('cleanTitle', () => {
     expect(cleanTitle(undefined)).toBeNull();
   });
 });
+
+describe('normalizeSessionMeta previews', () => {
+  it('keeps valid shown pages, newest first, and drops bad ones', () => {
+    const m = normalizeSessionMeta({ previews: {
+      'claude:a': { port: 5000, path: '/', at: 1 },
+      'claude:b': { port: 6000, path: '/x', at: 2 },
+      'claude:c': { port: 80, path: '/', at: 3 },
+      'claude:d': { port: 7000, path: 'no-slash', at: 4 },
+    } });
+    expect(Object.keys(m.previews ?? {})).toEqual(['claude:b', 'claude:a']);
+  });
+  it('leaves previews out when there are none', () => {
+    expect('previews' in normalizeSessionMeta({})).toBe(false);
+  });
+});
