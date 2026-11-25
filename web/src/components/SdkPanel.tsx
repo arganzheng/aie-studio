@@ -707,7 +707,7 @@ export function SdkPanel({
     let r: Response | null = null;
     const shownBefore = new Set(msgsRef.current.map((m) => m.id));
     try {
-      r = await fetch(`/api/projects/${projectId}/sdk-sessions/${sid}/transcript?limit=20`);
+      r = await fetch(`/api/projects/${projectId}/sdk-sessions/${sid}/transcript?limit=20&turn=1`);
       if (!r.ok) {
         logDebug('history', `sdk ${sid.slice(0, 8)}: transcript HTTP ${r.status}`);
         setHistoryError(historyProblem(r, null, null));
