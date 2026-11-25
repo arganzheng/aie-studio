@@ -462,10 +462,14 @@ export async function migrateLegacyIfNeeded(): Promise<void> {
 // opened several children as one batch (the Sessions tree nests them).
 // status (model: Session.status): session key → the phrase its agent left
 // when its last turn ended (session-status.ts); gone once the user writes.
-export type SessionMeta = { archived: string[]; titles: Record<string, string>; parents: Record<string, string>; agentSpawned: string[]; groups: Record<string, string>; status: Record<string, SessionStatus> };
+// previews (model: web.PreviewView): session key → the page its agent last
+// opened with show_preview, so a user who wasn't looking still gets it.
+export type ShownPage = { port: number; path: string; at: number };
+export type SessionMeta = { archived: string[]; titles: Record<string, string>; parents: Record<string, string>; agentSpawned: string[]; groups: Record<string, string>; status: Record<string, SessionStatus>; previews?: Record<string, ShownPage> };
+const MAX_PREVIEWS = 300;
 
 export function normalizeSessionMeta(raw: unknown): SessionMeta {
-  const r = (raw && typeof raw === 'object' ? raw : {}) as { archived?: unknown; titles?: unknown; parents?: unknown; agentSpawned?: unknown; groups?: unknown; status?: unknown };
+  const r = (raw && typeof raw === 'object' ? raw : {}) as { archived?: unknown; titles?: unknown; parents?: unknown; agentSpawned?: unknown; groups?: unknown; status?: unknown; previews?: unknown };
   const archived = Array.isArray(r.archived) ? [...new Set(r.archived.filter((k): k is string => typeof k === 'string'))] : [];
   const titles: Record<string, string> = {};
   if (r.titles && typeof r.titles === 'object') {
@@ -495,7 +499,16 @@ export function normalizeSessionMeta(raw: unknown): SessionMeta {
       if (st) status[k] = st;
     }
   }
-  return { archived, titles, parents, agentSpawned, groups, status };
+  // Newest first, capped: an old session's page is long gone anyway.
+  const shown: Array<[string, ShownPage]> = [];
+  if (r.previews && typeof r.previews === 'object') {
+    for (const [k, v] of Object.entries(r.previews as Record<string, any>)) {
+      if (Number.isInteger(v?.port) && v.port >= 1024 && v.port <= 65535 && typeof v?.path === 'string' && v.path.startsWith('/') && Number.isFinite(v?.at)) shown.push([k, { port: v.port, path: v.path, at: v.at }]);
+    }
+  }
+  shown.sort((a, b) => b[1].at - a[1].at);
+  const previews = Object.fromEntries(shown.slice(0, MAX_PREVIEWS));
+  return { archived, titles, parents, agentSpawned, groups, status, ...(shown.length ? { previews } : {}) };
 }
 
 // Pure: the meta after `childKey` was opened as a child of session `parentId`.
@@ -630,6 +643,16 @@ export async function setSessionStatus(uid: string, key: string, status: Session
     const { [key]: _gone, ...rest } = meta.status;
     await putSessionMeta(uid, { ...meta, status: status ? { ...rest, [key]: status } : rest });
   } catch {}
+}
+
+export async function setShownPage(uid: string, key: string, page: ShownPage): Promise<void> {
+  try {
+    const meta = await getSessionMeta(uid);
+    await putSessionMeta(uid, { ...meta, previews: { ...meta.previews, [key]: page } });
+  } catch {}
+}
+export async function shownPageOf(uid: string, key: string): Promise<ShownPage | null> {
+  try { return (await getSessionMeta(uid)).previews?.[key] ?? null; } catch { return null; }
 }
 
 export async function putSessionMeta(uid: string, meta: SessionMeta): Promise<SessionMeta> {

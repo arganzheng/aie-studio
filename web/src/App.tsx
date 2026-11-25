@@ -468,10 +468,16 @@ export default function App() {
   };
   // Model: web.PreviewView — Claude showed a page (show_preview): open it beside the chat.
   // owner: the session that showed it; the tab is that session's.
-  const openSidePreview = (port: number, path: string, owner?: string) => {
-    setReviewCollapsed(false);
-    setReviewDrawerOpen(true);
-    setSideRequest((prev) => ({ kind: 'tool', want: { kind: 'preview', port, path, ...(owner ? { owner } : {}) }, seq: (prev?.seq ?? 0) + 1 }));
+  // at: when Claude showed it (server time) — also sent again when the user
+  // comes back to the session, so a page shown while away still opens.
+  // The panel only pops open for the session in front.
+  const followSessionIdRef = useRef<string | undefined>(undefined);
+  const openSidePreview = (port: number, path: string, owner?: string, at?: number) => {
+    if (!owner || owner === followSessionIdRef.current) {
+      setReviewCollapsed(false);
+      setReviewDrawerOpen(true);
+    }
+    setSideRequest((prev) => ({ kind: 'tool', want: { kind: 'preview', port, path, ...(owner ? { owner } : {}), ...(at != null ? { at } : {}) }, seq: (prev?.seq ?? 0) + 1 }));
   };
   // Comments and bookmarks land in Review: bring its tab forward.
   const showReview = () => { setReviewCollapsed(false); askSide('review'); };
@@ -1006,6 +1012,7 @@ export default function App() {
   const followTab = followCandidate && isSessionTab(followCandidate) ? followCandidate : null;
   const followTitle = followTab ? (('title' in followTab && followTab.title) || tabTitle(followTab)) : '';
   const followSessionId = followTab && followTab.type !== 'devin' ? followTab.resumeId : undefined;
+  followSessionIdRef.current = followSessionId;
   const followWorktree = followTab?.type === 'claude-sdk' ? followTab.worktree : undefined;
   const follow: FollowInfo | null = useMemo(
     () => (followTab ? { sessionId: followSessionId, worktree: followWorktree, label: followTitle } : null),
