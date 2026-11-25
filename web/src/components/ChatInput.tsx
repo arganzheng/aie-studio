@@ -4,6 +4,7 @@ import { filterCommands, matchCommandQuery, type CommandItem } from '../lib/comm
 import { imageFilesFromClipboard } from '../lib/imageAttachments';
 import { isSendKeyTrigger } from '../lib/sendKey';
 import { AttachImagesButton } from './ImageAttachments';
+import { PromptEditor, type PromptEditorHandle } from './PromptEditor';
 import { isBangInput } from '../lib/bang';
 import { isCompactCommand, isSlashCommand } from '../lib/steering';
 import { addQuotes, composeQuotedPrompt, quoteCardLabel, quoteCardPreview, type ChatQuote } from '../lib/addToChat';
@@ -136,7 +137,7 @@ export const ChatInput = memo(function ChatInput({
   // null = picker closed; string = query after the leading "/".
   const [query, setQuery] = useState<string | null>(null);
   const [sel, setSel] = useState(0);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<PromptEditorHandle>(null);
   const listRef = useRef<HTMLDivElement>(null);
   // Desktop-only height override (model: web.SendPrompt). Dragging the bar on
   // the input's top edge upward grows the textarea; persisted so tab switches
@@ -146,27 +147,24 @@ export const ChatInput = memo(function ChatInput({
   const [height, setHeight] = useState<number | null>(() => (desktop ? loadInputHeight() : null));
   const dragRef = useRef<{ startY: number; startH: number } | null>(null);
 
-  // Touch devices (model: web.SendPrompt): no drag bar; the textarea follows
-  // its content instead. Reset to auto first so shrinking works, then clamp.
-  // Layout effect so the frame never paints at the stale height.
+  // Touch devices (model: web.SendPrompt): no drag bar; the editor follows
+  // its content instead (it grows by itself), up to a share of the visual
+  // viewport, which is re-read on every edit: the on-screen keyboard changes it.
+  // Layout effect so the frame never paints past the cap.
   useLayoutEffect(() => {
     if (desktop) return;
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = 'auto';
+    const el = editorRef.current?.element();
+    if (!el) return;
     const viewport = window.visualViewport?.height ?? window.innerHeight;
-    const max = Math.floor(viewport * MAX_AUTO_HEIGHT_VH);
-    // scrollHeight excludes the border; box-sizing is border-box.
-    const border = ta.offsetHeight - ta.clientHeight;
-    ta.style.height = `${Math.min(max, Math.max(MIN_INPUT_HEIGHT, ta.scrollHeight + border))}px`;
+    el.style.maxHeight = `${Math.max(MIN_INPUT_HEIGHT, Math.floor(viewport * MAX_AUTO_HEIGHT_VH))}px`;
   }, [text, desktop]);
 
   function onResizeDown(e: ReactPointerEvent<HTMLDivElement>) {
-    const ta = textareaRef.current;
-    if (!ta) return;
+    const el = editorRef.current?.element();
+    if (!el) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
-    dragRef.current = { startY: e.clientY, startH: ta.offsetHeight };
+    dragRef.current = { startY: e.clientY, startH: el.offsetHeight };
   }
   function onResizeMove(e: ReactPointerEvent<HTMLDivElement>) {
     const d = dragRef.current;
@@ -178,7 +176,7 @@ export const ChatInput = memo(function ChatInput({
     if (!dragRef.current) return;
     dragRef.current = null;
     e.currentTarget.releasePointerCapture(e.pointerId);
-    const h = textareaRef.current?.offsetHeight;
+    const h = editorRef.current?.element()?.offsetHeight;
     if (h) localStorage.setItem(INPUT_HEIGHT_KEY, String(h));
   }
   function onResizeReset() {
@@ -210,16 +208,12 @@ export const ChatInput = memo(function ChatInput({
   }
 
   function pick(item: CommandItem) {
-    const ta = textareaRef.current;
     // Trigger rule guarantees the "/query" token spans [0, cursor).
-    const cursor = ta?.selectionStart ?? text.length;
+    const cursor = editorRef.current?.cursor() ?? text.length;
     const next = item.insert + text.slice(cursor);
     setText(next);
     setQuery(null);
-    requestAnimationFrame(() => {
-      ta?.focus();
-      ta?.setSelectionRange(item.insert.length, item.insert.length);
-    });
+    requestAnimationFrame(() => editorRef.current?.focusAt(item.insert.length));
   }
 
   // Batches whose prompt currently sits in the input, unsent.
@@ -232,13 +226,7 @@ export const ChatInput = memo(function ChatInput({
     if (insertion.quotes?.length) setQuotes((prev) => addQuotes(prev, insertion.quotes!));
     if (insertion.text) setText((prev) => (prev.trim() ? `${prev.replace(/\s+$/, '')}\n\n${insertion.text}` : insertion.text));
     setQuery(null);
-    requestAnimationFrame(() => {
-      const ta = textareaRef.current;
-      if (!ta) return;
-      ta.focus();
-      ta.setSelectionRange(ta.value.length, ta.value.length);
-      ta.scrollTop = ta.scrollHeight;
-    });
+    requestAnimationFrame(() => editorRef.current?.focusAt('end'));
   }, [insertion]);
 
   const [modeMenu, setModeMenu] = useState(false);
@@ -389,19 +377,19 @@ export const ChatInput = memo(function ChatInput({
         </div>
       )}
       <AttachImagesButton onFiles={onAddFiles} anyFile={anyFile} disabled={status === 'closed' || !!lock} />
-      <textarea
-        ref={textareaRef}
+      <PromptEditor
+        ref={editorRef}
         style={height != null ? { height } : undefined}
         value={text}
-        onChange={(e) => {
-          setText(e.target.value);
+        onChange={(value, cursor) => {
+          setText(value);
           // Input emptied by hand = the user dropped that send; the Batch stays draft.
-          if (!e.target.value) pendingBatchIdsRef.current = [];
-          syncQuery(e.target.value, e.target.selectionStart ?? e.target.value.length);
+          if (!value) pendingBatchIdsRef.current = [];
+          syncQuery(value, cursor);
         }}
-        onClick={(e) => {
+        onClick={(cursor) => {
           if (lock) { lock.onShow?.(); return; }
-          syncQuery(text, e.currentTarget.selectionStart ?? text.length);
+          syncQuery(text, cursor);
         }}
         onBlur={() => setQuery(null)}
         readOnly={!!lock}
@@ -415,21 +403,20 @@ export const ChatInput = memo(function ChatInput({
         disabled={status === 'closed'}
         onPaste={(e) => {
           const files = anyFile ? Array.from(e.clipboardData?.files ?? []) : imageFilesFromClipboard(e.clipboardData?.items);
-          if (files.length) {
-            e.preventDefault();
-            onAddFiles(files);
-          }
+          if (!files.length) return false;
+          onAddFiles(files);
+          return true;
         }}
         onKeyDown={(e) => {
-          if (e.nativeEvent.isComposing) return;
           if (open) {
             // While the picker is open, Enter/Tab pick regardless of sendKey.
-            if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => (s + 1) % matches.length); return; }
-            if (e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => (s - 1 + matches.length) % matches.length); return; }
-            if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(matches[selIdx]); return; }
-            if (e.key === 'Escape') { e.preventDefault(); setQuery(null); return; }
+            if (e.key === 'ArrowDown') { setSel((s) => (s + 1) % matches.length); return true; }
+            if (e.key === 'ArrowUp') { setSel((s) => (s - 1 + matches.length) % matches.length); return true; }
+            if (e.key === 'Enter' || e.key === 'Tab') { pick(matches[selIdx]); return true; }
+            if (e.key === 'Escape') { setQuery(null); return true; }
           }
-          if (isSendKeyTrigger(sendKey, e)) { e.preventDefault(); submit(); }
+          if (isSendKeyTrigger(sendKey, e)) { submit(); return true; }
+          return false;
         }}
       />
       {lock && (
