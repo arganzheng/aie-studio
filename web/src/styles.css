@@ -1222,28 +1222,47 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   display: flex;
   gap: 6px;
 }
-.chat-input textarea {
+.chat-input .prompt-editor {
   flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
   background: var(--bg-input);
   color: var(--fg);
   border: 1px solid var(--border-strong);
   border-radius: 4px;
-  padding: 8px 10px;
-  resize: none;
   font-family: inherit;
   font-size: 16px;
-  min-height: 40px;
-  /* Touch: ChatInput auto-grows the textarea with its content, capped at 40%
-     of the visual viewport in JS; this is only the fallback before it runs. */
+  /* Two lines, like the two-row textarea this was. */
+  min-height: 54px;
+  /* Touch: the editor grows with its content, capped at 40% of the visual
+     viewport in JS (ChatInput); this is only the fallback before it runs. */
   max-height: 40vh;
+  display: flex;
+  overflow: hidden;
+  cursor: text;
 }
+/* The CodeMirror view inside (PromptEditor): fills the box and scrolls in
+   it, and otherwise looks like the textarea it replaced. */
+.prompt-editor .cm-editor { flex: 1; min-width: 0; max-height: 100%; background: transparent; color: inherit; }
+.prompt-editor .cm-editor.cm-focused { outline: none; }
+/* The browser's own focus ring, as on the textarea (second line: Chrome and
+   Safari; the first is the fallback elsewhere). */
+.prompt-editor:focus-within { outline: 2px solid Highlight; outline: -webkit-focus-ring-color auto 1px; }
+.prompt-editor .cm-scroller { font-family: inherit; line-height: normal; overflow: auto; }
+.prompt-editor .cm-content { padding: 8px 0; caret-color: var(--fg); }
+.prompt-editor .cm-line { padding: 0 10px; }
+/* Out of the flow, as a textarea's placeholder is: a long one wraps and is
+   cut off by the box instead of making the box taller. */
+.prompt-editor .cm-placeholder { color: var(--fg-muted); position: absolute; top: 8px; left: 10px; right: 10px; }
+.prompt-editor.disabled { opacity: 0.6; cursor: not-allowed; }
 /* Desktop (mouse pointer): a drag bar on the input's top edge grows the
    textarea upward (model: web.SendPrompt). The native corner handle only drags
    downward, useless for a bar pinned to the viewport bottom. Touch devices
    have no bar and auto-grow instead. */
 .chat-input-resize { display: none; }
 @media (hover: hover) and (pointer: fine) {
-  .chat-input textarea { max-height: 50vh; }
+  /* A fixed height (the drag bar sets another one inline); long text scrolls. */
+  .chat-input .prompt-editor { height: 54px; max-height: 50vh; }
   .chat-input-resize {
     display: block;
     position: absolute;
@@ -2980,12 +2999,13 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 
 /* Model: web.PendingFormInputLock rule-309 — read-only input while a form
    waits, with an Unlock escape hatch. */
-.chat-input.locked textarea {
+.chat-input.locked .prompt-editor .cm-content { cursor: pointer; }
+.chat-input.locked .prompt-editor {
   cursor: pointer;
   background: var(--bg-muted);
   border-style: dashed;
 }
-.chat-input.locked textarea::placeholder { color: #b45309; font-style: italic; }
+.chat-input.locked .prompt-editor .cm-placeholder { color: #b45309; font-style: italic; }
 .chat-unlock {
   background: transparent;
   color: var(--fg);
@@ -3559,8 +3579,8 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 }
 
 /* ----- `!` shell commands in chat (web.BangCommand) ----- */
-.chat-input.bash-mode textarea,
-.chat-input.bash-mode textarea:focus {
+.chat-input.bash-mode .prompt-editor,
+.chat-input.bash-mode .prompt-editor:focus-within {
   outline: none;
   border-color: #d670d6;
   box-shadow: 0 0 0 1px #d670d6 inset;
