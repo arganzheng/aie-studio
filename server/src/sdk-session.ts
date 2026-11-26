@@ -492,7 +492,7 @@ function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: 
       stderr: (data) => broadcast(entry, { type: 'stderr', data }),
       canUseTool: makeCanUseTool(entry),
       hooks: { PreToolUse: [{ hooks: [changesHook(entry)] }] },
-      mcpServers: { ...(entry.childTools ? { aie: childToolsServer(entry) } : {}), aie_status: statusServer(), aie_progress: progressServer(), aie_view: viewToolsServer(entry), aie_watch: watchToolsServer(entry), aie_sessions: sessionToolsServer(entry) },
+      mcpServers: { ...(entry.childTools ? { aie: childToolsServer(entry) } : {}), aie_status: statusServer(), aie_progress: progressServer(), aie_reply: replyServer(), aie_view: viewToolsServer(entry), aie_watch: watchToolsServer(entry), aie_sessions: sessionToolsServer(entry) },
       outputFormat: entry.resultSchema ? { type: 'json_schema', schema: entry.resultSchema } : undefined,
     },
   });
@@ -1508,6 +1508,22 @@ export const PROGRESS_INSTRUCTIONS = [
 
 function progressServer() {
   return createSdkMcpServer({ name: 'aie_progress', version: '1.0.0', instructions: PROGRESS_INSTRUCTIONS, tools: [] });
+}
+
+// Model: Session.queue — a message the user writes during a turn goes
+// straight into it (steerThenDeliver). The CLI only tells the model it
+// arrived; without this the model changes course (or not) in silence and the
+// user cannot tell it was read. Its own server: instructions are told once
+// per name.
+export const REPLY_INSTRUCTIONS = [
+  'Messages written while you work.',
+  'The user can write to you while your turn is running; such a message reaches you mid-turn ("The user sent a new message while you were working").',
+  'When one arrives, the first thing you do is reply to the user in one or two sentences, in their language: say you have it and what you will do about it — stop what you are doing and change course (and which changes already made you will undo), finish the current step first and then handle it, or carry on because it does not change the current work.',
+  'Write that reply before any further tool call, then act on it. Do not change course, or carry on, without saying so.',
+].join(' ');
+
+function replyServer() {
+  return createSdkMcpServer({ name: 'aie_reply', version: '1.0.0', instructions: REPLY_INSTRUCTIONS, tools: [] });
 }
 
 function statusServer() {
