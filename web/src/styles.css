@@ -1223,13 +1223,10 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   gap: 6px;
 }
 .chat-input .prompt-editor {
-  flex: 1;
+  flex: 0 0 auto;
   min-width: 0;
   box-sizing: border-box;
-  background: var(--bg-input);
   color: var(--fg);
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
   font-family: inherit;
   font-size: 16px;
   /* Two lines, like the two-row textarea this was. */
@@ -1245,9 +1242,6 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
    it, and otherwise looks like the textarea it replaced. */
 .prompt-editor .cm-editor { flex: 1; min-width: 0; max-height: 100%; background: transparent; color: inherit; }
 .prompt-editor .cm-editor.cm-focused { outline: none; }
-/* The browser's own focus ring, as on the textarea (second line: Chrome and
-   Safari; the first is the fallback elsewhere). */
-.prompt-editor:focus-within { outline: 2px solid Highlight; outline: -webkit-focus-ring-color auto 1px; }
 .prompt-editor .cm-scroller { font-family: inherit; line-height: normal; overflow: auto; }
 .prompt-editor .cm-content { padding: 8px 0; caret-color: var(--fg); }
 .prompt-editor .cm-line { padding: 0 10px; }
@@ -1286,17 +1280,27 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   font-weight: 600;
 }
 .chat-input button:disabled { background: var(--border-strong); color: var(--fg-muted); cursor: not-allowed; }
-/* Left of the editor (model: web.FileMentions): ＋ ("Attach or mention") and,
-   under it, "/" (commands). One column, so the editor loses no width. */
-.chat-tools { position: relative; flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px; }
-/* Two buttons share the editor's height (each half of it); one alone fills it. */
-.chat-input .chat-tools > button.chat-attach { flex: 1 1 0; min-height: 0; line-height: 1; }
-.chat-input .chat-tools > button.chat-attach:not(:only-of-type) { font-size: 15px; }
-.chat-input .chat-tools > button.chat-slash-btn { font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
-/* Touch: half a line is too small to hit, so they sit side by side. */
+/* One box (model: web.SendPrompt): the text on top, a bar under it — ＋
+   ("Attach or mention") and "/" (commands) on the left, the send controls on
+   the right — so the text has the full width. */
+.chat-box { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-input); border: 1px solid var(--border-strong); border-radius: 10px; }
+/* The browser's own focus ring, as on the textarea this was (second line:
+   Chrome and Safari; the first is the fallback elsewhere). Only for the text:
+   a focused button in the bar shows its own. */
+.chat-box:has(.cm-focused) { outline: 2px solid Highlight; outline: -webkit-focus-ring-color auto 1px; }
+.chat-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 0 6px 6px; }
+.chat-bar-gap { flex: 1; }
+.chat-input .chat-bar button { height: 30px; }
+.chat-tools { position: relative; flex: 0 0 auto; display: flex; gap: 2px; }
+.chat-input .chat-tools > button.chat-attach { width: 30px; min-height: 0; border: none; background: transparent; line-height: 1; align-self: auto; }
+.chat-input .chat-tools > button.chat-attach:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
+.chat-input .chat-tools > button.chat-slash-btn { font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* "/" in a small box, as a key. */
+.chat-input .chat-tools > button.chat-slash-btn::before { content: '/'; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border: 1.5px solid currentColor; border-radius: 4px; }
+/* Touch: bigger targets. */
 @media (pointer: coarse) {
-  .chat-tools { flex-direction: row; }
-  .chat-input .chat-tools > button.chat-attach { flex: 0 0 auto; width: 36px; min-height: 40px; }
+  .chat-input .chat-bar button { height: 36px; }
+  .chat-input .chat-tools > button.chat-attach { width: 36px; }
 }
 .chat-plus-menu { position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 30; min-width: 190px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.35); padding: 4px; }
 .chat-input .chat-plus-menu button { display: flex; align-items: center; gap: 8px; background: none; color: var(--fg); font-weight: 400; padding: 8px 10px; border-radius: 6px; }
@@ -3023,8 +3027,8 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 /* Model: web.PendingFormInputLock rule-309 — read-only input while a form
    waits, with an Unlock escape hatch. */
 .chat-input.locked .prompt-editor .cm-content { cursor: pointer; }
-.chat-input.locked .prompt-editor {
-  cursor: pointer;
+.chat-input.locked .prompt-editor { cursor: pointer; }
+.chat-input.locked .chat-box {
   background: var(--bg-muted);
   border-style: dashed;
 }
@@ -3602,17 +3606,17 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 }
 
 /* ----- `!` shell commands in chat (web.BangCommand) ----- */
-.chat-input.bash-mode .prompt-editor,
-.chat-input.bash-mode .prompt-editor:focus-within {
+.chat-input.bash-mode .chat-box,
+.chat-input.bash-mode .chat-box:has(.cm-focused) {
   outline: none;
   border-color: #d670d6;
   box-shadow: 0 0 0 1px #d670d6 inset;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+.chat-input.bash-mode .prompt-editor { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .chat-input-bash-badge {
   position: absolute;
   top: -10px;
-  left: 56px;
+  left: 20px;
   z-index: 1;
   padding: 0 6px;
   border-radius: 3px;
