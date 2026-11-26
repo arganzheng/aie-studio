@@ -1290,6 +1290,11 @@ export default function App() {
       openSdkTab(newTab.resumeId, newTab.title);
       return;
     }
+    // The same for a Devin session (a session chip in a prompt).
+    if (newTab.type === 'devin' && newTab.resumeId) {
+      openDevinTab(newTab.resumeId, newTab.title);
+      return;
+    }
     if (newTab.type === 'editor') {
       const existing = tabs.find((t) => t.type === 'editor' && t.path === newTab.path);
       if (existing) {

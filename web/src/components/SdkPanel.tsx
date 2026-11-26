@@ -420,7 +420,8 @@ export function SdkPanel({
   // Model: web.PreviewView — Claude's show_preview opens a page in the side panel.
   onShowPreview?: (port: number, path: string, at?: number) => void;
   // Open one of this project's sessions in its own tab (a child session).
-  onOpenSession?: (sessionId: string, title?: string) => void;
+  // `kind`: which agent's session it is (default Claude).
+  onOpenSession?: (sessionId: string, title?: string, kind?: 'claude' | 'devin') => void;
   onExportApi?: (api: { open: () => void; canExport: boolean } | null) => void;
   // Review integration — same contract as ChatPanel (omitted when settings.review is off).
   onComment?: (c: NewComment) => string | null;
@@ -1808,6 +1809,7 @@ export function SdkPanel({
         onMentionOpen={projectFiles.refresh}
         mentionSessions={mentionSessions.sessions}
         onSessionsOpen={mentionSessions.refresh}
+        onOpenMentionedSession={onOpenSession ? (id) => { const row = mentionSessions.rowOf(id); if (row) onOpenSession(row.sessionId, row.title, row.kind); } : undefined}
         onSend={send}
         sendModes
         insertion={insertion}

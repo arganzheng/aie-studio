@@ -76,7 +76,8 @@ export function fileItems(files: readonly string[], query: string, limit = 50): 
 
 // What a mention is drawn as. `send`: what goes out in its place when the
 // prompt is sent (absent = the text as it is).
-export type MentionInfo = { kind: 'file' | 'session'; label: string; title: string; send?: string };
+// `open`: the chip can be clicked, and this is what it opens (a session id).
+export type MentionInfo = { kind: 'file' | 'session'; label: string; title: string; send?: string; open?: string };
 export type MentionResolver = (token: string) => MentionInfo | null;
 
 // A file mention is a chip only when it names a file of the checkout, so
@@ -139,7 +140,7 @@ export function sessionMentionResolver(sessions: ReadonlyMap<string, MentionSess
   return (token) => {
     if (!token.startsWith(SESSION_PREFIX)) return null;
     const s = sessions.get(token.slice(SESSION_PREFIX.length));
-    return s ? { kind: 'session', label: s.title, title: `${s.title} — ${kindName(s.kind)} session ${s.id}`, send: sessionSendText(s) } : null;
+    return s ? { kind: 'session', label: s.title, title: `${s.title} — ${kindName(s.kind)} session ${s.id}. Click to open it.`, send: sessionSendText(s), open: s.id } : null;
   };
 }
 

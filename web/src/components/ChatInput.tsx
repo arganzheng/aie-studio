@@ -77,6 +77,7 @@ export const ChatInput = memo(function ChatInput({
   onMentionOpen,
   mentionSessions,
   onSessionsOpen,
+  onOpenMentionedSession,
   insertion,
   onBatchSent,
   onSend,
@@ -113,6 +114,8 @@ export const ChatInput = memo(function ChatInput({
   // line naming the session, which Claude can then read (server.ReadSession).
   mentionSessions?: readonly MentionSession[];
   onSessionsOpen?: () => void;
+  // A session chip was clicked: open that session.
+  onOpenMentionedSession?: (sessionId: string) => void;
   // Model: web.InsertBatchPrompt. The text is appended (never sent) so the
   // user can review it; onBatchSent fires for each inserted Batch once the
   // prompt actually goes out.
@@ -509,6 +512,7 @@ export const ChatInput = memo(function ChatInput({
           onBlur={() => setPicker(null)}
           readOnly={!!lock}
           resolveMention={resolveMention}
+          onMentionOpen={onOpenMentionedSession}
           placeholder={
             lock ? lock.reason
             : status === 'closed' ? 'closed'

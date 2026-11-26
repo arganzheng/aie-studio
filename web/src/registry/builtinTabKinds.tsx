@@ -149,7 +149,7 @@ registerTabKind({
         onSideChatAbout={openSideChat ? (quote) => { if (t.resumeId) openSideChat(t.resumeId, t.title || t.resumeId.slice(0, 8), '', quote); return !!t.resumeId; } : undefined}
         onOpenProgress={openSideTool ? () => openSideTool('progress') : undefined}
         onShowPreview={openSidePreview ? (port, path, at) => openSidePreview(port, path, t.resumeId, at) : undefined}
-        onOpenSession={(sessionId, title) => openTab({ id: shortId(), type: 'claude-sdk', resumeId: sessionId, ...(title ? { title } : {}) })}
+        onOpenSession={(sessionId, title, kind) => openTab({ id: shortId(), type: kind === 'devin' ? 'devin' : 'claude-sdk', resumeId: sessionId, ...(title ? { title } : {}) })}
         onTitle={(title) => updateTabs((tabs) => tabs.map((x) => (x.id === t.id ? { ...x, title } : x)))}
         onSessionId={(uuid) => {
           updateTabs((tabs) => {
