@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  acpCommandsToItems, agentInsertText, filterCommands, matchCommandQuery, toCommandItems,
+  acpCommandsToItems, agentInsertText, filterCommands, matchCommandQuery, sdkCliCatalog, toCommandItems,
 } from '../commandPicker';
 
 describe('matchCommandQuery', () => {
@@ -22,6 +22,27 @@ describe('matchCommandQuery', () => {
   });
   it('still matches a path-like token at the start (filter then hides it)', () => {
     expect(matchCommandQuery('/tmp/project')).toBe('tmp/project');
+  });
+});
+
+describe('sdkCliCatalog', () => {
+  it('is unknown until the session has reported its commands', () => {
+    expect(sdkCliCatalog(null)).toBeNull();
+    // What a session says while its CLI is still starting.
+    expect(sdkCliCatalog({ commands: [], agents: [] })).toBeNull();
+  });
+  it('keeps the built-ins listed while the CLI is still starting', () => {
+    const names = toCommandItems([], [], sdkCliCatalog({ commands: [], agents: [] })).map((i) => i.name);
+    expect(names).toContain('compact');
+    expect(names).toContain('clear');
+  });
+  it('gates on what the CLI reported once it has', () => {
+    const cat = sdkCliCatalog({ commands: [{ name: 'compact' }], agents: ['Explore'] });
+    expect(cat).toEqual({ slashCommands: ['compact'], skills: [], agents: ['Explore'], terminalSlashCommands: [] });
+    const names = toCommandItems([], [], cat).map((i) => i.name);
+    expect(names).toContain('compact');
+    expect(names).not.toContain('clear');
+    expect(names).toContain('Explore');
   });
 });
 

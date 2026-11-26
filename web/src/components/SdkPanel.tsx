@@ -60,8 +60,7 @@ import { isSendKeyTrigger } from '../lib/sendKey';
 import { toWireImages } from '../lib/imageAttachments';
 import { isImageSizeNote, parseToolResultContent, type ToolOutput } from '../lib/toolResult';
 import { makeRelPath } from '../lib/relPath';
-import { BTW_COMMAND, btwQuestion, toCommandItems } from '../lib/commandPicker';
-import type { ClaudeCliCatalog } from '../lib/claudeCatalog';
+import { BTW_COMMAND, btwQuestion, sdkCliCatalog, toCommandItems } from '../lib/commandPicker';
 import { useAieCommands } from '../useAieCommands';
 import { useClaudeModels, effortOptionsFor } from '../useClaudeModels';
 import { openDuplex, type DuplexSocket } from '../lib/duplex';
@@ -553,10 +552,7 @@ export function SdkPanel({
   const pendingImages = attachments.images;
   const modelCatalog = useClaudeModels();
   const { skills: aieSkills, agents: aieAgents, refresh: refreshCommands } = useAieCommands(projectId);
-  const cliCatalog = useMemo<ClaudeCliCatalog | null>(
-    () => (catalog ? { slashCommands: catalog.commands.map((c) => c.name), skills: [], agents: catalog.agents, terminalSlashCommands: [] } : null),
-    [catalog],
-  );
+  const cliCatalog = useMemo(() => sdkCliCatalog(catalog), [catalog]);
   const commands = useMemo(() => [BTW_COMMAND, ...toCommandItems(aieSkills, aieAgents, cliCatalog)], [aieSkills, aieAgents, cliCatalog]);
 
   // Export (⋮ → Export session). Same stale-closure note as ChatPanel: App

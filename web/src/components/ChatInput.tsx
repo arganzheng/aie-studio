@@ -145,7 +145,8 @@ export const ChatInput = memo(function ChatInput({
   // value: their height is driven by content below.
   const [desktop] = useState(isDesktopPointer);
   const [height, setHeight] = useState<number | null>(() => (desktop ? loadInputHeight() : null));
-  const dragRef = useRef<{ startY: number; startH: number } | null>(null);
+  // `h`: the height the drag has reached, once it has moved.
+  const dragRef = useRef<{ startY: number; startH: number; h?: number } | null>(null);
 
   // Touch devices (model: web.SendPrompt): no drag bar; the editor follows
   // its content instead (it grows by itself), up to a share of the visual
@@ -170,14 +171,17 @@ export const ChatInput = memo(function ChatInput({
     const d = dragRef.current;
     if (!d) return;
     const max = Math.floor(window.innerHeight * MAX_INPUT_HEIGHT_VH);
-    setHeight(Math.min(max, Math.max(MIN_INPUT_HEIGHT, d.startH + (d.startY - e.clientY))));
+    d.h = Math.min(max, Math.max(MIN_INPUT_HEIGHT, d.startH + (d.startY - e.clientY)));
+    setHeight(d.h);
   }
   function onResizeUp(e: ReactPointerEvent<HTMLDivElement>) {
-    if (!dragRef.current) return;
+    const d = dragRef.current;
+    if (!d) return;
     dragRef.current = null;
     e.currentTarget.releasePointerCapture(e.pointerId);
-    const h = editorRef.current?.element()?.offsetHeight;
-    if (h) localStorage.setItem(INPUT_HEIGHT_KEY, String(h));
+    // The height the drag reached, not the element's: the last move may not
+    // have been drawn yet, and the element would then give the one before it.
+    if (d.h != null) localStorage.setItem(INPUT_HEIGHT_KEY, String(d.h));
   }
   function onResizeReset() {
     setHeight(null);
