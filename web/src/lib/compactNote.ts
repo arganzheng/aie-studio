@@ -14,3 +14,10 @@ export function parseCompactNote(text: string): CompactNote | null {
   if (!t.startsWith(SUMMARY_START)) return null;
   return { kind: 'summary', summary: t };
 }
+
+// The summary a message carries, if it is a compaction's summary.
+export function compactSummaryOf(m: { role: string; text?: unknown; images?: unknown[] }): string | null {
+  if (m.role !== 'user' || typeof m.text !== 'string' || m.images?.length) return null;
+  const note = parseCompactNote(m.text);
+  return note?.kind === 'summary' ? note.summary : null;
+}
