@@ -36,6 +36,8 @@ type Props = {
   // Model: web.FileMentions. Says which "@token"s in the text are mentions
   // and what each is drawn as; those are shown as chips. Omit for none.
   resolveMention?: MentionResolver | null;
+  // A chip that can be opened (MentionInfo.open) was clicked.
+  onMentionOpen?: (open: string) => void;
   // Text can be read and selected but not changed.
   readOnly?: boolean;
   // Not usable at all (session closed).
@@ -54,12 +56,13 @@ const mentionResolver = Facet.define<MentionResolver | null, MentionResolver | n
 class MentionWidget extends WidgetType {
   constructor(readonly info: MentionInfo) { super(); }
   eq(other: MentionWidget) {
-    return other.info.kind === this.info.kind && other.info.label === this.info.label && other.info.title === this.info.title;
+    return other.info.kind === this.info.kind && other.info.label === this.info.label && other.info.title === this.info.title && other.info.open === this.info.open;
   }
   toDOM() {
     const el = document.createElement('span');
     el.className = `mention-chip mention-${this.info.kind}`;
     el.title = this.info.title;
+    if (this.info.open != null) el.dataset.open = this.info.open;
     const icon = document.createElement('span');
     icon.className = 'mention-icon';
     icon.setAttribute('aria-hidden', 'true');
@@ -89,6 +92,12 @@ const mentionField = StateField.define<DecorationSet>({
   provide: (f) => [EditorView.decorations.from(f), EditorView.atomicRanges.of((view) => view.state.field(f))],
 });
 
+// What the chip under an event target opens, if it is one that opens.
+function openOf(target: EventTarget | null): string | null {
+  const chip = target instanceof Element ? target.closest<HTMLElement>('.mention-chip[data-open]') : null;
+  return chip?.dataset.open ?? null;
+}
+
 // Marks a change the component made itself to follow `value`, so it is not
 // reported back through onChange.
 const fromProp = Annotation.define<boolean>();
@@ -107,14 +116,14 @@ function editableExt(readOnly: boolean, disabled: boolean): Extension {
 }
 
 export const PromptEditor = forwardRef<PromptEditorHandle, Props>(function PromptEditor(
-  { value, onChange, onKeyDown, onPaste, onClick, onBlur, placeholder, resolveMention = null, readOnly = false, disabled = false, className, style },
+  { value, onChange, onKeyDown, onPaste, onClick, onBlur, placeholder, resolveMention = null, onMentionOpen, readOnly = false, disabled = false, className, style },
   ref,
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   // The view is made once; its handlers read the latest props from here.
-  const cb = useRef({ onChange, onKeyDown, onPaste, onClick, onBlur });
-  cb.current = { onChange, onKeyDown, onPaste, onClick, onBlur };
+  const cb = useRef({ onChange, onKeyDown, onPaste, onClick, onBlur, onMentionOpen });
+  cb.current = { onChange, onKeyDown, onPaste, onClick, onBlur, onMentionOpen };
   const compartments = useRef({ placeholder: new Compartment(), editable: new Compartment(), mentions: new Compartment() });
 
   useEffect(() => {
@@ -137,6 +146,20 @@ export const PromptEditor = forwardRef<PromptEditorHandle, Props>(function Promp
             paste: (e) => {
               if (cb.current.onPaste?.(e)) { e.preventDefault(); return true; }
               return false;
+            },
+            // A chip that opens something is a link: pressing it does not move
+            // the cursor, clicking it opens.
+            mousedown: (e) => {
+              if (e.button !== 0 || !openOf(e.target)) return false;
+              e.preventDefault();
+              return true;
+            },
+            click: (e) => {
+              const open = openOf(e.target);
+              if (open == null || !cb.current.onMentionOpen) return false;
+              e.preventDefault();
+              cb.current.onMentionOpen(open);
+              return true;
             },
           })),
           EditorView.domEventHandlers({
