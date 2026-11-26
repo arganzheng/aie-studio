@@ -31,6 +31,7 @@
   --shadow-popover: 0 4px 16px rgba(0, 0, 0, 0.5);
   --backdrop: rgba(0, 0, 0, 0.55);
   --backdrop-strong: rgba(0, 0, 0, 0.85);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.22);
 }
 
 :root[data-theme="light"] {
@@ -64,6 +65,7 @@
   --shadow-popover: 0 4px 16px rgba(0, 0, 0, 0.12);
   --backdrop: rgba(0, 0, 0, 0.35);
   --backdrop-strong: rgba(0, 0, 0, 0.7);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.25);
 }
 
 :root[data-theme="dim"] {
@@ -97,9 +99,26 @@
   --shadow-popover: 0 4px 16px rgba(0, 0, 0, 0.45);
   --backdrop: rgba(0, 0, 0, 0.55);
   --backdrop-strong: rgba(0, 0, 0, 0.85);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.22);
 }
 
 * { box-sizing: border-box; }
+/* Scrollbars stay out of sight: a thin bar that is transparent until the
+   pointer is over its area (macOS "always show scrollbars" would otherwise
+   draw a thick bar on every scrollable box). Wheel, trackpad and touch
+   scroll as usual. Small strips that follow their content on their own
+   (tab bars, the live work list) hide the bar entirely — listed below. */
+* { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+*:hover { scrollbar-color: var(--scrollbar-thumb) transparent; }
+@supports not (scrollbar-color: red blue) {
+  ::-webkit-scrollbar { width: 8px; height: 8px; background: transparent; }
+  ::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; }
+  :hover::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); }
+  ::-webkit-scrollbar-corner { background: transparent; }
+}
+.tab-list, .side-tabs, .terminal-keys, .work-body.live { scrollbar-width: none; }
+.tab-list::-webkit-scrollbar, .side-tabs::-webkit-scrollbar,
+.terminal-keys::-webkit-scrollbar, .work-body.live::-webkit-scrollbar { display: none; }
 html, body, #root { height: 100%; margin: 0; }
 /* The shell never scrolls (model: MainShell invariant). With a mouse there is
    no reason for the document to scroll at all, so don't let a wheel at the
@@ -857,6 +876,8 @@ pre {
 .plan-item.in_progress .plan-item-text { color: var(--fg-strong); font-weight: 600; }
 .chat-messages {
   flex: 1 1 auto;
+  /* Vertical scroll only: wide content scrolls inside its own element. */
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 8px;
   display: flex;
@@ -1336,6 +1357,11 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   min-width: 0;
   flex-shrink: 0;
 }
+/* The model chip gives way (its name ellipsizes) when the chat column is
+   narrow, rather than pushing the row past the edge and making the chat
+   scroll sideways. */
+.chat-status-model-wrap:has(> .chat-status-model) { flex-shrink: 1; }
+.chat-status-model-wrap > .chat-status-wire { flex: none; }
 .chat-status > span {
   min-width: 0;
   overflow: hidden;
@@ -3881,9 +3907,7 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   align-items: center;
   gap: 2px;
   overflow-x: auto;
-  scrollbar-width: none;
 }
-.side-tabs::-webkit-scrollbar { display: none; }
 .side-tab {
   /* Tabs never squeeze each other: each keeps its label (up to 180px, then
      an ellipsis) and the strip scrolls sideways when they do not fit. */
@@ -4517,7 +4541,11 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   /* Only chats whose messages carry them (the Claude SDK chat) get the gutters. */
   .chat-messages:has(> .msg > .msg-meta) { padding-left: 46px; padding-right: 46px; }
   .msg-meta { display: contents; }
-  .msg-time { position: absolute; top: 10px; }
+  /* An older message's time ("Nov 25 18:00") is wider than the 46px gutter:
+     it wraps to date / time instead of sticking out of the chat sideways. */
+  .msg-time { position: absolute; top: 10px; width: max-content; max-width: 38px; white-space: normal; overflow-wrap: normal; line-height: 1.25; }
+  .msg-user > .msg-meta .msg-time { text-align: left; }
+  .msg-assistant > .msg-meta .msg-time { text-align: right; }
   .msg-actions { position: absolute; z-index: 3; top: 3px; }
   .msg-user > .msg-meta .msg-time { left: calc(100% + 8px); }
   .msg-user > .msg-meta .msg-actions { right: calc(100% + 4px); }
@@ -4601,7 +4629,7 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 @media (min-width: 769px) {
   .chat-messages:has(> .work-group) { padding-left: 46px; padding-right: 46px; }
   .work-head { position: relative; }
-  .work-head-time { position: absolute; right: calc(100% + 8px); top: 4px; }
+  .work-head-time { position: absolute; right: calc(100% + 8px); top: 4px; width: max-content; max-width: 38px; white-space: normal; overflow-wrap: normal; line-height: 1.25; text-align: right; }
 }
 @media (max-width: 768px) {
   .work-head-time { display: none; }
