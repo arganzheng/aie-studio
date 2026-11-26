@@ -354,6 +354,7 @@ export function SessionList({
           activeAgentId={activeSubagent?.startsWith(`${row.sessionId}:`) ? activeSubagent.slice(row.sessionId.length + 1) : null}
           onOpen={(s) => onOpenSubagent?.(row, s)}
           onNotice={onNotice}
+          depth={depth}
         />
       )}
       {subsOpen && groupChildren(children).map((node) => {

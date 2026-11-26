@@ -21,6 +21,7 @@ export function SessionSubagents({
   activeAgentId,
   onOpen,
   onNotice,
+  depth = 0,
 }: {
   projectId: string;
   sessionId: string;
@@ -31,7 +32,13 @@ export function SessionSubagents({
   activeAgentId: string | null;
   onOpen: (s: SubagentInfo) => void;
   onNotice: (text: string) => void;
+  // How deep the session they belong to sits in the Sessions tree: they
+  // indent one step past it, like its child sessions.
+  depth?: number;
 }) {
+  const base = 30 + depth * 18;
+  // The guide line moves in with them; each row still spans the full width.
+  const line = 19 + depth * 18;
   const [list, setList] = useState<SubagentInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const seq = useRef(0);
@@ -62,16 +69,16 @@ export function SessionSubagents({
     void load();
   }
 
-  if (error) return <div className="subagent-rows-note error">{error}</div>;
-  if (list === null) return <div className="subagent-rows-note">Loading…</div>;
-  if (list.length === 0) return <div className="subagent-rows-note">No subagents</div>;
+  if (error) return <div className="subagent-rows-note error" style={{ paddingLeft: base }}>{error}</div>;
+  if (list === null) return <div className="subagent-rows-note" style={{ paddingLeft: base }}>Loading…</div>;
+  if (list.length === 0) return <div className="subagent-rows-note" style={{ paddingLeft: base }}>No subagents</div>;
   return (
-    <div className="subagent-rows" role="group" aria-label="Subagents">
+    <div className="subagent-rows" role="group" aria-label="Subagents" style={{ marginLeft: line }}>
       {list.map((s) => (
         <div
           key={s.agentId}
           className={`subagent-row ${s.status}${s.agentId === activeAgentId ? ' active' : ''}`}
-          style={{ paddingLeft: 30 + Math.min(s.depth, 4) * 14 }}
+          style={{ paddingLeft: base + Math.min(s.depth, 4) * 14, marginLeft: -line }}
           title={`${s.description}\n${s.agentType}${s.model ? ` · ${s.model}` : ''}`}
           onClick={() => onOpen(s)}
         >
