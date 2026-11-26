@@ -747,6 +747,18 @@ export async function fetchChanges(projectId: string, q: { worktree?: string | n
   return j;
 }
 
+// Model: server.ListProjectFiles — every file of a checkout (same checkout
+// choice as fetchChanges), as paths relative to it.
+export async function listProjectFiles(projectId: string, q: { worktree?: string | null; session?: string | null } = {}): Promise<{ files: string[]; truncated: boolean }> {
+  const p = new URLSearchParams();
+  if (q.worktree) p.set('worktree', q.worktree);
+  if (q.session) p.set('session', q.session);
+  const r = await fetch(`/api/projects/${encodeURIComponent(projectId)}/files?${p}`);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return { files: Array.isArray(j.files) ? j.files : [], truncated: j.truncated === true };
+}
+
 // The new version of a changed file (same checkout choice as fetchChanges),
 // to open the unchanged lines between hunks.
 export async function fetchChangedFile(projectId: string, q: { worktree?: string | null; session?: string | null; path: string; repo?: string }): Promise<string> {

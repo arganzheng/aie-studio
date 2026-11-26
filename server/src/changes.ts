@@ -151,7 +151,7 @@ export function pickBaseBranch(branches: readonly string[], remoteHead: string |
   return null;
 }
 
-function git(cwd: string, args: string[], maxBuffer = 64 * 1024 * 1024): Promise<string> {
+export function git(cwd: string, args: string[], maxBuffer = 64 * 1024 * 1024): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile('git', ['-c', 'core.quotepath=off', ...args], { cwd, timeout: 30_000, maxBuffer }, (err, stdout, stderr) => {
       if (err) reject(new Error((stderr || err.message).trim().split('\n').slice(-2).join(' ')));
@@ -256,7 +256,7 @@ export async function readNewVersion(dir: string, rel: string): Promise<string> 
 
 // Where the Changes tab looks: a named worktree, the directory a session
 // runs in, else the project.
-async function resolveDir(projectPath: string, q: { worktree?: string; session?: string }): Promise<{ dir: string; worktree: string | null }> {
+export async function resolveDir(projectPath: string, q: { worktree?: string; session?: string }): Promise<{ dir: string; worktree: string | null }> {
   const project = await realPath(projectPath);
   if (isWorktreeName(q.worktree)) {
     const dir = worktreePath(project, q.worktree);
@@ -275,7 +275,7 @@ async function sessionInProject(projectPath: string, sid: string): Promise<boole
   try { return (await getSessionInfo(sid, { dir: projectPath })) != null; } catch { return false; }
 }
 
-async function isGitDir(dir: string): Promise<boolean> {
+export async function isGitDir(dir: string): Promise<boolean> {
   return git(dir, ['rev-parse', '--is-inside-work-tree']).then((s) => s.trim() === 'true', () => false);
 }
 

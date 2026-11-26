@@ -61,6 +61,7 @@ import { toWireImages } from '../lib/imageAttachments';
 import { isImageSizeNote, parseToolResultContent, type ToolOutput } from '../lib/toolResult';
 import { makeRelPath } from '../lib/relPath';
 import { BTW_COMMAND, btwQuestion, sdkCliCatalog, toCommandItems } from '../lib/commandPicker';
+import { useProjectFiles } from '../useProjectFiles';
 import { useAieCommands } from '../useAieCommands';
 import { useClaudeModels, effortOptionsFor } from '../useClaudeModels';
 import { openDuplex, type DuplexSocket } from '../lib/duplex';
@@ -552,6 +553,7 @@ export function SdkPanel({
   const pendingImages = attachments.images;
   const modelCatalog = useClaudeModels();
   const { skills: aieSkills, agents: aieAgents, refresh: refreshCommands } = useAieCommands(projectId);
+  const projectFiles = useProjectFiles(projectId, worktreeName);
   const cliCatalog = useMemo(() => sdkCliCatalog(catalog), [catalog]);
   const commands = useMemo(() => [BTW_COMMAND, ...toCommandItems(aieSkills, aieAgents, cliCatalog)], [aieSkills, aieAgents, cliCatalog]);
 
@@ -1800,6 +1802,8 @@ export function SdkPanel({
         thinkingPlaceholder="Claude is working — Send steers it now, ▾ for more"
         commands={commands}
         onCommandsOpen={refreshCommands}
+        mentionFiles={projectFiles.files}
+        onMentionOpen={projectFiles.refresh}
         onSend={send}
         sendModes
         insertion={insertion}
