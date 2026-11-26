@@ -62,6 +62,7 @@ import { isImageSizeNote, parseToolResultContent, type ToolOutput } from '../lib
 import { makeRelPath } from '../lib/relPath';
 import { BTW_COMMAND, btwQuestion, sdkCliCatalog, toCommandItems } from '../lib/commandPicker';
 import { useProjectFiles } from '../useProjectFiles';
+import { useMentionSessions } from '../useMentionSessions';
 import { useAieCommands } from '../useAieCommands';
 import { useClaudeModels, effortOptionsFor } from '../useClaudeModels';
 import { openDuplex, type DuplexSocket } from '../lib/duplex';
@@ -554,6 +555,7 @@ export function SdkPanel({
   const modelCatalog = useClaudeModels();
   const { skills: aieSkills, agents: aieAgents, refresh: refreshCommands } = useAieCommands(projectId);
   const projectFiles = useProjectFiles(projectId, worktreeName);
+  const mentionSessions = useMentionSessions(projectId);
   const cliCatalog = useMemo(() => sdkCliCatalog(catalog), [catalog]);
   const commands = useMemo(() => [BTW_COMMAND, ...toCommandItems(aieSkills, aieAgents, cliCatalog)], [aieSkills, aieAgents, cliCatalog]);
 
@@ -1804,6 +1806,8 @@ export function SdkPanel({
         onCommandsOpen={refreshCommands}
         mentionFiles={projectFiles.files}
         onMentionOpen={projectFiles.refresh}
+        mentionSessions={mentionSessions.sessions}
+        onSessionsOpen={mentionSessions.refresh}
         onSend={send}
         sendModes
         insertion={insertion}

@@ -3,6 +3,7 @@
 // same jsonl sessions as session.ts, but driven through the official Agent
 // SDK instead of a hand-rolled stream-json subprocess. Deliberately shares no
 // code with session.ts — projects/claude-sdk-session/design.md.
+import { readSessionFor } from './session-reader.js';
 import { probePage } from './preview.js';
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from '@fastify/websocket';
@@ -487,7 +488,7 @@ function startQuery(entry: SdkEntry, opts: { resume?: string; resumeSessionAt?: 
       stderr: (data) => broadcast(entry, { type: 'stderr', data }),
       canUseTool: makeCanUseTool(entry),
       hooks: { PreToolUse: [{ hooks: [changesHook(entry)] }] },
-      mcpServers: { ...(entry.childTools ? { aie: childToolsServer(entry) } : {}), aie_status: statusServer(), aie_progress: progressServer(), aie_view: viewToolsServer(entry), aie_watch: watchToolsServer(entry) },
+      mcpServers: { ...(entry.childTools ? { aie: childToolsServer(entry) } : {}), aie_status: statusServer(), aie_progress: progressServer(), aie_view: viewToolsServer(entry), aie_watch: watchToolsServer(entry), aie_sessions: sessionToolsServer(entry) },
       outputFormat: entry.resultSchema ? { type: 'json_schema', schema: entry.resultSchema } : undefined,
     },
   });
@@ -1472,6 +1473,38 @@ export function showPreviewReply(port: number, path: string, page: { title?: str
   const what = `port ${port}${path !== '/' ? ` (${path})` : ''}${page.title ? ` — "${page.title}"` : ''}`;
   if (viewers === 0) return { text: `The page on ${what} is up. Nobody has this session open right now: it opens in the user's side panel the next time they open this session, so there is no need to give a link. Keep its server running until they have looked.`, isError: false };
   return { text: `Opened ${what} as a Preview tab in the user's side panel. Keep its server running while they look.`, isError: false };
+}
+
+// Model: server.ReadSession — the user mentioned another session in their
+// prompt (web.SessionMentions): this is how Claude reads it.
+export const SESSIONS_INSTRUCTIONS = [
+  'Other sessions the user mentions.',
+  'The user can mention another session of theirs in a message. It then reads: [session "<title>" (<Claude or Devin>, id <id>)].',
+  'That is a pointer, not the content. When what was said or done in that session matters for your answer, call read_session with the id to read its conversation before you answer; do not guess at it from the title.',
+  'A long session comes back as its first message and its latest ones; ask for the messages in between with start and count when you need them.',
+].join(' ');
+
+function sessionToolsServer(entry: SdkEntry) {
+  return createSdkMcpServer({
+    name: 'aie_sessions',
+    version: '1.0.0',
+    instructions: SESSIONS_INSTRUCTIONS,
+    tools: [
+      tool(
+        'read_session',
+        'Read the conversation of another of the user\'s sessions (Claude or Devin), by the id given in a [session "…" (… id …)] mention: what the user and the assistant said, numbered, without tool calls. With no start: the first message and the latest ones that fit. With start (and count): those messages.',
+        {
+          session_id: z.string().describe('The id from the mention'),
+          start: z.number().int().min(1).optional().describe('First message to return (1 = the first). Omit for the overview.'),
+          count: z.number().int().min(1).max(200).optional().describe('How many messages from start, default 20'),
+        },
+        async (args) => {
+          const r = await readSessionFor(entry.owner.uid, args.session_id, { start: args.start, count: args.count });
+          return toolText(r.text, r.isError);
+        },
+      ),
+    ],
+  });
 }
 
 function viewToolsServer(entry: SdkEntry) {

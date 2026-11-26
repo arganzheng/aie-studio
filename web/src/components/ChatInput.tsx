@@ -9,7 +9,10 @@ import { isBangInput } from '../lib/bang';
 import { isCompactCommand, isSlashCommand } from '../lib/steering';
 import { addQuotes, composeQuotedPrompt, quoteCardLabel, quoteCardPreview, type ChatQuote } from '../lib/addToChat';
 import { dragHasFiles, droppedFiles } from '../lib/fileAttachments';
-import { fileItems, fileMentionResolver, matchMentionQuery } from '../lib/mentions';
+import {
+  SESSION_PREFIX, combineResolvers, expandMentions, fileItems, fileMentionResolver, matchMentionQuery,
+  sessionItems, sessionMentionResolver, type MentionSession,
+} from '../lib/mentions';
 
 export type ChatInputStatus =
   | 'connecting'
@@ -72,6 +75,8 @@ export const ChatInput = memo(function ChatInput({
   onCommandsOpen,
   mentionFiles,
   onMentionOpen,
+  mentionSessions,
+  onSessionsOpen,
   insertion,
   onBatchSent,
   onSend,
@@ -102,6 +107,12 @@ export const ChatInput = memo(function ChatInput({
   // The list is wanted (the picker opened, or the text has an "@"): the
   // caller fetches or refreshes it.
   onMentionOpen?: () => void;
+  // Model: web.SessionMentions. The sessions that can be mentioned. Given
+  // (with mentionFiles): ＋ has "Sessions", a picked one goes in the text as
+  // "@session:<id>", is drawn as a chip with its title, and is sent as a
+  // line naming the session, which Claude can then read (server.ReadSession).
+  mentionSessions?: readonly MentionSession[];
+  onSessionsOpen?: () => void;
   // Model: web.InsertBatchPrompt. The text is appended (never sent) so the
   // user can review it; onBatchSent fires for each inserted Batch once the
   // prompt actually goes out.
@@ -148,7 +159,7 @@ export const ChatInput = memo(function ChatInput({
   // The picker above the input: null = closed. 'slash': commands, for the
   // "/query" the message starts with. 'file': files, for the "@query" before
   // the cursor. `from` is where that token starts in the text.
-  const [picker, setPicker] = useState<{ kind: 'slash' | 'file'; from: number; query: string } | null>(null);
+  const [picker, setPicker] = useState<{ kind: 'slash' | 'file' | 'session'; from: number; query: string } | null>(null);
   const [sel, setSel] = useState(0);
   const editorRef = useRef<PromptEditorHandle>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -204,8 +215,9 @@ export const ChatInput = memo(function ChatInput({
   const matches = useMemo(() => (
     !picker ? []
     : picker.kind === 'slash' ? (commands ? filterCommands(commands, picker.query) : [])
+    : picker.kind === 'session' ? sessionItems(mentionSessions ?? [], picker.query, Date.now())
     : fileItems(mentionFiles ?? [], picker.query)
-  ), [picker, commands, mentionFiles]);
+  ), [picker, commands, mentionFiles, mentionSessions]);
   const open = matches.length > 0;
   const selIdx = Math.min(sel, Math.max(0, matches.length - 1));
 
@@ -221,7 +233,16 @@ export const ChatInput = memo(function ChatInput({
   const filePickerOn = picker?.kind === 'file';
   useEffect(() => { if (wantsFiles) onMentionOpen?.(); }, [wantsFiles, filePickerOn, onMentionOpen]);
   const fileSet = useMemo(() => new Set(mentionFiles ?? []), [mentionFiles]);
-  const resolveMention = useMemo(() => (fileSet.size ? fileMentionResolver(fileSet) : null), [fileSet]);
+  const sessionMap = useMemo(() => new Map((mentionSessions ?? []).map((s) => [s.id, s])), [mentionSessions]);
+  const resolveMention = useMemo(
+    () => combineResolvers(sessionMap.size ? sessionMentionResolver(sessionMap) : null, fileSet.size ? fileMentionResolver(fileSet) : null),
+    [fileSet, sessionMap],
+  );
+  // Model: web.SessionMentions. As for files: wanted when the text has a
+  // session mention, and each time the picker is asked for.
+  const wantsSessions = mentionSessions !== undefined && (picker?.kind === 'session' || text.includes(`@${SESSION_PREFIX}`));
+  const sessionPickerOn = picker?.kind === 'session';
+  useEffect(() => { if (wantsSessions) onSessionsOpen?.(); }, [wantsSessions, sessionPickerOn, onSessionsOpen]);
 
   useEffect(() => {
     if (!open) return;
@@ -236,7 +257,15 @@ export const ChatInput = memo(function ChatInput({
     let at = slash == null && mentionFiles !== undefined ? matchMentionQuery(before) : null;
     // The cursor right after a whole mention (a chip already): nothing to pick.
     if (at && fileSet.has(at.query)) at = null;
-    setPicker(slash != null ? { kind: 'slash', from: 0, query: slash } : at ? { kind: 'file', ...at } : null);
+    // "@session:…": the sessions picker, on what follows the colon.
+    const sess = at && mentionSessions !== undefined && at.query.startsWith(SESSION_PREFIX) ? at.query.slice(SESSION_PREFIX.length) : null;
+    if (sess != null && sessionMap.has(sess)) at = null;
+    setPicker(
+      slash != null ? { kind: 'slash', from: 0, query: slash }
+      : at && sess != null ? { kind: 'session', from: at.from, query: sess }
+      : at ? { kind: 'file', ...at }
+      : null,
+    );
     setSel(0);
   }
 
@@ -288,11 +317,11 @@ export const ChatInput = memo(function ChatInput({
   }, [plusMenu]);
   // "Files": an "@" goes in at the cursor (after a space when it follows a
   // word) and the file picker opens on it.
-  function startMention() {
+  function startMention(prefix = '') {
     setPlusMenu(false);
     const cursor = editorRef.current?.cursor() ?? text.length;
     const before = text.slice(0, cursor);
-    const ins = before && !/\s$/.test(before) ? ' @' : '@';
+    const ins = `${before && !/\s$/.test(before) ? ' @' : '@'}${prefix}`;
     const next = before + ins + text.slice(cursor);
     const pos = before.length + ins.length;
     setText(next);
@@ -325,7 +354,7 @@ export const ChatInput = memo(function ChatInput({
     setModeMenu(false);
     if (lock || uploading) return;
     if (!text.trim() && quotes.length === 0 && pendingImagesCount === 0) return;
-    onSend(composeQuotedPrompt(quotes, text), mode);
+    onSend(composeQuotedPrompt(quotes, expandMentions(text, resolveMention)), mode);
     // The panel drops sends while it has no live connection (!canSend); keep
     // the cards then, the user would have no way to get them back.
     if (canSend) {
@@ -435,7 +464,7 @@ export const ChatInput = memo(function ChatInput({
         onDoubleClick={onResizeReset}
       />
       {open && (
-        <div className={`cmd-popover${picker?.kind === 'file' ? ' files' : ''}`} ref={listRef} role="listbox">
+        <div className={`cmd-popover${picker && picker.kind !== 'slash' ? ' files' : ''}`} ref={listRef} role="listbox">
           {matches.map((item, idx) => {
             const groupStart = idx === 0 || matches[idx - 1].group !== item.group;
             return (
@@ -541,9 +570,14 @@ export const ChatInput = memo(function ChatInput({
                       <span className="chat-plus-glyph" aria-hidden="true">📎</span>{anyFile ? 'Upload files' : 'Upload images'}
                     </button>
                     <div className="overflow-divider" />
-                    <button type="button" role="menuitem" className="overflow-action" onMouseDown={(e) => e.preventDefault()} onClick={startMention}>
+                    <button type="button" role="menuitem" className="overflow-action" onMouseDown={(e) => e.preventDefault()} onClick={() => startMention()}>
                       <span className="chat-plus-glyph" aria-hidden="true">@</span>Files
                     </button>
+                    {mentionSessions !== undefined && (
+                      <button type="button" role="menuitem" className="overflow-action" onMouseDown={(e) => e.preventDefault()} onClick={() => startMention(SESSION_PREFIX)}>
+                        <span className="chat-plus-glyph" aria-hidden="true">◇</span>Sessions
+                      </button>
+                    )}
                   </div>
                 )}
               </>

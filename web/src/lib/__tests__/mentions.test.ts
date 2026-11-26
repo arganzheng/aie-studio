@@ -62,3 +62,38 @@ describe('findMentions', () => {
     expect(found('fix @src/math.ts, then (@todo.txt). 看 @README.md。')).toEqual([['@src/math.ts', 'math.ts'], ['@README.md', 'README.md']]);
   });
 });
+
+import { combineResolvers, expandMentions, sessionItems, sessionMentionResolver, sessionMentionText, sessionSendText, type MentionSession } from '../mentions';
+
+describe('session mentions', () => {
+  const NOW = 1_800_000_000_000;
+  const A: MentionSession = { id: '11111111-aaaa', title: 'Fix the "login" bug', kind: 'claude', updatedAt: NOW - 60_000 };
+  const B: MentionSession = { id: 'devin-slug-22', title: 'Blog figures', kind: 'devin', updatedAt: NOW - 3_600_000 };
+  const sessions = new Map([[A.id, A], [B.id, B]]);
+  const resolve = combineResolvers(sessionMentionResolver(sessions), fileMentionResolver(new Set(['todo.txt'])))!;
+
+  it('is "@session:<id>" in the text and a titled chip', () => {
+    expect(sessionMentionText(A.id)).toBe('@session:11111111-aaaa');
+    const [m] = findMentions(`see @session:${A.id} please`, resolve);
+    expect(m.info).toMatchObject({ kind: 'session', label: 'Fix the "login" bug' });
+    expect(findMentions('@session:unknown-id-1', resolve)).toEqual([]);
+  });
+  it('is sent as a line with the title and the id; files are sent as they are', () => {
+    expect(sessionSendText(A)).toBe(`[session "Fix the 'login' bug" (Claude, id 11111111-aaaa)]`);
+    expect(expandMentions(`compare @session:${A.id} with @session:${B.id}, and @todo.txt.`, resolve))
+      .toBe(`compare [session "Fix the 'login' bug" (Claude, id 11111111-aaaa)] with [session "Blog figures" (Devin, id devin-slug-22)], and @todo.txt.`);
+    expect(expandMentions('nothing here', resolve)).toBe('nothing here');
+    expect(expandMentions('@session:x', null)).toBe('@session:x');
+  });
+  it('picker rows: latest first, filtered by title, with kind and age', () => {
+    const rows = sessionItems([B, A], '', NOW);
+    expect(rows.map((r) => r.label)).toEqual(['Fix the "login" bug', 'Blog figures']);
+    expect(rows[0]).toMatchObject({ group: 'Sessions', name: A.id, insert: `@session:${A.id} ` });
+    expect(rows[1].description.startsWith('Devin · ')).toBe(true);
+    expect(sessionItems([A, B], 'blog', NOW).map((r) => r.name)).toEqual([B.id]);
+    expect(sessionItems([A, B], 'zzz', NOW)).toEqual([]);
+  });
+  it('combineResolvers: null when there is none', () => {
+    expect(combineResolvers(null, null)).toBeNull();
+  });
+});

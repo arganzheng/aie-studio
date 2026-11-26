@@ -1310,6 +1310,7 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .mention-chip { display: inline-block; max-width: 100%; padding: 0 5px 0 3px; border-radius: 4px; background: var(--bg-hover); box-shadow: 0 0 0 1px var(--border) inset; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; cursor: default; }
 .mention-icon { display: inline-block; width: 0.8em; height: 0.8em; margin-right: 4px; vertical-align: -0.05em; background: currentColor; opacity: 0.6; -webkit-mask: var(--mention-file-icon) center / contain no-repeat; mask: var(--mention-file-icon) center / contain no-repeat; }
 .mention-chip { --mention-file-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 1.5h6.2L13 5.3v9.2H3z M9 1.5v4h4' fill='none' stroke='black' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+.mention-session { --mention-file-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2.5h12v8.5H7l-3.5 3v-3H2z' fill='none' stroke='black' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E"); }
 /* The file picker: the name first, in the text font; its directory under it. */
 .cmd-popover.files .cmd-item-name { font-family: inherit; font-size: 14px; }
 .cmd-popover.files .cmd-item-desc { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; }

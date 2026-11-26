@@ -896,7 +896,7 @@ type TranscriptEvent =
     }
   | { role: 'tool_result'; toolCallId: string; content: string; toolKind?: string; nodeId: number };
 
-function readDevinTranscript(
+export function readDevinTranscript(
   sessionSlug: string,
   opts?: { limit?: number; before?: number },
 ): { events: TranscriptEvent[]; startIndex: number } | null {
