@@ -3,8 +3,9 @@
 // output. None of it was typed as a prompt, so the chat shows one small card
 // per command instead of user bubbles full of tags.
 //
-// /compact keeps its own handling (lib/compactNote.ts): its records pass
-// through here as plain text.
+// /compact is a card too: the summary that replaced the earlier turns (lib/
+// compactNote.ts) goes into it, collapsed (absorbCompactSummary). A compaction
+// nobody typed (automatic) keeps compactNote's note of its own.
 
 export type LocalCommandPart =
   | { kind: 'caveat' }
@@ -12,10 +13,12 @@ export type LocalCommandPart =
   | { kind: 'output'; stdout: string; stderr: string }
   | { kind: 'text'; text: string };
 
-export type LocalCommandMsg = { role: 'localcmd'; command: string; output?: { stdout: string; stderr: string } };
+export type LocalCommandMsg = { role: 'localcmd'; command: string; output?: { stdout: string; stderr: string }; summary?: string };
 
 const TAG_RE = /\s*<(local-command-caveat|command-name|command-message|command-args|local-command-stdout|local-command-stderr)>([\s\S]*?)<\/\1>/y;
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
+// Terminal-only hints in an output, e.g. "Compacted (ctrl+o to see full summary)".
+const KEY_HINT_RE = /\s*\(ctrl\+[a-z] to [^)]*\)/gi;
 
 // The tags of `text` in order, or null when it holds anything besides them.
 function readTags(text: string): Array<[tag: string, body: string]> | null {
@@ -52,15 +55,13 @@ function splitOne(text: string): LocalCommandPart[] {
       else {
         const last = parts[parts.length - 1];
         const out = last?.kind === 'output' ? last : { kind: 'output' as const, stdout: '', stderr: '' };
-        if (tag === 'local-command-stdout') out.stdout = value; else out.stderr = value;
+        if (tag === 'local-command-stdout') out.stdout = value.replace(KEY_HINT_RE, ''); else out.stderr = value;
         if (out !== last) parts.push(out);
       }
     }
   }
   flushCommand();
-  // Compaction is shown by compactNote: hand its records back untouched.
-  const compact = parts.some((p) => (p.kind === 'command' && /^\/compact\b/.test(p.command)) || (p.kind === 'output' && /^Compacted/.test(p.stdout)));
-  return compact ? [{ kind: 'text', text }] : parts;
+  return parts;
 }
 
 // Classify the text blocks of one user message.
@@ -133,14 +134,51 @@ export function answerTypedCommand<M extends { role: string }>(
 // Newer Claude Code writes a command's output as a system record instead
 // (transcript: subtype local_command; live SDK stream: local_command_output),
 // with or without the stdout/stderr tags. null: not such a record, or one
-// that compactNote shows.
+// without any output.
 export function localCommandOutputOf(ev: any): { stdout: string; stderr: string } | null {
   if (ev?.type !== 'system' || (ev.subtype !== 'local_command' && ev.subtype !== 'local_command_output')) return null;
   if (typeof ev.content !== 'string' || !ev.content.trim()) return null;
   const parts = splitOne(ev.content);
   const out = parts.find((p): p is Extract<LocalCommandPart, { kind: 'output' }> => p.kind === 'output');
   if (out) return { stdout: out.stdout, stderr: out.stderr };
-  const text = ev.content.replace(ANSI_RE, '').trim();
-  if (parts.some((p) => p.kind !== 'text') || /^(<local-command-stdout>\s*)?Compacted/.test(text)) return null;
+  const text = ev.content.replace(ANSI_RE, '').replace(KEY_HINT_RE, '').trim();
+  if (parts.some((p) => p.kind !== 'text')) return null;
   return { stdout: text, stderr: '' };
+}
+
+// A /compact card takes the summary the compaction left right before it (the
+// summary is recorded first): pops that message off msgs and returns its text.
+export function absorbCompactSummary<M extends { role: string }>(
+  msgs: M[],
+  command: string,
+  summaryOf: (m: M) => string | null,
+): string | undefined {
+  if (!/^\/compact\b/.test(command)) return undefined;
+  const last = msgs[msgs.length - 1];
+  const summary = last ? summaryOf(last) : null;
+  if (summary === null) return undefined;
+  msgs.pop();
+  return summary;
+}
+
+// Live, the summary arrives after the "/compact" the user typed (and before
+// its output): turn that bubble, or a /compact card still without a summary,
+// into a card holding it (in place). False when the last message is neither.
+export function giveSummaryToCompact<M extends { role: string }>(
+  msgs: M[],
+  summary: string,
+  make: (command: string) => M,
+): boolean {
+  const i = msgs.length - 1;
+  const last = msgs[i] as (M & { text?: unknown; images?: unknown[]; command?: unknown; summary?: string }) | undefined;
+  if (!last) return false;
+  if (last.role === 'localcmd' && typeof last.command === 'string' && /^\/compact\b/.test(last.command) && !last.summary) {
+    msgs[i] = { ...last, summary };
+    return true;
+  }
+  if (last.role === 'user' && typeof last.text === 'string' && /^\/compact\b/.test(last.text.trim()) && !last.images?.length) {
+    msgs[i] = { ...make(last.text.trim()), summary };
+    return true;
+  }
+  return false;
 }

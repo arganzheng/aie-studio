@@ -38,12 +38,12 @@ import { FileAttachmentStrip, SentFileChips, useFileAttachments } from './FileAt
 const ExportDialog = lazy(() => import('./ExportDialog').then((m) => ({ default: m.ExportDialog })));
 import { ChatInput } from './ChatInput';
 import { bangCommand, isBangInput, splitBangTexts } from '../lib/bang';
-import { answerTypedCommand, applyLocalCommandOutput, isSyntheticReply, localCommandOutputOf, localCommandText, splitLocalCommandTexts } from '../lib/localCommand';
+import { absorbCompactSummary, answerTypedCommand, applyLocalCommandOutput, giveSummaryToCompact, isSyntheticReply, localCommandOutputOf, localCommandText, splitLocalCommandTexts } from '../lib/localCommand';
 import { LocalCommandCard } from './LocalCommandCard';
 import { ClaudeUsageBadge, refreshClaudeUsage } from './ClaudeUsage';
 import { ContextBadge, type ContextSnapshot } from './ContextUsage';
 import { childLinkOfTool } from '../lib/childLink';
-import { parseCompactNote } from '../lib/compactNote';
+import { compactSummaryOf, parseCompactNote } from '../lib/compactNote';
 import { groupWork, type WorkItem, type WorkMsg } from '../lib/workGroups';
 import { WorkGroupView } from './WorkGroupView';
 import { liveActivity } from '../lib/liveActivity';
@@ -94,7 +94,7 @@ export type Msg =
   | { id: string; role: 'bang'; command: string; bangId?: string; result?: BangOutcome; pending?: boolean }
   // A slash command Claude Code ran itself (lib/localCommand.ts). command is
   // '' for an output that came without its command.
-  | { id: string; role: 'localcmd'; command: string; output?: { stdout: string; stderr: string } };
+  | { id: string; role: 'localcmd'; command: string; output?: { stdout: string; stderr: string }; summary?: string };
 
 type BangOutcome = {
   stdout: string;
@@ -143,12 +143,13 @@ function msgAnchor(m: Msg): string | null {
 }
 
 function toExport(msgs: Msg[]): ExportMessage[] {
-  return msgs.map((m): ExportMessage => {
+  return msgs.flatMap((m): ExportMessage | ExportMessage[] => {
     if (m.role === 'user') return { kind: 'user', text: m.text, images: m.images };
     if (m.role === 'assistant') return { kind: 'assistant', text: m.text };
     if (m.role === 'system') return { kind: 'system', text: m.text };
     if (m.role === 'thinking') return { kind: 'system', text: m.text ? `Thinking: ${m.text}` : 'Thinking' };
-    if (m.role === 'localcmd') return { kind: 'system', text: localCommandText(m) };
+    // A /compact card's summary exports as it did before it moved into the card.
+    if (m.role === 'localcmd') return m.summary ? [{ kind: 'system', text: localCommandText(m) }, { kind: 'user', text: m.summary }] : { kind: 'system', text: localCommandText(m) };
     if (m.role === 'bang') {
       const out = [m.result?.stdout, m.result?.stderr, m.result?.blocked && `Blocked: ${m.result.blocked}`].filter(Boolean).join('\n');
       return { kind: 'tool', name: 'Bash (!)', input: { command: m.command }, output: out };
@@ -236,6 +237,7 @@ export function buildFromEvents(events: any[], orphanResults: Map<string, ToolOu
           if (cached !== undefined) { d.msg.output = cached.text; d.msg.outputImages = cached.images; orphanResults.delete(d.msg.toolUseId); }
           else pendingTools.set(d.msg.toolUseId, d.msg);
         }
+        if (d.msg.role === 'localcmd') d.msg.summary = absorbCompactSummary(msgs, d.msg.command, compactSummaryOf);
         msgs.push(d.msg);
       } else if (d.kind === 'bang_output') {
         attachBangOutput(msgs, d);
@@ -270,10 +272,21 @@ function attachBangOutput(msgs: Msg[], d: { stdout: string; stderr: string }) {
   }
 }
 
+// Appends a message; a /compact card takes the summary next to it (recorded
+// before the command; live, it comes after the "/compact" typed).
+function appendMsg(prev: Msg[], msg: Msg): Msg[] {
+  const arr = [...prev];
+  const summary = compactSummaryOf(msg);
+  if (summary !== null && giveSummaryToCompact(arr, summary, (command): Msg => ({ id: shortId(), role: 'localcmd', command }))) return arr;
+  if (msg.role === 'localcmd') msg = { ...msg, summary: absorbCompactSummary(arr, msg.command, compactSummaryOf) };
+  arr.push(msg);
+  return arr;
+}
+
 function applyDeltas(prev: Msg[], deltas: Delta[]): Msg[] {
   let arr = prev;
   for (const d of deltas) {
-    if (d.kind === 'append') arr = [...arr, d.msg];
+    if (d.kind === 'append') arr = appendMsg(arr, d.msg);
     else if (d.kind === 'bang_output') { arr = [...arr]; attachBangOutput(arr, d); }
     else if (d.kind === 'localcmd_output') { arr = [...arr]; applyLocalCommandOutput(arr, d, newLocalCommand); }
     else if (d.kind === 'synthetic_reply') { arr = [...arr]; if (!d.text || !answerTypedCommand(arr, d.text, newLocalCommand)) arr.push(...d.orElse); }
@@ -1625,7 +1638,7 @@ export function SdkPanel({
               />
             );
           }
-          if (m.role === 'localcmd') return <LocalCommandCard key={m.id} command={m.command} output={m.output} renderBody={(t) => <MarkdownText text={t} theme={theme} projectPath={projectPath} onOpenFile={openFile} />} />;
+          if (m.role === 'localcmd') return <LocalCommandCard key={m.id} command={m.command} output={m.output} summary={m.summary} renderBody={(t) => <MarkdownText text={t} theme={theme} projectPath={projectPath} onOpenFile={openFile} />} />;
           if (m.role === 'thinking') return null;
           return renderToolBlock(m);
         })}

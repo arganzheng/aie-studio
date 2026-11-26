@@ -4,9 +4,11 @@ import { localCommandView } from '../lib/localCommand';
 // A slash command Claude Code ran itself (/model, /context …) with its output:
 // on the user's side of the chat, but a card rather than a prompt bubble.
 // renderBody: how to show a long output (it is often Markdown, e.g. /context).
-export function LocalCommandCard({ command, output, renderBody }: {
+// summary: what a /compact replaced the earlier conversation with; collapsed.
+export function LocalCommandCard({ command, output, summary, renderBody }: {
   command: string;
   output?: { stdout: string; stderr: string };
+  summary?: string;
   renderBody?: (text: string) => ReactNode;
 }) {
   const view = localCommandView({ command, output });
@@ -22,6 +24,12 @@ export function LocalCommandCard({ command, output, renderBody }: {
       {view.body !== null && (renderBody && !view.failed
         ? <div className="local-cmd-body local-cmd-md">{renderBody(view.body)}</div>
         : <pre className="local-cmd-body">{view.body}</pre>)}
+      {summary && (
+        <details className="local-cmd-summary">
+          <summary>Earlier conversation, compacted into a summary</summary>
+          <div className="local-cmd-body local-cmd-md">{renderBody ? renderBody(summary) : summary}</div>
+        </details>
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { answerTypedCommand, applyLocalCommandOutput, attachLocalCommandOutput, isSyntheticReply, localCommandOutputOf, localCommandText, localCommandView, splitLocalCommandTexts } from '../localCommand';
+import { absorbCompactSummary, answerTypedCommand, giveSummaryToCompact, applyLocalCommandOutput, attachLocalCommandOutput, isSyntheticReply, localCommandOutputOf, localCommandText, localCommandView, splitLocalCommandTexts } from '../localCommand';
 
 const CAVEAT = "<local-command-caveat>The command below was run directly in Claude Code, not sent to you as a request.</local-command-caveat>";
 const COMMAND = '<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args>fable</command-args>';
@@ -34,10 +34,10 @@ describe('splitLocalCommandTexts', () => {
     expect(splitLocalCommandTexts([quoted])).toEqual([{ kind: 'text', text: quoted }]);
   });
 
-  it('leaves /compact to compactNote', () => {
+  it('reads /compact like any command, without the terminal key hint', () => {
     const cmd = '<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>';
     const out = '<local-command-stdout>Compacted (ctrl+o to see full summary)</local-command-stdout>';
-    expect(splitLocalCommandTexts([cmd, out])).toEqual([{ kind: 'text', text: cmd }, { kind: 'text', text: out }]);
+    expect(splitLocalCommandTexts([cmd, out])).toEqual([{ kind: 'command', command: '/compact' }, { kind: 'output', stdout: 'Compacted', stderr: '' }]);
   });
 });
 
@@ -112,10 +112,16 @@ describe('localCommandOutputOf', () => {
       .toEqual({ stdout: '', stderr: 'bad' });
   });
 
-  it('ignores other records and compaction', () => {
+  it('ignores other records', () => {
     expect(localCommandOutputOf({ type: 'system', subtype: 'init' })).toBeNull();
     expect(localCommandOutputOf({ type: 'user', message: { content: 'x' } })).toBeNull();
-    expect(localCommandOutputOf({ type: 'system', subtype: 'local_command', content: '<local-command-stdout>Compacted (ctrl+o)</local-command-stdout>' })).toBeNull();
+  });
+
+  it('reads compaction output, without the terminal key hint', () => {
+    expect(localCommandOutputOf({ type: 'system', subtype: 'local_command', content: '<local-command-stdout>Compacted (ctrl+o to see full summary)</local-command-stdout>' }))
+      .toEqual({ stdout: 'Compacted', stderr: '' });
+    expect(localCommandOutputOf({ type: 'system', subtype: 'local_command_output', content: 'Compacted (ctrl+o to see full summary)' }))
+      .toEqual({ stdout: 'Compacted', stderr: '' });
   });
 });
 
@@ -138,5 +144,52 @@ describe('answerTypedCommand', () => {
   it('knows a synthetic reply', () => {
     expect(isSyntheticReply({ type: 'assistant', message: { model: '<synthetic>' } })).toBe(true);
     expect(isSyntheticReply({ type: 'assistant', message: { model: 'claude-fable-5-2' } })).toBe(false);
+  });
+});
+
+describe('absorbCompactSummary', () => {
+  const summaryOf = (m: any) => (m.role === 'user' && m.text.startsWith('SUMMARY') ? m.text : null);
+
+  it('takes the summary right before a /compact card', () => {
+    const msgs: any[] = [{ role: 'assistant', text: 'hi' }, { role: 'user', text: 'SUMMARY of it' }];
+    expect(absorbCompactSummary(msgs, '/compact', summaryOf)).toBe('SUMMARY of it');
+    expect(msgs).toEqual([{ role: 'assistant', text: 'hi' }]);
+    const withArgs: any[] = [{ role: 'user', text: 'SUMMARY 2' }];
+    expect(absorbCompactSummary(withArgs, '/compact keep the plan', summaryOf)).toBe('SUMMARY 2');
+  });
+
+  it('leaves other commands and messages alone', () => {
+    const msgs: any[] = [{ role: 'user', text: 'SUMMARY of it' }];
+    expect(absorbCompactSummary(msgs, '/model opus', summaryOf)).toBeUndefined();
+    const prompt: any[] = [{ role: 'user', text: 'a prompt' }];
+    expect(absorbCompactSummary(prompt, '/compact', summaryOf)).toBeUndefined();
+    expect(prompt).toHaveLength(1);
+    expect(absorbCompactSummary([], '/compact', summaryOf)).toBeUndefined();
+  });
+});
+
+describe('giveSummaryToCompact', () => {
+  const make = (command: string) => ({ role: 'localcmd', command }) as any;
+
+  it('turns the typed /compact into a card holding the summary', () => {
+    const msgs: any[] = [{ role: 'assistant', text: 'hi' }, { role: 'user', text: '/compact ' }];
+    expect(giveSummaryToCompact(msgs, 'S', make)).toBe(true);
+    expect(msgs[1]).toEqual({ role: 'localcmd', command: '/compact', summary: 'S' });
+    // Its output then lands on the card.
+    expect(attachLocalCommandOutput(msgs, { stdout: 'Compacted', stderr: '' })).toBe(true);
+    expect(msgs[1].output).toEqual({ stdout: 'Compacted', stderr: '' });
+  });
+
+  it('fills a /compact card still without a summary', () => {
+    const msgs: any[] = [{ role: 'localcmd', command: '/compact' }];
+    expect(giveSummaryToCompact(msgs, 'S', make)).toBe(true);
+    expect(msgs[0].summary).toBe('S');
+  });
+
+  it('is false otherwise (an automatic compaction)', () => {
+    expect(giveSummaryToCompact([{ role: 'user', text: 'hello' }] as any[], 'S', make)).toBe(false);
+    expect(giveSummaryToCompact([{ role: 'localcmd', command: '/compact', summary: 'old' }] as any[], 'S', make)).toBe(false);
+    expect(giveSummaryToCompact([{ role: 'localcmd', command: '/model opus' }] as any[], 'S', make)).toBe(false);
+    expect(giveSummaryToCompact([], 'S', make)).toBe(false);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCompactNote } from '../compactNote';
+import { compactSummaryOf, parseCompactNote } from '../compactNote';
 
 describe('parseCompactNote', () => {
   it('recognizes the summary a compaction leaves', () => {
@@ -16,5 +16,17 @@ describe('parseCompactNote', () => {
     expect(parseCompactNote('<command-name>/model</command-name>')).toBeNull();
     expect(parseCompactNote('<local-command-stdout>hello</local-command-stdout>')).toBeNull();
     expect(parseCompactNote('I said: This session is being continued from a previous conversation that ran out of context.')).toBeNull();
+  });
+});
+
+describe('compactSummaryOf', () => {
+  const text = 'This session is being continued from a previous conversation that ran out of context. Summary: …';
+  it('reads the summary off a user message', () => {
+    expect(compactSummaryOf({ role: 'user', text })).toBe(text);
+  });
+  it('is null for anything else', () => {
+    expect(compactSummaryOf({ role: 'assistant', text })).toBeNull();
+    expect(compactSummaryOf({ role: 'user', text: 'hello' })).toBeNull();
+    expect(compactSummaryOf({ role: 'user', text, images: ['x'] })).toBeNull();
   });
 });

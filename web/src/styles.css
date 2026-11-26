@@ -1056,6 +1056,12 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .local-cmd-md th, .local-cmd-md td { border: 1px solid var(--border-strong); padding: 2px 8px; text-align: left; }
 .local-cmd-md th { white-space: nowrap; }
 .local-cmd-md td { word-break: normal; overflow-wrap: normal; }
+/* /compact: the summary that replaced the earlier turns, collapsed. */
+.local-cmd-summary { margin-top: 4px; font-size: calc(12px * var(--font-scale)); }
+.local-cmd-summary > summary { cursor: pointer; color: var(--fg-muted); }
+.local-cmd-summary > summary:hover { color: var(--fg); }
+.local-cmd-summary[open] > .local-cmd-md { margin-top: 4px; }
+.local-cmd-summary .local-cmd-md p { white-space: pre-wrap; }
 
 /* A child session's answer in its parent's chat (model: Session.children). */
 .msg-child-report {

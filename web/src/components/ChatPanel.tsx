@@ -6,8 +6,9 @@ import { useElicitationHost } from './ElicitationHost';
 import { claudeAnswersFrom, parseAskUserQuestion } from '../lib/elicitation';
 import { isSendKeyTrigger } from '../lib/sendKey';
 import { toWireImages } from '../lib/imageAttachments';
-import { answerTypedCommand, applyLocalCommandOutput, isSyntheticReply, localCommandOutputOf, localCommandText, splitLocalCommandTexts } from '../lib/localCommand';
+import { absorbCompactSummary, answerTypedCommand, applyLocalCommandOutput, giveSummaryToCompact, isSyntheticReply, localCommandOutputOf, localCommandText, splitLocalCommandTexts } from '../lib/localCommand';
 import { LocalCommandCard } from './LocalCommandCard';
+import { compactSummaryOf, parseCompactNote } from '../lib/compactNote';
 import { isImageSizeNote, parseToolResultContent, type ToolOutput } from '../lib/toolResult';
 import { composeComment, type CommentMark, bookmarkLabel } from '../lib/review';
 import type { ChatQuote } from '../lib/addToChat';
@@ -147,7 +148,7 @@ type Msg =
   | { id: string; role: 'tool'; name: string; input: any; toolUseId?: string; output?: string; outputImages?: string[] }
   // A slash command Claude Code ran itself (lib/localCommand.ts). command is
   // '' for an output that came without its command.
-  | { id: string; role: 'localcmd'; command: string; output?: { stdout: string; stderr: string } };
+  | { id: string; role: 'localcmd'; command: string; output?: { stdout: string; stderr: string }; summary?: string };
 
 type Delta =
   | { kind: 'append'; msg: Msg }
@@ -261,11 +262,22 @@ function renderEvent(ev: any): Delta[] {
   return out;
 }
 
+// Appends a message; a /compact card takes the summary next to it (recorded
+// before the command; live, it comes after the "/compact" typed).
+function appendMsg(prev: Msg[], msg: Msg): Msg[] {
+  const arr = [...prev];
+  const summary = compactSummaryOf(msg);
+  if (summary !== null && giveSummaryToCompact(arr, summary, (command): Msg => ({ id: shortId(), role: 'localcmd', command }))) return arr;
+  if (msg.role === 'localcmd') msg = { ...msg, summary: absorbCompactSummary(arr, msg.command, compactSummaryOf) };
+  arr.push(msg);
+  return arr;
+}
+
 function applyDeltas(prev: Msg[], deltas: ReturnType<typeof renderEvent>): Msg[] {
   let arr = prev;
   for (const d of deltas) {
     if (d.kind === 'append') {
-      arr = [...arr, d.msg];
+      arr = appendMsg(arr, d.msg);
     } else if (d.kind === 'localcmd_output') {
       arr = [...arr];
       applyLocalCommandOutput(arr, d, newLocalCommand);
@@ -303,6 +315,7 @@ function buildFromEvents(events: any[], orphanResults: Map<string, ToolOutput>):
             pendingByToolUseId.set(d.msg.toolUseId, d.msg);
           }
         }
+        if (d.msg.role === 'localcmd') d.msg.summary = absorbCompactSummary(msgs, d.msg.command, compactSummaryOf);
         msgs.push(d.msg);
       } else if (d.kind === 'localcmd_output') {
         applyLocalCommandOutput(msgs, d, newLocalCommand);
@@ -1310,6 +1323,17 @@ export function ChatPanel({
           const isCommented = canComment && !!anchor && commentedAnchors.has(anchor);
           const bmCls = isCommented ? ' commented' : '';
           if (m.role === 'user') {
+            // What a compaction nobody typed (automatic) left behind: not typed by the user.
+            const compact = m.images?.length ? null : parseCompactNote(m.text);
+            if (compact?.kind === 'done') return null;
+            if (compact) {
+              return (
+                <details key={m.id} className="msg msg-compact" data-anchor={anchor ?? undefined}>
+                  <summary>Earlier conversation, compacted into a summary</summary>
+                  <div className="msg-compact-body"><MarkdownText text={compact.summary} theme={theme} projectPath={projectPath} onOpenFile={openFile} /></div>
+                </details>
+              );
+            }
             const isEditing = !!m.uuid && editingUuid === m.uuid;
             return (
               <div key={m.id} className={`msg msg-user${bmCls}`} data-anchor={anchor ?? undefined}>
@@ -1384,7 +1408,7 @@ export function ChatPanel({
             );
           }
           if (m.role === 'system') return <div key={m.id} className="msg msg-system">{m.text}</div>;
-          if (m.role === 'localcmd') return <LocalCommandCard key={m.id} command={m.command} output={m.output} renderBody={(t) => <MarkdownText text={t} theme={theme} projectPath={projectPath} onOpenFile={openFile} />} />;
+          if (m.role === 'localcmd') return <LocalCommandCard key={m.id} command={m.command} output={m.output} summary={m.summary} renderBody={(t) => <MarkdownText text={t} theme={theme} projectPath={projectPath} onOpenFile={openFile} />} />;
           const isOpen = expanded.has(m.id);
           const summary = summarizeTool(m.name, m.input, rel);
           return (
@@ -1621,11 +1645,12 @@ export function ChatPanel({
 // used by the export pipeline. Keep this private to the panel — the export lib
 // shouldn't need to know about Claude-specific fields.
 function claudeMsgsToExport(msgs: Msg[]): ExportMessage[] {
-  return msgs.map((m): ExportMessage => {
+  return msgs.flatMap((m): ExportMessage | ExportMessage[] => {
     if (m.role === 'user') return { kind: 'user', text: m.text, images: m.images };
     if (m.role === 'assistant') return { kind: 'assistant', text: m.text };
     if (m.role === 'system') return { kind: 'system', text: m.text };
-    if (m.role === 'localcmd') return { kind: 'system', text: localCommandText(m) };
+    // A /compact card's summary exports as it did before it moved into the card.
+    if (m.role === 'localcmd') return m.summary ? [{ kind: 'system', text: localCommandText(m) }, { kind: 'user', text: m.summary }] : { kind: 'system', text: localCommandText(m) };
     return { kind: 'tool', name: m.name, input: m.input, output: m.output, images: m.outputImages };
   });
 }
