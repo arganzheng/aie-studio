@@ -244,6 +244,10 @@ type SdkEntry = {
   models: ModelInfo[];
   pendingAsks: Map<string, PendingAsk>;
   killTimer?: NodeJS.Timeout;
+  // The result of a turn that ended while subagents were still running: what
+  // it would have set off (report to the parent, "done") waits for them.
+  heldTurn?: any;
+  heldTimer?: NodeJS.Timeout;
   titleTimers: NodeJS.Timeout[];
   // External-change detection (rule-406): any SDK message or user input is
   // "our" activity; a jsonl write outside the quiet window is someone else's.
@@ -629,10 +633,82 @@ export function runningTasks(tasks: Map<string, SdkTask>): Array<{ taskId: strin
   return [...tasks.values()].filter((t) => t.status === 'running').map((t) => ({ taskId: t.taskId, description: t.description, subagent: !!t.subagentType }));
 }
 
+// Pure: how many subagents are still running. A turn that ends while some
+// are is not the end of the session's work (model: Session "not done while
+// work it handed out goes on"): the agent handed the work over and is waiting
+// to be woken with the results. Background commands do not count: a dev
+// server never ends.
+export function runningSubagents(tasks: Map<string, SdkTask>): number {
+  let n = 0;
+  for (const t of tasks.values()) if (t.status === 'running' && t.subagentType) n++;
+  return n;
+}
+
+// Pure: what a session's row says while its turn is over but work it handed
+// out is not: subagents still running, child sessions still to report.
+export function handedOutActivity(subagents: number, children: number): string {
+  const parts: string[] = [];
+  if (subagents > 0) parts.push(`${subagents} subagent${subagents === 1 ? '' : 's'}`);
+  if (children > 0) parts.push(`${children} child session${children === 1 ? '' : 's'}`);
+  return parts.length ? `Waiting for ${parts.join(' and ')}` : '';
+}
+
+// How much work a session has handed out that is not over: its running
+// subagents, and its child sessions that still owe it a report. While there
+// is any, the end of its turn is not the end of its work.
+function handedOut(entry: SdkEntry): { subagents: number; children: number; total: number } {
+  const subagents = runningSubagents(entry.tasks);
+  const children = entry.sessionId ? workingChildren(entry.sessionId) : 0;
+  return { subagents, children, total: subagents + children };
+}
+
+// After the last subagent of a held turn has ended, how long the agent has to
+// start the turn that takes their results before the held turn is settled as
+// it stands.
+const HELD_TURN_GRACE_MS = 60_000;
+
+// What the end of a turn sets off once the work is really over: the report
+// to the parent, if one is owed.
+function reportTurn(entry: SdkEntry, m: any) {
+  // The parent hears about this turn if it asked for it, or if the user
+  // stepped into a child the parent's agent opened.
+  const requested = entry.reportToParent;
+  const notes = entry.userNotes.splice(0);
+  const stopped: ChildStop | undefined = entry.stoppedByParent ? 'parent' : undefined;
+  entry.reportToParent = false;
+  entry.stoppedByParent = false;
+  saveOwed(entry);
+  if (requested || notes.length > 0) void reportToParent(entry, m, { requested, notes, stopped });
+}
+
+function dropHeldTurn(entry: SdkEntry) {
+  entry.heldTurn = undefined;
+  if (entry.heldTimer) { clearTimeout(entry.heldTimer); entry.heldTimer = undefined; }
+}
+
+// A turn ended while subagents ran and they have all ended since: normally
+// the agent now starts a turn by itself, and that turn's end settles things.
+// Should it not, the held turn is settled as it stands, so that a parent is
+// not left waiting for good.
+function settleHeldTurnSoon(entry: SdkEntry) {
+  if (!entry.heldTurn || entry.heldTimer || handedOut(entry).total > 0) return;
+  entry.heldTimer = setTimeout(() => {
+    entry.heldTimer = undefined;
+    const held = entry.heldTurn;
+    if (!held || entry.thinking || handedOut(entry).total > 0) return;
+    entry.heldTurn = undefined;
+    reportTurn(entry, held);
+    if (entry.pendingAsks.size === 0) publishSessionEvent(entry.owner, 'done', entry.sessionId, entry.title, toSummary(parseStatus(held.result).text));
+  }, HELD_TURN_GRACE_MS);
+}
+
 function onSdkMessage(entry: SdkEntry, m: any) {
   let flush = false;
   touchActivity(entry);
-  if (applyTaskEvent(entry.tasks, m)) broadcast(entry, { type: 'bg_tasks', running: runningTasks(entry.tasks) });
+  if (applyTaskEvent(entry.tasks, m)) {
+    broadcast(entry, { type: 'bg_tasks', running: runningTasks(entry.tasks) });
+    settleHeldTurnSoon(entry);
+  }
   const activity = activityAfter(m, entry.cwd);
   if (activity !== null) entry.activity = activity;
   // A turn the CLI started on its own (a background task finished) is still
@@ -664,16 +740,15 @@ function onSdkMessage(entry: SdkEntry, m: any) {
   if (m?.type === 'result') {
     entry.thinking = false;
     entry.compacting = false;
+    // Subagents still running, or child sessions still to report: the work
+    // is not over. The report to the parent and the "done" event wait for
+    // the turn that takes their results (a turn the parent stopped is
+    // reported at once: it asked).
+    const waiting = isTurnResult(m) && !entry.stoppedByParent ? handedOut(entry).total : 0;
     if (isTurnResult(m)) {
-      // The parent hears about this turn if it asked for it, or if the user
-      // stepped into a child the parent's agent opened.
-      const requested = entry.reportToParent;
-      const notes = entry.userNotes.splice(0);
-      const stopped: ChildStop | undefined = entry.stoppedByParent ? 'parent' : undefined;
-      entry.reportToParent = false;
-      entry.stoppedByParent = false;
-      saveOwed(entry);
-      if (requested || notes.length > 0) void reportToParent(entry, m, { requested, notes, stopped });
+      dropHeldTurn(entry);
+      if (waiting > 0) entry.heldTurn = m;
+      else reportTurn(entry, m);
     }
     refreshContext(entry);
     scheduleTitleRefresh(entry);
@@ -690,7 +765,7 @@ function onSdkMessage(entry: SdkEntry, m: any) {
     if (entry.sessionId && !flush) void setSessionStatus(entry.owner.uid, `claude:${entry.sessionId}`, status);
     if (entry.pendingAsks.size === 0 && !flush) {
       if (status?.tone === 'needs-you') publishSessionEvent(entry.owner, 'awaiting', entry.sessionId, entry.title, status.label);
-      else publishSessionEvent(entry.owner, 'done', entry.sessionId, entry.title, toSummary(said.text));
+      else if (waiting === 0) publishSessionEvent(entry.owner, 'done', entry.sessionId, entry.title, toSummary(said.text));
     }
   }
   broadcast(entry, { type: 'message', data: m });
@@ -786,7 +861,8 @@ function scheduleKillIfIdle(entry: SdkEntry) {
   entry.killTimer = setTimeout(() => {
     entry.killTimer = undefined;
     if (entry.clients.size > 0) return;
-    if (entry.thinking || entry.pendingAsks.size > 0) { scheduleKillIfIdle(entry); return; }
+    // Subagents die with the process: not idle while they run.
+    if (entry.thinking || entry.pendingAsks.size > 0 || runningSubagents(entry.tasks) > 0) { scheduleKillIfIdle(entry); return; }
     destroy(entry);
   }, CLIENT_DRAIN_GRACE_MS);
 }
@@ -797,6 +873,7 @@ function teardown(entry: SdkEntry) {
   denyAllAsks(entry, 'Session ended');
   for (const t of entry.titleTimers) clearTimeout(t);
   if (entry.killTimer) { clearTimeout(entry.killTimer); entry.killTimer = undefined; }
+  dropHeldTurn(entry);
   if (entry.sessionId) { byId.delete(entry.sessionId); unmarkLive(entry.sessionId, 'sdk'); }
   pending.delete(entry);
   for (const c of entry.clients) { try { c.close(); } catch {} }
@@ -1139,7 +1216,7 @@ function startedFrame(entry: SdkEntry, attached: boolean) {
 export function sdkLiveState(sessionId: string): LiveState | null {
   const entry = byId.get(sessionId);
   if (!entry) return null;
-  return entry.pendingAsks.size > 0 ? 'awaiting' : entry.thinking ? 'running' : 'idle';
+  return entry.pendingAsks.size > 0 ? 'awaiting' : entry.thinking || handedOut(entry).total > 0 ? 'running' : 'idle';
 }
 // The user renamed a session: for a child still holding the title its parent
 // gave it, that is now the one to keep.
@@ -1152,7 +1229,10 @@ export function userRenamedSdkSession(sessionId: string, title: string) {
 // More for the session's row: what its running turn is doing.
 export function sdkLiveDetail(sessionId: string): { activity?: string } {
   const entry = byId.get(sessionId);
-  return entry?.thinking && entry.activity ? { activity: entry.activity } : {};
+  if (!entry) return {};
+  if (entry.thinking) return entry.activity ? { activity: entry.activity } : {};
+  const out = handedOut(entry);
+  return out.total > 0 ? { activity: handedOutActivity(out.subagents, out.children) } : {};
 }
 // Model: Claude Session.tasks, read by server.ListSubagents.
 export function sdkTasks(sessionId: string): SdkTask[] {
@@ -1175,6 +1255,7 @@ export function stopSdkSession(sessionId: string, uid: string, opts: { silent?: 
   const owed = owesReport(entry);
   const why = { requested: entry.reportToParent, notes: entry.userNotes.splice(0), stopped: 'user' as const };
   entry.reportToParent = false;
+  dropHeldTurn(entry);
   saveOwed(entry);
   broadcast(entry, { type: 'exit', code: 'stopped' });
   destroy(entry);
