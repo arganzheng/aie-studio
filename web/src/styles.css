@@ -1223,13 +1223,10 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   gap: 6px;
 }
 .chat-input .prompt-editor {
-  flex: 1;
+  flex: 0 0 auto;
   min-width: 0;
   box-sizing: border-box;
-  background: var(--bg-input);
   color: var(--fg);
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
   font-family: inherit;
   font-size: 16px;
   /* Two lines, like the two-row textarea this was. */
@@ -1245,9 +1242,6 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
    it, and otherwise looks like the textarea it replaced. */
 .prompt-editor .cm-editor { flex: 1; min-width: 0; max-height: 100%; background: transparent; color: inherit; }
 .prompt-editor .cm-editor.cm-focused { outline: none; }
-/* The browser's own focus ring, as on the textarea (second line: Chrome and
-   Safari; the first is the fallback elsewhere). */
-.prompt-editor:focus-within { outline: 2px solid Highlight; outline: -webkit-focus-ring-color auto 1px; }
 .prompt-editor .cm-scroller { font-family: inherit; line-height: normal; overflow: auto; }
 .prompt-editor .cm-content { padding: 8px 0; caret-color: var(--fg); }
 .prompt-editor .cm-line { padding: 0 10px; }
@@ -1286,6 +1280,39 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
   font-weight: 600;
 }
 .chat-input button:disabled { background: var(--border-strong); color: var(--fg-muted); cursor: not-allowed; }
+/* One box (model: web.SendPrompt): the text on top, a bar under it — ＋
+   ("Attach or mention") and "/" (commands) on the left, the send controls on
+   the right — so the text has the full width. */
+.chat-box { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-input); border: 1px solid var(--border-strong); border-radius: 10px; }
+/* The browser's own focus ring, as on the textarea this was (second line:
+   Chrome and Safari; the first is the fallback elsewhere). Only for the text:
+   a focused button in the bar shows its own. */
+.chat-box:has(.cm-focused) { outline: 2px solid Highlight; outline: -webkit-focus-ring-color auto 1px; }
+.chat-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 0 6px 6px; }
+.chat-bar-gap { flex: 1; }
+.chat-input .chat-bar button { height: 30px; }
+.chat-tools { position: relative; flex: 0 0 auto; display: flex; gap: 2px; }
+.chat-input .chat-tools > button.chat-attach { width: 30px; min-height: 0; border: none; background: transparent; line-height: 1; align-self: auto; }
+.chat-input .chat-tools > button.chat-attach:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
+.chat-input .chat-tools > button.chat-slash-btn { font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* "/" in a small box, as a key. */
+.chat-input .chat-tools > button.chat-slash-btn::before { content: '/'; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border: 1.5px solid currentColor; border-radius: 4px; }
+/* Touch: bigger targets. */
+@media (pointer: coarse) {
+  .chat-input .chat-bar button { height: 36px; }
+  .chat-input .chat-tools > button.chat-attach { width: 36px; }
+}
+.chat-plus-menu { position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 30; min-width: 190px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.35); padding: 4px; }
+.chat-input .chat-plus-menu button { display: flex; align-items: center; gap: 8px; background: none; color: var(--fg); font-weight: 400; padding: 8px 10px; border-radius: 6px; }
+.chat-input .chat-plus-menu button:hover { background: var(--bg-hover); }
+.chat-plus-glyph { display: inline-block; width: 1.3em; text-align: center; color: var(--fg-muted); }
+/* A mention in the prompt ("@src/a.ts" drawn as a chip; PromptEditor). */
+.mention-chip { display: inline-block; max-width: 100%; padding: 0 5px 0 3px; border-radius: 4px; background: var(--bg-hover); box-shadow: 0 0 0 1px var(--border) inset; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; cursor: default; }
+.mention-icon { display: inline-block; width: 0.8em; height: 0.8em; margin-right: 4px; vertical-align: -0.05em; background: currentColor; opacity: 0.6; -webkit-mask: var(--mention-file-icon) center / contain no-repeat; mask: var(--mention-file-icon) center / contain no-repeat; }
+.mention-chip { --mention-file-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 1.5h6.2L13 5.3v9.2H3z M9 1.5v4h4' fill='none' stroke='black' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+/* The file picker: the name first, in the text font; its directory under it. */
+.cmd-popover.files .cmd-item-name { font-family: inherit; font-size: 14px; }
+.cmd-popover.files .cmd-item-desc { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; }
 .chat-status {
   padding: 4px 10px;
   font-size: 11px;
@@ -3000,8 +3027,8 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 /* Model: web.PendingFormInputLock rule-309 — read-only input while a form
    waits, with an Unlock escape hatch. */
 .chat-input.locked .prompt-editor .cm-content { cursor: pointer; }
-.chat-input.locked .prompt-editor {
-  cursor: pointer;
+.chat-input.locked .prompt-editor { cursor: pointer; }
+.chat-input.locked .chat-box {
   background: var(--bg-muted);
   border-style: dashed;
 }
@@ -3579,17 +3606,17 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 }
 
 /* ----- `!` shell commands in chat (web.BangCommand) ----- */
-.chat-input.bash-mode .prompt-editor,
-.chat-input.bash-mode .prompt-editor:focus-within {
+.chat-input.bash-mode .chat-box,
+.chat-input.bash-mode .chat-box:has(.cm-focused) {
   outline: none;
   border-color: #d670d6;
   box-shadow: 0 0 0 1px #d670d6 inset;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+.chat-input.bash-mode .prompt-editor { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .chat-input-bash-badge {
   position: absolute;
   top: -10px;
-  left: 56px;
+  left: 20px;
   z-index: 1;
   padding: 0 6px;
   border-radius: 3px;

@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { SendKey } from '../types';
 import { filterCommands, matchCommandQuery, type CommandItem } from '../lib/commandPicker';
 import { imageFilesFromClipboard } from '../lib/imageAttachments';
@@ -9,6 +9,7 @@ import { isBangInput } from '../lib/bang';
 import { isCompactCommand, isSlashCommand } from '../lib/steering';
 import { addQuotes, composeQuotedPrompt, quoteCardLabel, quoteCardPreview, type ChatQuote } from '../lib/addToChat';
 import { dragHasFiles, droppedFiles } from '../lib/fileAttachments';
+import { fileItems, fileMentionResolver, matchMentionQuery } from '../lib/mentions';
 
 export type ChatInputStatus =
   | 'connecting'
@@ -69,6 +70,8 @@ export const ChatInput = memo(function ChatInput({
   thinkingPlaceholder,
   commands,
   onCommandsOpen,
+  mentionFiles,
+  onMentionOpen,
   insertion,
   onBatchSent,
   onSend,
@@ -91,6 +94,14 @@ export const ChatInput = memo(function ChatInput({
   commands?: CommandItem[];
   // Fired when the picker opens; caller can refetch the catalog in the background.
   onCommandsOpen?: () => void;
+  // Model: web.FileMentions. The files of the checkout the session works in.
+  // Given (even empty, while loading): "@" opens a file picker, a picked file
+  // goes in the text as "@path" and is drawn as a chip, and ＋ becomes a menu
+  // with "Files" in it. Omit to leave all that off.
+  mentionFiles?: readonly string[];
+  // The list is wanted (the picker opened, or the text has an "@"): the
+  // caller fetches or refreshes it.
+  onMentionOpen?: () => void;
   // Model: web.InsertBatchPrompt. The text is appended (never sent) so the
   // user can review it; onBatchSent fires for each inserted Batch once the
   // prompt actually goes out.
@@ -134,8 +145,10 @@ export const ChatInput = memo(function ChatInput({
       document.removeEventListener('keydown', onKey);
     };
   }, [shownQuote]);
-  // null = picker closed; string = query after the leading "/".
-  const [query, setQuery] = useState<string | null>(null);
+  // The picker above the input: null = closed. 'slash': commands, for the
+  // "/query" the message starts with. 'file': files, for the "@query" before
+  // the cursor. `from` is where that token starts in the text.
+  const [picker, setPicker] = useState<{ kind: 'slash' | 'file'; from: number; query: string } | null>(null);
   const [sel, setSel] = useState(0);
   const editorRef = useRef<PromptEditorHandle>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -188,15 +201,27 @@ export const ChatInput = memo(function ChatInput({
     localStorage.removeItem(INPUT_HEIGHT_KEY);
   }
 
-  const matches = commands && query != null ? filterCommands(commands, query) : [];
+  const matches = useMemo(() => (
+    !picker ? []
+    : picker.kind === 'slash' ? (commands ? filterCommands(commands, picker.query) : [])
+    : fileItems(mentionFiles ?? [], picker.query)
+  ), [picker, commands, mentionFiles]);
   const open = matches.length > 0;
   const selIdx = Math.min(sel, Math.max(0, matches.length - 1));
 
   const wasOpenRef = useRef(false);
   useEffect(() => {
-    if (open && !wasOpenRef.current) onCommandsOpen?.();
+    if (open && !wasOpenRef.current && picker?.kind === 'slash') onCommandsOpen?.();
     wasOpenRef.current = open;
-  }, [open, onCommandsOpen]);
+  }, [open, picker?.kind, onCommandsOpen]);
+
+  // Model: web.FileMentions. The file list is wanted as soon as the text has
+  // an "@" (to draw chips) and each time the picker is asked for (to be fresh).
+  const wantsFiles = mentionFiles !== undefined && (picker?.kind === 'file' || text.includes('@'));
+  const filePickerOn = picker?.kind === 'file';
+  useEffect(() => { if (wantsFiles) onMentionOpen?.(); }, [wantsFiles, filePickerOn, onMentionOpen]);
+  const fileSet = useMemo(() => new Set(mentionFiles ?? []), [mentionFiles]);
+  const resolveMention = useMemo(() => (fileSet.size ? fileMentionResolver(fileSet) : null), [fileSet]);
 
   useEffect(() => {
     if (!open) return;
@@ -206,18 +231,24 @@ export const ChatInput = memo(function ChatInput({
   }, [open, selIdx]);
 
   function syncQuery(value: string, cursor: number) {
-    if (!commands) return;
-    setQuery(matchCommandQuery(value.slice(0, cursor)));
+    const before = value.slice(0, cursor);
+    const slash = commands ? matchCommandQuery(before) : null;
+    let at = slash == null && mentionFiles !== undefined ? matchMentionQuery(before) : null;
+    // The cursor right after a whole mention (a chip already): nothing to pick.
+    if (at && fileSet.has(at.query)) at = null;
+    setPicker(slash != null ? { kind: 'slash', from: 0, query: slash } : at ? { kind: 'file', ...at } : null);
     setSel(0);
   }
 
   function pick(item: CommandItem) {
-    // Trigger rule guarantees the "/query" token spans [0, cursor).
+    // The token being replaced spans [from, cursor): "/query" from the start
+    // of the message, "@query" from its "@".
     const cursor = editorRef.current?.cursor() ?? text.length;
-    const next = item.insert + text.slice(cursor);
+    const from = Math.min(picker?.from ?? 0, cursor);
+    const next = text.slice(0, from) + item.insert + text.slice(cursor);
     setText(next);
-    setQuery(null);
-    requestAnimationFrame(() => editorRef.current?.focusAt(item.insert.length));
+    setPicker(null);
+    requestAnimationFrame(() => editorRef.current?.focusAt(from + item.insert.length));
   }
 
   // Batches whose prompt currently sits in the input, unsent.
@@ -229,7 +260,7 @@ export const ChatInput = memo(function ChatInput({
     if (insertion.batchId && !pendingBatchIdsRef.current.includes(insertion.batchId)) pendingBatchIdsRef.current.push(insertion.batchId);
     if (insertion.quotes?.length) setQuotes((prev) => addQuotes(prev, insertion.quotes!));
     if (insertion.text) setText((prev) => (prev.trim() ? `${prev.replace(/\s+$/, '')}\n\n${insertion.text}` : insertion.text));
-    setQuery(null);
+    setPicker(null);
     requestAnimationFrame(() => editorRef.current?.focusAt('end'));
   }, [insertion]);
 
@@ -242,6 +273,54 @@ export const ChatInput = memo(function ChatInput({
     document.addEventListener('touchstart', onDown);
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('touchstart', onDown); };
   }, [modeMenu]);
+  // Model: web.FileMentions — the ＋ menu ("Attach or mention") and the "/"
+  // button: what "@" and "/" do, for someone who does not know to type them.
+  const [plusMenu, setPlusMenu] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!plusMenu) return;
+    const onDown = (e: Event) => { if (!(e.target as HTMLElement).closest?.('.chat-tools')) setPlusMenu(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPlusMenu(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('touchstart', onDown); document.removeEventListener('keydown', onKey); };
+  }, [plusMenu]);
+  // "Files": an "@" goes in at the cursor (after a space when it follows a
+  // word) and the file picker opens on it.
+  function startMention() {
+    setPlusMenu(false);
+    const cursor = editorRef.current?.cursor() ?? text.length;
+    const before = text.slice(0, cursor);
+    const ins = before && !/\s$/.test(before) ? ' @' : '@';
+    const next = before + ins + text.slice(cursor);
+    const pos = before.length + ins.length;
+    setText(next);
+    syncQuery(next, pos);
+    requestAnimationFrame(() => editorRef.current?.focusAt(pos));
+  }
+  // "/": the command picker. A message that already is a command: on its
+  // name. An empty one: a "/" is typed. Otherwise the text is left as it is
+  // and the pick goes in front of it (it becomes the command's arguments).
+  function startSlash() {
+    setPlusMenu(false);
+    if (!commands) return;
+    if (text.startsWith('/')) {
+      const end = /^\/\S*/.exec(text)![0].length;
+      editorRef.current?.focusAt(end);
+      syncQuery(text, end);
+    } else if (!text) {
+      setText('/');
+      syncQuery('/', 1);
+      requestAnimationFrame(() => editorRef.current?.focusAt(1));
+    } else {
+      editorRef.current?.focusAt(0);
+      setPicker({ kind: 'slash', from: 0, query: '' });
+      setSel(0);
+    }
+  }
+  const toolsOff = status === 'closed' || !!lock;
+
   function submit(mode?: SendMode) {
     setModeMenu(false);
     if (lock || uploading) return;
@@ -255,7 +334,7 @@ export const ChatInput = memo(function ChatInput({
     }
     pendingBatchIdsRef.current = [];
     setText('');
-    setQuery(null);
+    setPicker(null);
   }
 
   // Model: web.FileAttachments — files dragged onto the input are attached
@@ -356,7 +435,7 @@ export const ChatInput = memo(function ChatInput({
         onDoubleClick={onResizeReset}
       />
       {open && (
-        <div className="cmd-popover" ref={listRef} role="listbox">
+        <div className={`cmd-popover${picker?.kind === 'file' ? ' files' : ''}`} ref={listRef} role="listbox">
           {matches.map((item, idx) => {
             const groupStart = idx === 0 || matches[idx - 1].group !== item.group;
             return (
@@ -367,6 +446,7 @@ export const ChatInput = memo(function ChatInput({
                   data-idx={idx}
                   role="option"
                   aria-selected={idx === selIdx}
+                  title={picker?.kind === 'file' ? item.name : undefined}
                   // preventDefault keeps focus (and the mobile keyboard) on the textarea.
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => pick(item)}
@@ -380,88 +460,148 @@ export const ChatInput = memo(function ChatInput({
           })}
         </div>
       )}
-      <AttachImagesButton onFiles={onAddFiles} anyFile={anyFile} disabled={status === 'closed' || !!lock} />
-      <PromptEditor
-        ref={editorRef}
-        style={height != null ? { height } : undefined}
-        value={text}
-        onChange={(value, cursor) => {
-          setText(value);
-          // Input emptied by hand = the user dropped that send; the Batch stays draft.
-          if (!value) pendingBatchIdsRef.current = [];
-          syncQuery(value, cursor);
-        }}
-        onClick={(cursor) => {
-          if (lock) { lock.onShow?.(); return; }
-          syncQuery(text, cursor);
-        }}
-        onBlur={() => setQuery(null)}
-        readOnly={!!lock}
-        placeholder={
-          lock ? lock.reason
-          : status === 'closed' ? 'closed'
-          : status === 'thinking' ? thinkingPlaceholder
-          : status === 'connecting' || status === 'reconnecting' || status === 'replaying' ? status
-          : readyPlaceholder
-        }
-        disabled={status === 'closed'}
-        onPaste={(e) => {
-          const files = anyFile ? Array.from(e.clipboardData?.files ?? []) : imageFilesFromClipboard(e.clipboardData?.items);
-          if (!files.length) return false;
-          onAddFiles(files);
-          return true;
-        }}
-        onKeyDown={(e) => {
-          if (open) {
-            // While the picker is open, Enter/Tab pick regardless of sendKey.
-            if (e.key === 'ArrowDown') { setSel((s) => (s + 1) % matches.length); return true; }
-            if (e.key === 'ArrowUp') { setSel((s) => (s - 1 + matches.length) % matches.length); return true; }
-            if (e.key === 'Enter' || e.key === 'Tab') { pick(matches[selIdx]); return true; }
-            if (e.key === 'Escape') { setQuery(null); return true; }
+      {/* Model: web.SendPrompt — one box: the text on top, a bar under it with
+          ＋ and "/" on the left and the send controls on the right. */}
+      <div className="chat-box">
+        <PromptEditor
+          ref={editorRef}
+          style={height != null ? { height } : undefined}
+          value={text}
+          onChange={(value, cursor) => {
+            setText(value);
+            // Input emptied by hand = the user dropped that send; the Batch stays draft.
+            if (!value) pendingBatchIdsRef.current = [];
+            syncQuery(value, cursor);
+          }}
+          onClick={(cursor) => {
+            if (lock) { lock.onShow?.(); return; }
+            syncQuery(text, cursor);
+          }}
+          onBlur={() => setPicker(null)}
+          readOnly={!!lock}
+          resolveMention={resolveMention}
+          placeholder={
+            lock ? lock.reason
+            : status === 'closed' ? 'closed'
+            : status === 'thinking' ? thinkingPlaceholder
+            : status === 'connecting' || status === 'reconnecting' || status === 'replaying' ? status
+            : readyPlaceholder
           }
-          if (isSendKeyTrigger(sendKey, e)) { submit(); return true; }
-          return false;
-        }}
-      />
-      {lock && (
-        <button
-          className="chat-unlock"
-          onClick={lock.onUnlock}
-          title="Type in chat anyway — the form above stays open until you answer it"
-        >Unlock</button>
-      )}
-      <button onClick={() => submit()} disabled={!canSend} title={uploading ? 'Waiting for the attached files to upload' : sendModes && status === 'thinking' ? (slashWaits ? 'Queued: slash commands run once this turn has ended' : 'Claude reads it within seconds; a running command keeps going in the background') : undefined}>{uploading ? 'Uploading…' : 'Send'}</button>
-      {sendModes && status === 'thinking' && (
-        <div className="send-modes">
-          <button
-            type="button"
-            className="send-modes-btn"
-            title="More ways to send while it works"
-            aria-label="More ways to send"
-            aria-expanded={modeMenu}
-            disabled={!canSend}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => setModeMenu((v) => !v)}
-          >▾</button>
-          {modeMenu && (
-            <div className="send-modes-menu" role="menu">
-              {SEND_MODES.map((m) => (
-                <button key={m.mode} type="button" role="menuitem" className="overflow-action" onMouseDown={(e) => e.preventDefault()} onClick={() => submit(m.mode)}>
-                  <span className="send-modes-label">{m.label}</span>
-                  <span className="send-modes-hint">{m.hint}</span>
-                </button>
-              ))}
+          disabled={status === 'closed'}
+          onPaste={(e) => {
+            const files = anyFile ? Array.from(e.clipboardData?.files ?? []) : imageFilesFromClipboard(e.clipboardData?.items);
+            if (!files.length) return false;
+            onAddFiles(files);
+            return true;
+          }}
+          onKeyDown={(e) => {
+            if (open) {
+              // While the picker is open, Enter/Tab pick regardless of sendKey.
+              if (e.key === 'ArrowDown') { setSel((s) => (s + 1) % matches.length); return true; }
+              if (e.key === 'ArrowUp') { setSel((s) => (s - 1 + matches.length) % matches.length); return true; }
+              if (e.key === 'Enter' || e.key === 'Tab') { pick(matches[selIdx]); return true; }
+              if (e.key === 'Escape') { setPicker(null); return true; }
+            }
+            if (isSendKeyTrigger(sendKey, e)) { submit(); return true; }
+            return false;
+          }}
+        />
+        <div className="chat-bar">
+          <div className="chat-tools">
+            {mentionFiles === undefined ? (
+              <AttachImagesButton onFiles={onAddFiles} anyFile={anyFile} disabled={toolsOff} />
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="chat-attach"
+                  title="Attach or mention"
+                  aria-label="Attach or mention"
+                  aria-haspopup="menu"
+                  aria-expanded={plusMenu}
+                  disabled={toolsOff}
+                  // preventDefault keeps focus (and the mobile keyboard) on the editor.
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setPlusMenu((v) => !v)}
+                >＋</button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={anyFile ? undefined : 'image/*'}
+                  multiple
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    if (e.target.files) onAddFiles(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+                {plusMenu && (
+                  <div className="chat-plus-menu" role="menu">
+                    <button type="button" role="menuitem" className="overflow-action" onMouseDown={(e) => e.preventDefault()} onClick={() => { setPlusMenu(false); fileInputRef.current?.click(); }}>
+                      <span className="chat-plus-glyph" aria-hidden="true">📎</span>{anyFile ? 'Upload files' : 'Upload images'}
+                    </button>
+                    <div className="overflow-divider" />
+                    <button type="button" role="menuitem" className="overflow-action" onMouseDown={(e) => e.preventDefault()} onClick={startMention}>
+                      <span className="chat-plus-glyph" aria-hidden="true">@</span>Files
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+            {commands && (
+              <button
+                type="button"
+                className="chat-attach chat-slash-btn"
+                title="Commands, skills and agents"
+                aria-label="Commands, skills and agents"
+                disabled={toolsOff}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={startSlash}
+              />
+            )}
+          </div>
+          <span className="chat-bar-gap" />
+          {lock && (
+            <button
+              className="chat-unlock"
+              onClick={lock.onUnlock}
+              title="Type in chat anyway — the form above stays open until you answer it"
+            >Unlock</button>
+          )}
+          <button onClick={() => submit()} disabled={!canSend} title={uploading ? 'Waiting for the attached files to upload' : sendModes && status === 'thinking' ? (slashWaits ? 'Queued: slash commands run once this turn has ended' : 'Claude reads it within seconds; a running command keeps going in the background') : undefined}>{uploading ? 'Uploading…' : 'Send'}</button>
+          {sendModes && status === 'thinking' && (
+            <div className="send-modes">
+              <button
+                type="button"
+                className="send-modes-btn"
+                title="More ways to send while it works"
+                aria-label="More ways to send"
+                aria-expanded={modeMenu}
+                disabled={!canSend}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setModeMenu((v) => !v)}
+              >▾</button>
+              {modeMenu && (
+                <div className="send-modes-menu" role="menu">
+                  {SEND_MODES.map((m) => (
+                    <button key={m.mode} type="button" role="menuitem" className="overflow-action" onMouseDown={(e) => e.preventDefault()} onClick={() => submit(m.mode)}>
+                      <span className="send-modes-label">{m.label}</span>
+                      <span className="send-modes-hint">{m.hint}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
+          {status === 'thinking' && (
+            <button
+              className="chat-stop"
+              onClick={onStop}
+              title="Interrupt current turn"
+            >Stop</button>
+          )}
         </div>
-      )}
-      {status === 'thinking' && (
-        <button
-          className="chat-stop"
-          onClick={onStop}
-          title="Interrupt current turn"
-        >Stop</button>
-      )}
+      </div>
     </div>
     </>
   );

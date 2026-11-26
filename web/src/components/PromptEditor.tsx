@@ -1,7 +1,8 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import { Annotation, Compartment, EditorState, Prec, type Extension } from '@codemirror/state';
-import { EditorView, keymap, placeholder as placeholderExt } from '@codemirror/view';
+import { Annotation, Compartment, EditorState, Facet, Prec, RangeSetBuilder, StateField, type Extension } from '@codemirror/state';
+import { Decoration, EditorView, WidgetType, keymap, placeholder as placeholderExt, type DecorationSet } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, insertNewline } from '@codemirror/commands';
+import { findMentions, type MentionInfo, type MentionResolver } from '../lib/mentions';
 
 // The prompt box's editor (model: web.SendPrompt): a CodeMirror view that
 // behaves like the textarea it replaced. Its document is the prompt as plain
@@ -32,6 +33,9 @@ type Props = {
   onClick?: (cursor: number) => void;
   onBlur?: () => void;
   placeholder: string;
+  // Model: web.FileMentions. Says which "@token"s in the text are mentions
+  // and what each is drawn as; those are shown as chips. Omit for none.
+  resolveMention?: MentionResolver | null;
   // Text can be read and selected but not changed.
   readOnly?: boolean;
   // Not usable at all (session closed).
@@ -39,6 +43,51 @@ type Props = {
   className?: string;
   style?: React.CSSProperties;
 };
+
+// ----- mentions drawn as chips (model: web.FileMentions) -------------------
+// The text stays "@src/a.ts"; the chip is only how that range is drawn. It is
+// atomic: the cursor steps over it and Backspace removes it whole.
+const mentionResolver = Facet.define<MentionResolver | null, MentionResolver | null>({
+  combine: (values) => values.find((v) => v != null) ?? null,
+});
+
+class MentionWidget extends WidgetType {
+  constructor(readonly info: MentionInfo) { super(); }
+  eq(other: MentionWidget) {
+    return other.info.kind === this.info.kind && other.info.label === this.info.label && other.info.title === this.info.title;
+  }
+  toDOM() {
+    const el = document.createElement('span');
+    el.className = `mention-chip mention-${this.info.kind}`;
+    el.title = this.info.title;
+    const icon = document.createElement('span');
+    icon.className = 'mention-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    const label = document.createElement('span');
+    label.textContent = this.info.label;
+    el.append(icon, label);
+    return el;
+  }
+  ignoreEvent() { return false; }
+}
+
+function mentionDecorations(state: EditorState): DecorationSet {
+  const resolve = state.facet(mentionResolver);
+  if (!resolve) return Decoration.none;
+  const b = new RangeSetBuilder<Decoration>();
+  for (const r of findMentions(state.doc.toString(), resolve)) {
+    b.add(r.from, r.to, Decoration.replace({ widget: new MentionWidget(r.info) }));
+  }
+  return b.finish();
+}
+
+const mentionField = StateField.define<DecorationSet>({
+  create: mentionDecorations,
+  update(value, tr) {
+    return tr.docChanged || tr.startState.facet(mentionResolver) !== tr.state.facet(mentionResolver) ? mentionDecorations(tr.state) : value;
+  },
+  provide: (f) => [EditorView.decorations.from(f), EditorView.atomicRanges.of((view) => view.state.field(f))],
+});
 
 // Marks a change the component made itself to follow `value`, so it is not
 // reported back through onChange.
@@ -58,7 +107,7 @@ function editableExt(readOnly: boolean, disabled: boolean): Extension {
 }
 
 export const PromptEditor = forwardRef<PromptEditorHandle, Props>(function PromptEditor(
-  { value, onChange, onKeyDown, onPaste, onClick, onBlur, placeholder, readOnly = false, disabled = false, className, style },
+  { value, onChange, onKeyDown, onPaste, onClick, onBlur, placeholder, resolveMention = null, readOnly = false, disabled = false, className, style },
   ref,
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -66,7 +115,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, Props>(function Promp
   // The view is made once; its handlers read the latest props from here.
   const cb = useRef({ onChange, onKeyDown, onPaste, onClick, onBlur });
   cb.current = { onChange, onKeyDown, onPaste, onClick, onBlur };
-  const compartments = useRef({ placeholder: new Compartment(), editable: new Compartment() });
+  const compartments = useRef({ placeholder: new Compartment(), editable: new Compartment(), mentions: new Compartment() });
 
   useEffect(() => {
     const c = compartments.current;
@@ -107,6 +156,8 @@ export const PromptEditor = forwardRef<PromptEditorHandle, Props>(function Promp
           contentAttrs,
           c.placeholder.of(placeholderExt(placeholder)),
           c.editable.of(editableExt(readOnly, disabled)),
+          c.mentions.of(mentionResolver.of(resolveMention)),
+          mentionField,
           EditorView.updateListener.of((u) => {
             if (!u.docChanged) return;
             if (u.transactions.some((t) => t.annotation(fromProp))) return;
@@ -141,6 +192,9 @@ export const PromptEditor = forwardRef<PromptEditorHandle, Props>(function Promp
   useEffect(() => {
     viewRef.current?.dispatch({ effects: compartments.current.editable.reconfigure(editableExt(readOnly, disabled)) });
   }, [readOnly, disabled]);
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: compartments.current.mentions.reconfigure(mentionResolver.of(resolveMention)) });
+  }, [resolveMention]);
 
   useImperativeHandle(ref, () => ({
     focus: () => viewRef.current?.focus(),
