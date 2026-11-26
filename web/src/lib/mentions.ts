@@ -76,14 +76,15 @@ export function fileItems(files: readonly string[], query: string, limit = 50): 
 
 // What a mention is drawn as. `send`: what goes out in its place when the
 // prompt is sent (absent = the text as it is).
-// `open`: the chip can be clicked, and this is what it opens (a session id).
+// `open`: the chip can be clicked, and this is what it opens: "file:<path>"
+// or "session:<id>" (see openTarget).
 export type MentionInfo = { kind: 'file' | 'session'; label: string; title: string; send?: string; open?: string };
 export type MentionResolver = (token: string) => MentionInfo | null;
 
 // A file mention is a chip only when it names a file of the checkout, so
 // "@someone" and e-mail addresses stay text.
 export function fileMentionResolver(files: ReadonlySet<string>): MentionResolver {
-  return (token) => (files.has(token) ? { kind: 'file', label: baseName(token), title: token } : null);
+  return (token) => (files.has(token) ? { kind: 'file', label: baseName(token), title: `${token} — click to open it`, open: `file:${token}` } : null);
 }
 
 export type MentionRange = { from: number; to: number; info: MentionInfo };
@@ -140,7 +141,7 @@ export function sessionMentionResolver(sessions: ReadonlyMap<string, MentionSess
   return (token) => {
     if (!token.startsWith(SESSION_PREFIX)) return null;
     const s = sessions.get(token.slice(SESSION_PREFIX.length));
-    return s ? { kind: 'session', label: s.title, title: `${s.title} — ${kindName(s.kind)} session ${s.id}. Click to open it.`, send: sessionSendText(s), open: s.id } : null;
+    return s ? { kind: 'session', label: s.title, title: `${s.title} — ${kindName(s.kind)} session ${s.id}. Click to open it.`, send: sessionSendText(s), open: `${SESSION_PREFIX}${s.id}` } : null;
   };
 }
 
@@ -175,4 +176,11 @@ export function expandMentions(text: string, resolve: MentionResolver | null): s
     if (r.info.send != null) out = out.slice(0, r.from) + r.info.send + out.slice(r.to);
   }
   return out;
+}
+
+// What a clicked chip opens, from MentionInfo.open.
+export function openTarget(open: string): { kind: 'file'; path: string } | { kind: 'session'; id: string } | null {
+  if (open.startsWith('file:')) return { kind: 'file', path: open.slice(5) };
+  if (open.startsWith(SESSION_PREFIX)) return { kind: 'session', id: open.slice(SESSION_PREFIX.length) };
+  return null;
 }

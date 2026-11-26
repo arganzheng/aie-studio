@@ -10,7 +10,7 @@ import { isCompactCommand, isSlashCommand } from '../lib/steering';
 import { addQuotes, composeQuotedPrompt, quoteCardLabel, quoteCardPreview, type ChatQuote } from '../lib/addToChat';
 import { dragHasFiles, droppedFiles } from '../lib/fileAttachments';
 import {
-  SESSION_PREFIX, combineResolvers, expandMentions, fileItems, fileMentionResolver, matchMentionQuery,
+  SESSION_PREFIX, combineResolvers, expandMentions, fileItems, fileMentionResolver, matchMentionQuery, openTarget,
   sessionItems, sessionMentionResolver, type MentionSession,
 } from '../lib/mentions';
 
@@ -78,6 +78,7 @@ export const ChatInput = memo(function ChatInput({
   mentionSessions,
   onSessionsOpen,
   onOpenMentionedSession,
+  onOpenMentionedFile,
   insertion,
   onBatchSent,
   onSend,
@@ -116,6 +117,8 @@ export const ChatInput = memo(function ChatInput({
   onSessionsOpen?: () => void;
   // A session chip was clicked: open that session.
   onOpenMentionedSession?: (sessionId: string) => void;
+  // A file chip was clicked: open that file (a path as in mentionFiles).
+  onOpenMentionedFile?: (path: string) => void;
   // Model: web.InsertBatchPrompt. The text is appended (never sent) so the
   // user can review it; onBatchSent fires for each inserted Batch once the
   // prompt actually goes out.
@@ -512,7 +515,11 @@ export const ChatInput = memo(function ChatInput({
           onBlur={() => setPicker(null)}
           readOnly={!!lock}
           resolveMention={resolveMention}
-          onMentionOpen={onOpenMentionedSession}
+          onMentionOpen={(open) => {
+            const t = openTarget(open);
+            if (t?.kind === 'file') onOpenMentionedFile?.(t.path);
+            else if (t?.kind === 'session') onOpenMentionedSession?.(t.id);
+          }}
           placeholder={
             lock ? lock.reason
             : status === 'closed' ? 'closed'

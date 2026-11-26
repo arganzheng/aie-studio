@@ -63,7 +63,7 @@ describe('findMentions', () => {
   });
 });
 
-import { combineResolvers, expandMentions, sessionItems, sessionMentionResolver, sessionMentionText, sessionSendText, type MentionSession } from '../mentions';
+import { combineResolvers, expandMentions, openTarget, sessionItems, sessionMentionResolver, sessionMentionText, sessionSendText, type MentionSession } from '../mentions';
 
 describe('session mentions', () => {
   const NOW = 1_800_000_000_000;
@@ -92,6 +92,13 @@ describe('session mentions', () => {
     expect(rows[1].description.startsWith('Devin · ')).toBe(true);
     expect(sessionItems([A, B], 'blog', NOW).map((r) => r.name)).toEqual([B.id]);
     expect(sessionItems([A, B], 'zzz', NOW)).toEqual([]);
+  });
+  it('chips say what a click opens', () => {
+    expect(findMentions('@todo.txt', resolve)[0].info.open).toBe('file:todo.txt');
+    expect(findMentions(`@session:${A.id}`, resolve)[0].info.open).toBe(`session:${A.id}`);
+    expect(openTarget('file:src/a b.ts')).toEqual({ kind: 'file', path: 'src/a b.ts' });
+    expect(openTarget(`session:${A.id}`)).toEqual({ kind: 'session', id: A.id });
+    expect(openTarget('other')).toBeNull();
   });
   it('combineResolvers: null when there is none', () => {
     expect(combineResolvers(null, null)).toBeNull();
