@@ -18,7 +18,7 @@
 import { quietTaskNotes, type TaskNote } from './taskNotification';
 
 export type WorkMsg =
-  | { id: string; role: 'user' | 'system' | 'bang'; text?: string; at?: number }
+  | { id: string; role: 'user' | 'system' | 'bang' | 'localcmd'; text?: string; at?: number }
   | { id: string; role: 'assistant'; text: string; at?: number }
   | { id: string; role: 'thinking'; text: string; at?: number; ms?: number }
   | { id: string; role: 'tool'; name: string; input: any; output?: string; at?: number; doneAt?: number; step?: string };
@@ -159,7 +159,7 @@ export function groupWork<M extends WorkMsg>(msgs: readonly M[], working: boolea
     // A background task that finished is not something the user said.
     const notice = m.role === 'user' && quietTaskNotes(m.text) != null;
     const visible =
-      (m.role === 'user' && !notice) || m.role === 'system' || m.role === 'bang'
+      (m.role === 'user' && !notice) || m.role === 'system' || m.role === 'bang' || m.role === 'localcmd'
       || (m.role === 'tool' && isCardTool(m.name))
       || (m.role === 'assistant' && isMessage(m.text, !followedByTool[i]));
     if (visible) { flush(); out.push({ kind: 'msg', msg: m }); }

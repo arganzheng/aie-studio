@@ -1029,6 +1029,34 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .msg-compact-body { margin-top: 6px; }
 .msg-compact-body p { margin: 6px 0; white-space: pre-wrap; }
 
+/* A slash command Claude Code ran itself (/model …): the child-report card,
+   on the user's side. */
+.msg-local-cmd {
+  align-self: flex-end; max-width: 90%;
+  border: 1px solid var(--border); border-right: 3px solid var(--bg-active-strong); border-radius: 6px;
+  background: var(--bg-elevated); padding: 6px 12px; white-space: normal;
+}
+.msg-local-cmd.failed { border-right-color: var(--danger); }
+.local-cmd-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: calc(12px * var(--font-scale)); }
+.local-cmd-mark { color: var(--bg-active-strong); }
+.msg-local-cmd.failed .local-cmd-mark { color: var(--danger); }
+.local-cmd-name { font-weight: 600; color: var(--fg-strong); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.local-cmd-result { color: var(--fg-muted); }
+.msg-local-cmd.failed .local-cmd-result { color: var(--danger); }
+.local-cmd-body {
+  margin: 4px 0 0; white-space: pre-wrap; max-height: 320px; overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: calc(11px * var(--font-scale)); color: var(--fg-soft-2);
+}
+.local-cmd-md { white-space: normal; font-family: inherit; font-size: calc(12px * var(--font-scale)); color: var(--fg); border-top: 1px solid var(--border); padding-top: 4px; }
+.local-cmd-md > *:first-child { margin-top: 0; }
+.local-cmd-md > *:last-child { margin-bottom: 0; }
+.local-cmd-md p { margin: 4px 0; }
+.local-cmd-md h1, .local-cmd-md h2, .local-cmd-md h3 { font-size: calc(12px * var(--font-scale)); margin: 8px 0 4px; }
+.local-cmd-md table { border-collapse: collapse; margin: 4px 0; }
+.local-cmd-md th, .local-cmd-md td { border: 1px solid var(--border-strong); padding: 2px 8px; text-align: left; }
+.local-cmd-md th { white-space: nowrap; }
+.local-cmd-md td { word-break: normal; overflow-wrap: normal; }
+
 /* A child session's answer in its parent's chat (model: Session.children). */
 .msg-child-report {
   align-self: stretch; max-width: none;

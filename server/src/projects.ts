@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { liveBridge } from './live-sessions.js';
+import { localCommandOutputs } from './local-command-output.js';
 import { listSessions as sdkListSessions } from '@anthropic-ai/claude-agent-sdk';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -198,8 +199,10 @@ export function registerProjectRoutes(app: FastifyInstance) {
           ? Math.max(0, Math.min(total, Number(req.query.before)))
           : total;
       const startIdx = Math.max(0, endIdx - limit);
+      // localCommandOutput: what a slash command printed (local-command-output.ts).
+      const cmdOut = localCommandOutputs(raw);
       return {
-        events: all.slice(startIdx, endIdx),
+        events: all.slice(startIdx, endIdx).map((e) => (cmdOut.has(e.uuid) ? { ...e, localCommandOutput: cmdOut.get(e.uuid) } : e)),
         startIndex: startIdx,
         endIndex: endIdx,
         total,

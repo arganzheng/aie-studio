@@ -4,6 +4,7 @@
 // SDK instead of a hand-rolled stream-json subprocess. Deliberately shares no
 // code with session.ts — projects/claude-sdk-session/design.md.
 import { readSessionFor } from './session-reader.js';
+import { readLocalCommandOutputs } from './local-command-output.js';
 import { probePage } from './preview.js';
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from '@fastify/websocket';
@@ -1977,7 +1978,9 @@ export function registerSdkSessionRoutes(app: FastifyInstance) {
       const startIndex = pageStart(msgs, endIndex, limit);
       // timestamp: when the record was written (the SDK returns it, its type
       // doesn't say so) — model: web.WorkGroups times the work from it.
-      const events = msgs.slice(startIndex, endIndex).map((m) => ({ type: m.type, uuid: m.uuid, message: m.message, timestamp: (m as { timestamp?: unknown }).timestamp }));
+      // localCommandOutput: what a slash command printed (local-command-output.ts).
+      const cmdOut = await readLocalCommandOutputs(project.path, req.params.sid);
+      const events = msgs.slice(startIndex, endIndex).map((m) => ({ type: m.type, uuid: m.uuid, message: m.message, timestamp: (m as { timestamp?: unknown }).timestamp, localCommandOutput: cmdOut.get(m.uuid) }));
       // Model: web.PlanStrip — plan tool calls from the part not sent.
       const planTools = planToolCalls(msgs.slice(0, startIndex) as { message?: unknown }[]);
       return { events, startIndex, endIndex, total, planTools };
