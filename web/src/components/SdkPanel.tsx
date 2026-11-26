@@ -1809,6 +1809,8 @@ export function SdkPanel({
         onMentionOpen={projectFiles.refresh}
         mentionSessions={mentionSessions.sessions}
         onSessionsOpen={mentionSessions.refresh}
+        // The list is of the session's checkout; the viewer takes project paths.
+        onOpenMentionedFile={(p) => openFile(worktreeName ? `.claude/worktrees/${worktreeName}/${p}` : p)}
         onOpenMentionedSession={onOpenSession ? (id) => { const row = mentionSessions.rowOf(id); if (row) onOpenSession(row.sessionId, row.title, row.kind); } : undefined}
         onSend={send}
         sendModes
