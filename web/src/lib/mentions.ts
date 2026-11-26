@@ -3,6 +3,7 @@
 // draws as a chip; nothing else is stored. Kept free of React/DOM so the
 // trigger, ranking and recognition rules are unit-testable.
 import type { CommandItem } from './commandPicker';
+import { timeAgo } from './sessionList';
 
 export const FILES_GROUP = 'Files';
 
@@ -73,8 +74,9 @@ export function fileItems(files: readonly string[], query: string, limit = 50): 
   }));
 }
 
-// What a mention is drawn as.
-export type MentionInfo = { kind: 'file'; label: string; title: string };
+// What a mention is drawn as. `send`: what goes out in its place when the
+// prompt is sent (absent = the text as it is).
+export type MentionInfo = { kind: 'file' | 'session'; label: string; title: string; send?: string };
 export type MentionResolver = (token: string) => MentionInfo | null;
 
 // A file mention is a chip only when it names a file of the checkout, so
@@ -107,6 +109,69 @@ export function findMentions(text: string, resolve: MentionResolver): MentionRan
       if (cut && cut !== token) { token = cut; info = resolve(token); }
     }
     if (info) out.push({ from, to: from + token.length + 1, info });
+  }
+  return out;
+}
+
+// ----- sessions (model: web.SessionMentions) --------------------------------
+// A session mention is "@session:<id>" in the prompt, drawn as a chip with
+// the session's title. claude knows nothing of that form, so on sending it
+// becomes a line it can act on: the title and the id, which the read_session
+// tool takes (server.ReadSession).
+
+export const SESSIONS_GROUP = 'Sessions';
+export const SESSION_PREFIX = 'session:';
+
+export type MentionSession = { id: string; title: string; kind: 'claude' | 'devin'; updatedAt: number };
+
+const kindName = (k: MentionSession['kind']) => (k === 'claude' ? 'Claude' : 'Devin');
+
+export function sessionMentionText(id: string): string {
+  return `@${SESSION_PREFIX}${id}`;
+}
+
+// What the prompt says in place of the mention when it is sent.
+export function sessionSendText(s: MentionSession): string {
+  return `[session "${s.title.replace(/"/g, "'").replace(/\s+/g, ' ').trim()}" (${kindName(s.kind)}, id ${s.id})]`;
+}
+
+export function sessionMentionResolver(sessions: ReadonlyMap<string, MentionSession>): MentionResolver {
+  return (token) => {
+    if (!token.startsWith(SESSION_PREFIX)) return null;
+    const s = sessions.get(token.slice(SESSION_PREFIX.length));
+    return s ? { kind: 'session', label: s.title, title: `${s.title} — ${kindName(s.kind)} session ${s.id}`, send: sessionSendText(s) } : null;
+  };
+}
+
+// The first resolver that knows the token.
+export function combineResolvers(...resolvers: Array<MentionResolver | null>): MentionResolver | null {
+  const rs = resolvers.filter((r): r is MentionResolver => r != null);
+  if (rs.length === 0) return null;
+  return (token) => { for (const r of rs) { const i = r(token); if (i) return i; } return null; };
+}
+
+// Picker rows: sessions whose title has the query, latest first.
+export function sessionItems(sessions: readonly MentionSession[], query: string, now: number, limit = 50): CommandItem[] {
+  const q = query.toLowerCase();
+  return sessions
+    .filter((s) => !q || s.title.toLowerCase().includes(q) || s.id.toLowerCase().startsWith(q))
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, limit)
+    .map((s) => ({
+      group: SESSIONS_GROUP,
+      name: s.id,
+      label: s.title,
+      description: `${kindName(s.kind)} · ${timeAgo(s.updatedAt, now)}`,
+      insert: `${sessionMentionText(s.id)} `,
+    }));
+}
+
+// The prompt as it is sent: each mention that has a `send` form replaced by it.
+export function expandMentions(text: string, resolve: MentionResolver | null): string {
+  if (!resolve) return text;
+  let out = text;
+  for (const r of findMentions(text, resolve).reverse()) {
+    if (r.info.send != null) out = out.slice(0, r.from) + r.info.send + out.slice(r.to);
   }
   return out;
 }
