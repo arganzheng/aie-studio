@@ -1431,7 +1431,7 @@ export function ChatPanel({
                 {modelPickerOpen && (
                   <>
                     <div className="model-picker-backdrop" onClick={() => setModelPickerOpen(false)} />
-                    <div className="model-picker">
+                    <div className="model-picker model-picker-grouped">
                       {(() => {
                         const groups: { label: string; items: typeof modelCatalog.models }[] = [
                           { label: 'Aliases (auto-latest)', items: modelCatalog.aliases },
