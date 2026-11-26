@@ -38,6 +38,8 @@ import { FileAttachmentStrip, SentFileChips, useFileAttachments } from './FileAt
 const ExportDialog = lazy(() => import('./ExportDialog').then((m) => ({ default: m.ExportDialog })));
 import { ChatInput } from './ChatInput';
 import { bangCommand, isBangInput, splitBangTexts } from '../lib/bang';
+import { answerTypedCommand, applyLocalCommandOutput, isSyntheticReply, localCommandOutputOf, localCommandText, splitLocalCommandTexts } from '../lib/localCommand';
+import { LocalCommandCard } from './LocalCommandCard';
 import { ClaudeUsageBadge, refreshClaudeUsage } from './ClaudeUsage';
 import { ContextBadge, type ContextSnapshot } from './ContextUsage';
 import { childLinkOfTool } from '../lib/childLink';
@@ -89,7 +91,10 @@ export type Msg =
   // Model: web.BangCommand. bangId: the live command's id (absent when read
   // back from the transcript). pending: ran, but the model hasn't seen it yet
   // — it goes out with the next prompt.
-  | { id: string; role: 'bang'; command: string; bangId?: string; result?: BangOutcome; pending?: boolean };
+  | { id: string; role: 'bang'; command: string; bangId?: string; result?: BangOutcome; pending?: boolean }
+  // A slash command Claude Code ran itself (lib/localCommand.ts). command is
+  // '' for an output that came without its command.
+  | { id: string; role: 'localcmd'; command: string; output?: { stdout: string; stderr: string } };
 
 type BangOutcome = {
   stdout: string;
@@ -143,6 +148,7 @@ function toExport(msgs: Msg[]): ExportMessage[] {
     if (m.role === 'assistant') return { kind: 'assistant', text: m.text };
     if (m.role === 'system') return { kind: 'system', text: m.text };
     if (m.role === 'thinking') return { kind: 'system', text: m.text ? `Thinking: ${m.text}` : 'Thinking' };
+    if (m.role === 'localcmd') return { kind: 'system', text: localCommandText(m) };
     if (m.role === 'bang') {
       const out = [m.result?.stdout, m.result?.stderr, m.result?.blocked && `Blocked: ${m.result.blocked}`].filter(Boolean).join('\n');
       return { kind: 'tool', name: 'Bash (!)', input: { command: m.command }, output: out };
@@ -155,7 +161,12 @@ type Delta =
   | { kind: 'append'; msg: Msg }
   | { kind: 'tool_result'; toolUseId: string; output: string; images?: string[]; at?: number }
   // Claude Code writes a `!` command's output as its own user record.
-  | { kind: 'bang_output'; stdout: string; stderr: string };
+  | { kind: 'bang_output'; stdout: string; stderr: string }
+  // … and a slash command's output likewise.
+  | { kind: 'localcmd_output'; stdout: string; stderr: string }
+  // A reply no model wrote: the answer to the slash command typed just
+  // before it, else the ordinary messages in orElse.
+  | { kind: 'synthetic_reply'; text: string; orElse: Msg[] };
 
 // One transcript / SDK message → message deltas. Both ReadSdkTranscript
 // events and live SDKMessages have {type, uuid, message}.
@@ -164,6 +175,8 @@ function renderEvent(ev: any): Delta[] {
   const uuid = typeof ev?.uuid === 'string' ? ev.uuid : undefined;
   // Transcript records carry when they were written; live messages don't.
   const at = (typeof ev?.timestamp === 'string' && Date.parse(ev.timestamp)) || Date.now();
+  const cmdOut = localCommandOutputOf(ev);
+  if (cmdOut) return [{ kind: 'localcmd_output', ...cmdOut }];
   if (ev?.type === 'assistant' && ev.message) {
     (ev.message.content ?? []).forEach((block: any, blockIdx: number) => {
       if (block?.type === 'text' && block.text) {
@@ -174,6 +187,7 @@ function renderEvent(ev: any): Delta[] {
         out.push({ kind: 'append', msg: { id: shortId(), role: 'tool', name: block.name, input: block.input, toolUseId: block.id, at, step: typeof ev.message.id === 'string' ? ev.message.id : undefined } });
       }
     });
+    if (isSyntheticReply(ev)) return [syntheticReply(out)];
   } else if (ev?.type === 'user' && ev.message && !isImageSizeNote(ev)) {
     const texts: string[] = [];
     const images: string[] = [];
@@ -190,7 +204,16 @@ function renderEvent(ev: any): Delta[] {
       }
     }
     const prompt: string[] = [];
-    for (const part of splitBangTexts(texts)) {
+    const plain: string[] = [];
+    for (const part of splitLocalCommandTexts(texts)) {
+      if (part.kind === 'command') out.push({ kind: 'append', msg: { id: shortId(), role: 'localcmd', command: part.command } });
+      else if (part.kind === 'output') out.push({ kind: 'localcmd_output', stdout: part.stdout, stderr: part.stderr });
+      else if (part.kind === 'text') plain.push(part.text);
+    }
+    // ReadSdkTranscript sends what the command printed along with it.
+    const printed = typeof ev.localCommandOutput === 'string' ? localCommandOutputOf({ type: 'system', subtype: 'local_command', content: ev.localCommandOutput }) : null;
+    if (printed) out.push({ kind: 'localcmd_output', ...printed });
+    for (const part of splitBangTexts(plain)) {
       if (part.kind === 'input') out.push({ kind: 'append', msg: { id: shortId(), role: 'bang', command: part.command } });
       else if (part.kind === 'output') out.push({ kind: 'bang_output', stdout: part.stdout, stderr: part.stderr });
       else prompt.push(part.text);
@@ -216,6 +239,10 @@ export function buildFromEvents(events: any[], orphanResults: Map<string, ToolOu
         msgs.push(d.msg);
       } else if (d.kind === 'bang_output') {
         attachBangOutput(msgs, d);
+      } else if (d.kind === 'localcmd_output') {
+        applyLocalCommandOutput(msgs, d, newLocalCommand);
+      } else if (d.kind === 'synthetic_reply') {
+        if (!d.text || !answerTypedCommand(msgs, d.text, newLocalCommand)) msgs.push(...d.orElse);
       } else {
         const target = pendingTools.get(d.toolUseId);
         if (target && target.output === undefined) { target.output = d.output; target.outputImages = d.images; target.doneAt = d.at; pendingTools.delete(d.toolUseId); }
@@ -224,6 +251,15 @@ export function buildFromEvents(events: any[], orphanResults: Map<string, ToolOu
     }
   }
   return msgs;
+}
+
+function syntheticReply(deltas: Delta[]): Delta {
+  const orElse = deltas.flatMap((d) => (d.kind === 'append' ? [d.msg] : []));
+  return { kind: 'synthetic_reply', text: orElse.map((m) => (m.role === 'assistant' ? m.text : '')).filter(Boolean).join('\n'), orElse };
+}
+
+function newLocalCommand(command: string, output: { stdout: string; stderr: string }): Msg {
+  return { id: shortId(), role: 'localcmd', command, output: { stdout: output.stdout, stderr: output.stderr } };
 }
 
 // Pairs a transcript bang output with the latest command still lacking one.
@@ -239,6 +275,8 @@ function applyDeltas(prev: Msg[], deltas: Delta[]): Msg[] {
   for (const d of deltas) {
     if (d.kind === 'append') arr = [...arr, d.msg];
     else if (d.kind === 'bang_output') { arr = [...arr]; attachBangOutput(arr, d); }
+    else if (d.kind === 'localcmd_output') { arr = [...arr]; applyLocalCommandOutput(arr, d, newLocalCommand); }
+    else if (d.kind === 'synthetic_reply') { arr = [...arr]; if (!d.text || !answerTypedCommand(arr, d.text, newLocalCommand)) arr.push(...d.orElse); }
     else arr = arr.map((m) => (m.role === 'tool' && m.toolUseId === d.toolUseId && m.output === undefined ? { ...m, output: d.output, outputImages: d.images, doneAt: d.at } : m));
   }
   return arr;
@@ -1587,6 +1625,7 @@ export function SdkPanel({
               />
             );
           }
+          if (m.role === 'localcmd') return <LocalCommandCard key={m.id} command={m.command} output={m.output} renderBody={(t) => <MarkdownText text={t} theme={theme} projectPath={projectPath} onOpenFile={openFile} />} />;
           if (m.role === 'thinking') return null;
           return renderToolBlock(m);
         })}

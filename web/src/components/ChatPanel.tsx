@@ -6,6 +6,8 @@ import { useElicitationHost } from './ElicitationHost';
 import { claudeAnswersFrom, parseAskUserQuestion } from '../lib/elicitation';
 import { isSendKeyTrigger } from '../lib/sendKey';
 import { toWireImages } from '../lib/imageAttachments';
+import { answerTypedCommand, applyLocalCommandOutput, isSyntheticReply, localCommandOutputOf, localCommandText, splitLocalCommandTexts } from '../lib/localCommand';
+import { LocalCommandCard } from './LocalCommandCard';
 import { isImageSizeNote, parseToolResultContent, type ToolOutput } from '../lib/toolResult';
 import { composeComment, type CommentMark, bookmarkLabel } from '../lib/review';
 import type { ChatQuote } from '../lib/addToChat';
@@ -142,7 +144,22 @@ type Msg =
   | { id: string; role: 'assistant'; text: string; uuid?: string; blockIdx?: number }
   | { id: string; role: 'system'; text: string }
   // outputImages: images the tool returned (e.g. Read on a .png).
-  | { id: string; role: 'tool'; name: string; input: any; toolUseId?: string; output?: string; outputImages?: string[] };
+  | { id: string; role: 'tool'; name: string; input: any; toolUseId?: string; output?: string; outputImages?: string[] }
+  // A slash command Claude Code ran itself (lib/localCommand.ts). command is
+  // '' for an output that came without its command.
+  | { id: string; role: 'localcmd'; command: string; output?: { stdout: string; stderr: string } };
+
+type Delta =
+  | { kind: 'append'; msg: Msg }
+  | { kind: 'tool_result'; toolUseId: string; output: string; images?: string[] }
+  | { kind: 'localcmd_output'; stdout: string; stderr: string }
+  // A reply no model wrote: the answer to the slash command typed just
+  // before it, else the ordinary messages in orElse.
+  | { kind: 'synthetic_reply'; text: string; orElse: Msg[] };
+
+function newLocalCommand(command: string, output: { stdout: string; stderr: string }): Msg {
+  return { id: shortId(), role: 'localcmd', command, output: { stdout: output.stdout, stderr: output.stderr } };
+}
 
 // Stable per-message anchor for Review comments (model: entity Comment.anchor). null
 // while the message has no persisted identity yet: a just-sent user message
@@ -173,8 +190,10 @@ function sendKeyHint(k: SendKey): string {
 
 // Pure: convert a single claude stream-json / JSONL event into Msg deltas.
 // Returns either a list of new messages, or a tool_result patch by toolUseId.
-function renderEvent(ev: any): Array<{ kind: 'append'; msg: Msg } | { kind: 'tool_result'; toolUseId: string; output: string; images?: string[] }> {
-  const out: Array<{ kind: 'append'; msg: Msg } | { kind: 'tool_result'; toolUseId: string; output: string; images?: string[] }> = [];
+function renderEvent(ev: any): Delta[] {
+  const out: Delta[] = [];
+  const cmdOut = localCommandOutputOf(ev);
+  if (cmdOut) return [{ kind: 'localcmd_output', ...cmdOut }];
   if (ev?.type === 'assistant' && ev.message) {
     const uuid = typeof ev.uuid === 'string' ? ev.uuid : undefined;
     (ev.message.content || []).forEach((block: any, blockIdx: number) => {
@@ -184,6 +203,10 @@ function renderEvent(ev: any): Array<{ kind: 'append'; msg: Msg } | { kind: 'too
         out.push({ kind: 'append', msg: { id: shortId(), role: 'tool', name: block.name, input: block.input, toolUseId: block.id } });
       }
     });
+    if (isSyntheticReply(ev)) {
+      const orElse = out.flatMap((d) => (d.kind === 'append' ? [d.msg] : []));
+      return [{ kind: 'synthetic_reply', text: orElse.map((m) => (m.role === 'assistant' ? m.text : '')).filter(Boolean).join('\n'), orElse }];
+    }
   } else if (ev?.type === 'user' && ev.message && !isImageSizeNote(ev)) {
     const texts: string[] = [];
     const images: string[] = [];
@@ -208,13 +231,23 @@ function renderEvent(ev: any): Array<{ kind: 'append'; msg: Msg } | { kind: 'too
         out.push({ kind: 'tool_result', toolUseId: block.tool_use_id, output: r.text, images: r.images });
       }
     }
-    if (texts.length || images.length) {
+    // Slash commands Claude Code ran itself are cards, not prompts.
+    const prompt: string[] = [];
+    for (const part of splitLocalCommandTexts(texts)) {
+      if (part.kind === 'command') out.push({ kind: 'append', msg: { id: shortId(), role: 'localcmd', command: part.command } });
+      else if (part.kind === 'output') out.push({ kind: 'localcmd_output', stdout: part.stdout, stderr: part.stderr });
+      else if (part.kind === 'text') prompt.push(part.text);
+    }
+    // ReadTranscript sends what the command printed along with it.
+    const printed = typeof ev.localCommandOutput === 'string' ? localCommandOutputOf({ type: 'system', subtype: 'local_command', content: ev.localCommandOutput }) : null;
+    if (printed) out.push({ kind: 'localcmd_output', ...printed });
+    if (prompt.length || images.length) {
       out.push({
         kind: 'append',
         msg: {
           id: shortId(),
           role: 'user',
-          text: texts.join('\n'),
+          text: prompt.join('\n'),
           images: images.length ? images : undefined,
           // ev.uuid is the JSONL record's stable id — needed to target this
           // message via the rewind endpoint. Live-sent (not-yet-replayed)
@@ -233,6 +266,12 @@ function applyDeltas(prev: Msg[], deltas: ReturnType<typeof renderEvent>): Msg[]
   for (const d of deltas) {
     if (d.kind === 'append') {
       arr = [...arr, d.msg];
+    } else if (d.kind === 'localcmd_output') {
+      arr = [...arr];
+      applyLocalCommandOutput(arr, d, newLocalCommand);
+    } else if (d.kind === 'synthetic_reply') {
+      arr = [...arr];
+      if (!d.text || !answerTypedCommand(arr, d.text, newLocalCommand)) arr.push(...d.orElse);
     } else {
       arr = arr.map((m) =>
         m.role === 'tool' && m.toolUseId === d.toolUseId && !m.output ? { ...m, output: d.output, outputImages: d.images } : m,
@@ -265,6 +304,10 @@ function buildFromEvents(events: any[], orphanResults: Map<string, ToolOutput>):
           }
         }
         msgs.push(d.msg);
+      } else if (d.kind === 'localcmd_output') {
+        applyLocalCommandOutput(msgs, d, newLocalCommand);
+      } else if (d.kind === 'synthetic_reply') {
+        if (!d.text || !answerTypedCommand(msgs, d.text, newLocalCommand)) msgs.push(...d.orElse);
       } else {
         const target = pendingByToolUseId.get(d.toolUseId);
         if (target && target.output === undefined) {
@@ -1341,6 +1384,7 @@ export function ChatPanel({
             );
           }
           if (m.role === 'system') return <div key={m.id} className="msg msg-system">{m.text}</div>;
+          if (m.role === 'localcmd') return <LocalCommandCard key={m.id} command={m.command} output={m.output} renderBody={(t) => <MarkdownText text={t} theme={theme} projectPath={projectPath} onOpenFile={openFile} />} />;
           const isOpen = expanded.has(m.id);
           const summary = summarizeTool(m.name, m.input, rel);
           return (
@@ -1581,6 +1625,7 @@ function claudeMsgsToExport(msgs: Msg[]): ExportMessage[] {
     if (m.role === 'user') return { kind: 'user', text: m.text, images: m.images };
     if (m.role === 'assistant') return { kind: 'assistant', text: m.text };
     if (m.role === 'system') return { kind: 'system', text: m.text };
+    if (m.role === 'localcmd') return { kind: 'system', text: localCommandText(m) };
     return { kind: 'tool', name: m.name, input: m.input, output: m.output, images: m.outputImages };
   });
 }
