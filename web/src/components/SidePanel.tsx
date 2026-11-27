@@ -72,7 +72,7 @@ function storageKey(prefix: string, projectId: string) { return `${prefix}side:$
 export function SidePanel({
   lsPrefix, projectId, projectName, projectPath, theme, reviewOn, terminalOn = false, reviewCount, renderReview, follow, onAddToChat,
   onOpenSession, onOpenSubagent, onReveal, onContinueAsChild,
-  collapsed, maximized, onToggleCollapse, onToggleMax, onCloseDrawer, request,
+  collapsed, maximized, onToggleCollapse, onToggleMax, onCloseDrawer, request, onPageShown,
 }: {
   lsPrefix: string;
   projectId: string;
@@ -99,6 +99,9 @@ export function SidePanel({
   onToggleMax: () => void;
   // Mobile drawer's ×.
   onCloseDrawer: () => void;
+  // A page from show_preview was opened or brought forward (not one this
+  // device had shown already): the panel should come into view for it.
+  onPageShown?: (owner: string | undefined) => void;
   request: SideRequest | null;
 }) {
   const load = (pid: string) => parseSideState(localStorage.getItem(storageKey(lsPrefix, pid)), reviewOn);
@@ -138,7 +141,7 @@ export function SidePanel({
         // A page already shown on this device (a replay on reconnect) is left alone.
         const owner = want.owner ?? session ?? undefined;
         const n = showPage(state, { port: want.port, path: want.path, owner }, want.at);
-        if (n) { setState(remember(n, owner)); setPreviewLoad(request.seq); }
+        if (n) { setState(remember(n, owner)); setPreviewLoad(request.seq); onPageShown?.(owner); }
       } else change((s) => openTab(s, want));
     }
     else if (request.kind === 'btw') {

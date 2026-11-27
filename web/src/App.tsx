@@ -474,11 +474,15 @@ export default function App() {
   // The panel only pops open for the session in front.
   const followSessionIdRef = useRef<string | undefined>(undefined);
   const openSidePreview = (port: number, path: string, owner?: string, at?: number) => {
+    setSideRequest((prev) => ({ kind: 'tool', want: { kind: 'preview', port, path, ...(owner ? { owner } : {}), ...(at != null ? { at } : {}) }, seq: (prev?.seq ?? 0) + 1 }));
+  };
+  // The side panel opened the page (it skips one this device has shown
+  // already: the server sends the last page again on every (re)connect).
+  const revealSidePreview = (owner: string | undefined) => {
     if (!owner || owner === followSessionIdRef.current) {
       setReviewCollapsed(false);
       setReviewDrawerOpen(true);
     }
-    setSideRequest((prev) => ({ kind: 'tool', want: { kind: 'preview', port, path, ...(owner ? { owner } : {}), ...(at != null ? { at } : {}) }, seq: (prev?.seq ?? 0) + 1 }));
   };
   // Comments and bookmarks land in Review: bring its tab forward.
   const showReview = () => { setReviewCollapsed(false); askSide('review'); };
@@ -2269,6 +2273,7 @@ export default function App() {
               onToggleMax={() => setSideMax((v) => !v)}
               onCloseDrawer={() => setReviewDrawerOpen(false)}
               request={sideRequest}
+              onPageShown={revealSidePreview}
               renderReview={() => (
                   <ReviewPanel
                     batches={batches}
