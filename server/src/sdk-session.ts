@@ -1041,9 +1041,10 @@ async function handleClientMessage(entry: SdkEntry, socket: WebSocket, msg: any)
       entry.model = model;
       entry.requestedModel = model;
       broadcast(entry, { type: 'model', model });
+      broadcast(entry, { type: 'model_switched', model });
       refreshContext(entry); // the window size follows the model
     } catch (e) {
-      send(socket, { type: 'error', message: `set_model failed: ${String(e)}` });
+      broadcast(entry, { type: 'model_switch_failed', model, message: String(e) });
     }
     return;
   }
