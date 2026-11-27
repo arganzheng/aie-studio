@@ -40,6 +40,7 @@ import { ChatInput } from './ChatInput';
 import { bangCommand, isBangInput, splitBangTexts } from '../lib/bang';
 import { absorbCompactSummary, answerTypedCommand, applyLocalCommandOutput, giveSummaryToCompact, isSyntheticReply, localCommandOutputOf, localCommandText, splitLocalCommandTexts } from '../lib/localCommand';
 import { LocalCommandCard } from './LocalCommandCard';
+import { modelSwitchLabel, pickerSwitchCard, settlePickerSwitch } from '../lib/modelSwitch';
 import { ClaudeUsageBadge, refreshClaudeUsage } from './ClaudeUsage';
 import { ContextBadge, type ContextSnapshot } from './ContextUsage';
 import { childLinkOfTool } from '../lib/childLink';
@@ -94,7 +95,7 @@ export type Msg =
   | { id: string; role: 'bang'; command: string; bangId?: string; result?: BangOutcome; pending?: boolean }
   // A slash command Claude Code ran itself (lib/localCommand.ts). command is
   // '' for an output that came without its command.
-  | { id: string; role: 'localcmd'; command: string; output?: { stdout: string; stderr: string }; summary?: string };
+  | { id: string; role: 'localcmd'; command: string; output?: { stdout: string; stderr: string }; summary?: string; picker?: boolean };
 
 type BangOutcome = {
   stdout: string;
@@ -508,6 +509,10 @@ export function SdkPanel({
   );
   const [loadingMore, setLoadingMore] = useState(false);
   const [model, setModel] = useState<string | null>(null);
+  // The model a switch from the picker is waiting on (null: none), and the
+  // one before it, shown again if the switch fails.
+  const [switchingTo, setSwitchingTo] = useState<string | null>(null);
+  const modelBeforeSwitchRef = useRef<string | null>(null);
   const [effort, setEffort] = useState('');
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   // Model: Session.mode — bypass or plan, and the plan waiting for approval.
@@ -883,6 +888,7 @@ export function SdkPanel({
       const attempt = reconnectAttemptRef.current++;
       const delay = Math.min(500 * 2 ** attempt, 10_000);
       setStatus('reconnecting');
+      setSwitchingTo(null); // its answer went with the old connection
       reconnectTimerRef.current = window.setTimeout(async () => {
         reconnectTimerRef.current = null;
         if (aborted) return;
@@ -974,6 +980,19 @@ export function SdkPanel({
       return;
     }
     if (m.type === 'model') { if (typeof m.model === 'string') setModel(m.model); return; }
+    if (m.type === 'model_switched' || m.type === 'model_switch_failed') {
+      // The answer to a switch from the picker (it can come only after a compaction ends).
+      const target = String(m.model ?? '');
+      const failure = m.type === 'model_switch_failed' ? String(m.message ?? '') || 'unknown error' : undefined;
+      setSwitchingTo(null);
+      if (failure) setModel((cur) => (cur === target ? modelBeforeSwitchRef.current ?? cur : cur));
+      showToast(failure ? `Couldn't switch to ${target}` : `Switched to ${target}`, 4000);
+      // The card normally has Claude Code's own "Set model to …" by now; if
+      // not (it may trail the answer), say so after a moment.
+      if (failure) setMsgs((prev) => settlePickerSwitch(prev, target, { stdout: '', stderr: `Couldn't switch: ${failure}` }));
+      else window.setTimeout(() => setMsgs((prev) => settlePickerSwitch(prev, target, { stdout: `Switched to ${target}`, stderr: '' })), 1500);
+      return;
+    }
     if (m.type === 'effort') { const lvl = typeof m.effort === 'string' ? m.effort : ''; setEffort(lvl); showToast(lvl ? `Effort: ${lvl}` : 'Effort: default'); return; }
     if (m.type === 'effort_error' || m.type === 'rewind_error') { showToast(String(m.message ?? 'Request failed')); setRewinding(false); return; }
     if (m.type === 'stderr') {
@@ -1295,8 +1314,11 @@ export function SdkPanel({
 
   function switchModel(alias: string) {
     wsSend({ type: 'set_model', model: alias });
+    modelBeforeSwitchRef.current = model;
     setModel(alias);
-    showToast(`Switching to ${alias}…`);
+    append({ id: shortId(), ...pickerSwitchCard(alias) });
+    // The status bar says so until the server answers (model_switched).
+    setSwitchingTo(alias);
     setModelPickerOpen(false);
   }
 
@@ -1693,7 +1715,7 @@ export function SdkPanel({
         )}
       </div>
       {(() => {
-        const label = toast ?? (
+        const label = toast ?? modelSwitchLabel(switchingTo) ?? (
           compacting && status === 'thinking' ? 'Compacting the conversation…'
             : status === 'ready' ? (bgTasks.length ? `Ready · ${bgTasks.length} background task${bgTasks.length === 1 ? '' : 's'} running` : 'Ready')
             : status === 'connecting' ? 'Connecting…'
@@ -1701,7 +1723,7 @@ export function SdkPanel({
             : status === 'replaying' ? 'Loading history…'
             : status === 'closed' ? 'Disconnected'
             : status);
-        const showLabel = status !== 'thinking' || !!toast || compacting;
+        const showLabel = status !== 'thinking' || !!toast || compacting || !!switchingTo;
         return (
           <div className={`chat-status status-${status}`}>
             <span>{showLabel ? label : ''}</span>

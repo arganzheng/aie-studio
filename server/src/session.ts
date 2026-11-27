@@ -1,4 +1,5 @@
 import { showsTurnRunning } from './session-tool-activity.js';
+import { modelSwitchAnswer } from './model-switch.js';
 import type { FastifyInstance } from 'fastify';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import readline from 'node:readline';
@@ -132,6 +133,8 @@ type SessionEntry = {
   // expires under a live tab); it counts down only once the last client
   // leaves. Mirrors devin.ts pendingAgentRpcs.
   pendingToolRequests: Map<string, PendingToolRequest>;
+  // set_model control requests claude has not answered yet: request_id → model.
+  pendingModelSwitches: Map<string, string>;
   // Prompts awaiting a user_uuid broadcast (rule-229). Cleared whenever the
   // proc is replaced or exits.
   pendingUuids: PendingUuid[];
@@ -445,7 +448,11 @@ function attachClientHandlers(entry: SessionEntry, socket: WebSocket) {
         request_id: `setmodel-${Date.now()}`,
         request: { subtype: 'set_model', model },
       };
-      try { entry.proc.stdin.write(JSON.stringify(req) + '\n'); } catch {}
+      entry.pendingModelSwitches.set(req.request_id, model);
+      try { entry.proc.stdin.write(JSON.stringify(req) + '\n'); } catch (e) {
+        entry.pendingModelSwitches.delete(req.request_id);
+        broadcast(entry, { type: 'model_switch_failed', model, message: String(e) });
+      }
       return;
     }
     if (msg.type === 'set_effort') {
@@ -567,6 +574,12 @@ function wireProcess(entry: SessionEntry) {
     }
     if (event?.type === 'control_request') {
       handleControlRequest(entry, event);
+      return;
+    }
+    // claude's answer to a set_model we sent: tell the tabs how it went.
+    const switched = modelSwitchAnswer(entry.pendingModelSwitches, event);
+    if (switched) {
+      broadcast(entry, switched);
       return;
     }
     // A turn the CLI started on its own (a background task finished).
@@ -914,6 +927,7 @@ export function registerSessionRoutes(app: FastifyInstance) {
         title: null,
         titleTimers: [],
         pendingToolRequests: new Map(),
+        pendingModelSwitches: new Map(),
         pendingUuids: [],
       };
       // Pre-register so a near-simultaneous second connection with the same

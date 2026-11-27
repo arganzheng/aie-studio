@@ -72,9 +72,12 @@ export function splitLocalCommandTexts(texts: readonly string[]): LocalCommandPa
 // Pairs an output with the latest command still lacking one. False when there
 // is none (the caller then shows the output on its own).
 export function attachLocalCommandOutput<M extends { role: string }>(msgs: M[], output: { stdout: string; stderr: string }): boolean {
+  const modelSet = /^Set model to\b/.test(output.stdout.trim());
   for (let i = msgs.length - 1; i >= 0; i--) {
-    const m = msgs[i] as M & Partial<LocalCommandMsg>;
+    const m = msgs[i] as M & Partial<LocalCommandMsg> & { picker?: boolean };
     if (m.role !== 'localcmd') continue;
+    // A switch from the model picker takes only its own output.
+    if (m.picker && (!modelSet || m.output)) continue;
     if (m.output) return false;
     msgs[i] = { ...m, output };
     return true;

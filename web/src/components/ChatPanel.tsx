@@ -8,6 +8,7 @@ import { isSendKeyTrigger } from '../lib/sendKey';
 import { toWireImages } from '../lib/imageAttachments';
 import { absorbCompactSummary, answerTypedCommand, applyLocalCommandOutput, giveSummaryToCompact, isSyntheticReply, localCommandOutputOf, localCommandText, splitLocalCommandTexts } from '../lib/localCommand';
 import { LocalCommandCard } from './LocalCommandCard';
+import { modelSwitchLabel, pickerSwitchCard, settlePickerSwitch } from '../lib/modelSwitch';
 import { compactSummaryOf, parseCompactNote } from '../lib/compactNote';
 import { isImageSizeNote, parseToolResultContent, type ToolOutput } from '../lib/toolResult';
 import { composeComment, type CommentMark, bookmarkLabel } from '../lib/review';
@@ -148,7 +149,7 @@ type Msg =
   | { id: string; role: 'tool'; name: string; input: any; toolUseId?: string; output?: string; outputImages?: string[] }
   // A slash command Claude Code ran itself (lib/localCommand.ts). command is
   // '' for an output that came without its command.
-  | { id: string; role: 'localcmd'; command: string; output?: { stdout: string; stderr: string }; summary?: string };
+  | { id: string; role: 'localcmd'; command: string; output?: { stdout: string; stderr: string }; summary?: string; picker?: boolean };
 
 type Delta =
   | { kind: 'append'; msg: Msg }
@@ -458,6 +459,10 @@ export function ChatPanel({
   );
   const [loadingMore, setLoadingMore] = useState(false);
   const [model, setModel] = useState<string | null>(null);
+  // The model a switch from the picker is waiting on (null: none), and the
+  // one before it, shown again if the switch fails.
+  const [switchingTo, setSwitchingTo] = useState<string | null>(null);
+  const modelBeforeSwitchRef = useRef<string | null>(null);
   // started.wire — the server confirmed this proc runs through the wire proxy.
   const [wireOn, setWireOn] = useState(false);
   const wireRef = useRef(!!wire);
@@ -774,6 +779,7 @@ export function ChatPanel({
       const attempt = reconnectAttemptRef.current++;
       const delay = Math.min(500 * 2 ** attempt, 10_000);
       setStatus('reconnecting');
+      setSwitchingTo(null); // its answer went with the old connection
       isReconnectingRef.current = true;
       reconnectTimerRef.current = window.setTimeout(async () => {
         reconnectTimerRef.current = null;
@@ -1033,6 +1039,19 @@ export function ChatPanel({
       forms.expire(m.id);
       return;
     }
+    if (m.type === 'model_switched' || m.type === 'model_switch_failed') {
+      // The answer to a switch from the picker (it can come only after a compaction ends).
+      const target = String(m.model ?? '');
+      const failure = m.type === 'model_switch_failed' ? String(m.message ?? '') || 'unknown error' : undefined;
+      setSwitchingTo(null);
+      if (failure) setModel((cur) => (cur === target ? modelBeforeSwitchRef.current ?? cur : cur));
+      showToast(failure ? `Couldn't switch to ${target}` : `Switched to ${target}`, 4000);
+      // The card normally has Claude Code's own "Set model to …" by now; if
+      // not (it may trail the answer), say so after a moment.
+      if (failure) setMsgs((prev) => settlePickerSwitch(prev, target, { stdout: '', stderr: `Couldn't switch: ${failure}` }));
+      else window.setTimeout(() => setMsgs((prev) => settlePickerSwitch(prev, target, { stdout: `Switched to ${target}`, stderr: '' })), 1500);
+      return;
+    }
     if (m.type === 'error') { append({ id: shortId(), role: 'system', text: `error: ${m.message}` }); return; }
     if (m.type === 'external_change') {
       showToast('External change detected, refreshing');
@@ -1254,8 +1273,11 @@ export function ChatPanel({
     // so without this the status bar would keep showing the old model until
     // the user types again. The real id (full snapshot) will overwrite when
     // the next system.init arrives.
+    modelBeforeSwitchRef.current = model;
     setModel(alias);
-    showToast(`Switched to ${alias}`);
+    append({ id: shortId(), ...pickerSwitchCard(alias) });
+    // The status bar says so until claude answers (model_switched).
+    setSwitchingTo(alias);
     setModelPickerOpen(false);
   }
 
@@ -1471,13 +1493,14 @@ export function ChatPanel({
         // in that state — but the model id on the right should still render.
         const label =
           toast ??
+          modelSwitchLabel(switchingTo) ??
           (status === 'ready' ? 'Ready'
             : status === 'connecting' ? 'Connecting…'
             : status === 'reconnecting' ? 'Reconnecting…'
             : status === 'replaying' ? 'Loading history…'
             : status === 'closed' ? 'Disconnected'
             : status);
-        const showLabel = status !== 'thinking' || !!toast;
+        const showLabel = status !== 'thinking' || !!toast || !!switchingTo;
         return (
           <div className={`chat-status status-${status}`}>
             <span>{showLabel ? label : ''}</span>
