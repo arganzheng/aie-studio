@@ -4288,7 +4288,8 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 .send-modes-menu .overflow-action { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; text-align: left; }
 .send-modes-label { font-weight: 600; color: var(--fg); }
 .send-modes-hint { font-size: 11px; color: var(--fg-muted); white-space: normal; }
-.chat-input .send-modes-menu button { background: none; color: var(--fg); font-weight: 400; padding: 6px 10px; border-radius: 6px; }
+/* Two lines (label + hint): not the bar's 30px button height. */
+.chat-input .send-modes-menu button { height: auto; background: none; color: var(--fg); font-weight: 400; padding: 6px 10px; border-radius: 6px; }
 .chat-input .send-modes-menu button:hover { background: var(--bg-hover); }
 
 /* Model: web.ChangesView "pull request" — the PR card in the Changes tab. */
