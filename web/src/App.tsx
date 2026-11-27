@@ -1,4 +1,5 @@
 import { messageLinkFromHash, type MessageLink } from './lib/messageActions';
+import { NewVersionBanner } from './components/NewVersionBanner';
 import { AutomationsDialog } from './components/AutomationsDialog';
 import type React from 'react';
 import { CommandPalette, type PaletteAction } from './components/CommandPalette';
@@ -2323,6 +2324,7 @@ export default function App() {
         />
       )}
       {appToast && <div className="app-toast">{appToast}</div>}
+      <NewVersionBanner />
       {/* Hidden under the open phone drawer: the cards would cover the
           Sessions list, which shows the same states itself. */}
       <SessionAlerts

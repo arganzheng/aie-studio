@@ -22,6 +22,9 @@ export const TRANSPORT_OPTIONS: Array<{ value: TransportPref; label: string; hin
   { value: 'poll', label: 'HTTP (long polling)', hint: 'Works through nearly any proxy; output arrives in chunks' },
 ];
 
+/** Fired on window whenever a connection to the server opens. */
+export const CONNECTED_EVENT = 'aie:connected';
+
 const WS_OPEN_TIMEOUT_MS = 8_000;
 const SSE_READY_MS = 4_000;
 const POLL_WAIT_MS = 25_000;
@@ -100,7 +103,12 @@ abstract class Base implements DuplexSocket {
   onerror: (() => void) | null = null;
   abstract send(data: string): void;
   abstract close(): void;
-  protected fireOpen() { this.readyState = OPEN; this.onopen?.(); }
+  protected fireOpen() {
+    this.readyState = OPEN;
+    this.onopen?.();
+    // A (re)connection may follow a server restart: lib/appVersion checks then.
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') window.dispatchEvent(new Event(CONNECTED_EVENT));
+  }
   protected fireMessage(data: string) { if (this.readyState === OPEN) this.onmessage?.({ data }); }
   protected fireClose(info: CloseInfo = {}) {
     if (this.readyState === CLOSED) return;

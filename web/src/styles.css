@@ -3013,6 +3013,21 @@ button.child-report-open:hover { text-decoration: underline; color: var(--accent
 }
 
 /* App-level toast (JumpToComment "not found", SendBatch hints etc.) */
+/* Model: web.AppVersion — the server runs a newer front end than this page. */
+.app-update-banner {
+  position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1000;
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 8px 6px 14px; border-radius: 6px;
+  background: var(--bg-popover); color: var(--fg);
+  border: 1px solid var(--accent); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  font-size: 13px; max-width: calc(100vw - 24px);
+}
+.app-update-reload {
+  border: 0; border-radius: 4px; padding: 3px 12px; cursor: pointer;
+  background: var(--accent); color: var(--bg); font: inherit; font-weight: 600;
+}
+.app-update-dismiss { border: 0; background: none; color: var(--fg-muted); cursor: pointer; font-size: 16px; padding: 0 4px; }
+.app-update-dismiss:hover { color: var(--fg); }
 .app-toast {
   position: fixed;
   left: 50%;
