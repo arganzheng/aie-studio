@@ -115,6 +115,14 @@ export function applyLocalCommandOutput<M extends { role: string }>(
   msgs.push(make('', output));
 }
 
+// The card a typed "/command" bubble turns into is still that message: it
+// keeps the bubble's id. A new id would make it look like a message that had
+// just arrived (the refetch after a compaction then showed the card twice).
+function sameMessage<M extends { role: string }>(was: M, now: M): M {
+  const id = (was as { id?: unknown }).id;
+  return typeof id === 'string' ? { ...now, id } : now;
+}
+
 // Live, Claude Code answers a slash command it ran itself with an assistant
 // message that no model wrote (model "<synthetic>").
 export function isSyntheticReply(ev: any): boolean {
@@ -130,7 +138,7 @@ export function answerTypedCommand<M extends { role: string }>(
 ): boolean {
   const last = msgs[msgs.length - 1] as (M & { text?: unknown; images?: unknown[] }) | undefined;
   if (last?.role !== 'user' || typeof last.text !== 'string' || !/^\/\S/.test(last.text.trim()) || last.images?.length) return false;
-  msgs[msgs.length - 1] = make(last.text.trim(), { stdout: text.replace(ANSI_RE, '').trim(), stderr: '' });
+  msgs[msgs.length - 1] = sameMessage(last, make(last.text.trim(), { stdout: text.replace(ANSI_RE, '').trim(), stderr: '' }));
   return true;
 }
 
@@ -180,7 +188,7 @@ export function giveSummaryToCompact<M extends { role: string }>(
     return true;
   }
   if (last.role === 'user' && typeof last.text === 'string' && /^\/compact\b/.test(last.text.trim()) && !last.images?.length) {
-    msgs[i] = { ...make(last.text.trim()), summary };
+    msgs[i] = { ...sameMessage(last, make(last.text.trim())), summary };
     return true;
   }
   return false;

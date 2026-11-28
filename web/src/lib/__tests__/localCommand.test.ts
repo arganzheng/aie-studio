@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { absorbCompactSummary, answerTypedCommand, giveSummaryToCompact, applyLocalCommandOutput, attachLocalCommandOutput, isSyntheticReply, localCommandOutputOf, localCommandText, localCommandView, splitLocalCommandTexts } from '../localCommand';
+import { withArrivedDuring } from '../refetchMerge';
 
 const CAVEAT = "<local-command-caveat>The command below was run directly in Claude Code, not sent to you as a request.</local-command-caveat>";
 const COMMAND = '<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args>fable</command-args>';
@@ -191,5 +192,33 @@ describe('giveSummaryToCompact', () => {
     expect(giveSummaryToCompact([{ role: 'localcmd', command: '/compact', summary: 'old' }] as any[], 'S', make)).toBe(false);
     expect(giveSummaryToCompact([{ role: 'localcmd', command: '/model opus' }] as any[], 'S', make)).toBe(false);
     expect(giveSummaryToCompact([], 'S', make)).toBe(false);
+  });
+});
+
+describe('a typed command bubble that turns into a card keeps its id', () => {
+  type M = { id: string; role: string; text?: string; command?: string; output?: { stdout: string; stderr: string }; summary?: string };
+  let n = 0;
+  const card = (command: string, output?: { stdout: string; stderr: string }): M => ({ id: `new${n++}`, role: 'localcmd', command, output });
+
+  it('when the summary arrives (giveSummaryToCompact)', () => {
+    const msgs: M[] = [{ id: 'typed', role: 'user', text: '/compact' }];
+    expect(giveSummaryToCompact(msgs, 'S', (c) => card(c))).toBe(true);
+    expect(msgs[0]).toMatchObject({ id: 'typed', role: 'localcmd', command: '/compact', summary: 'S' });
+  });
+
+  it('when its answer arrives (answerTypedCommand)', () => {
+    const msgs: M[] = [{ id: 'typed', role: 'user', text: '/cost' }];
+    expect(answerTypedCommand(msgs, 'Total: $1', card)).toBe(true);
+    expect(msgs[0]).toMatchObject({ id: 'typed', role: 'localcmd', command: '/cost' });
+  });
+
+  it('so a refetch right after a compaction does not show the card twice', () => {
+    // The ids shown when the refetch began were read before the card replaced the bubble.
+    const before = new Set(['a1', 'typed']);
+    const msgs: M[] = [{ id: 'a1', role: 'assistant' }, { id: 'typed', role: 'user', text: '/compact' }];
+    giveSummaryToCompact(msgs, 'S', (c) => card(c));
+    applyLocalCommandOutput(msgs, { stdout: 'Compacted', stderr: '' }, card);
+    const fetched: M[] = [{ id: 'f1', role: 'localcmd', command: '/compact', output: { stdout: 'Compacted', stderr: '' } }];
+    expect(withArrivedDuring(fetched, msgs, before)).toEqual(fetched);
   });
 });
